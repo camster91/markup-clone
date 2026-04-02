@@ -5,6 +5,7 @@ export default function CommentCard({ comment }: { comment: any }) {
   const [isDeploying, setIsDeploying] = useState(false);
   const [localStatus, setLocalStatus] = useState(comment.status);
   const [proposedCode, setProposedCode] = useState(comment.proposedCode);
+  const [prUrl, setPrUrl] = useState(comment.pullRequestUrl);
 
   const handleDeployAgent = async () => {
     setIsDeploying(true);
@@ -18,6 +19,7 @@ export default function CommentCard({ comment }: { comment: any }) {
       if (data.success) {
         setLocalStatus(data.data.status);
         setProposedCode(data.data.proposedCode);
+        setPrUrl(data.data.pullRequestUrl);
       }
     } catch (err) {
       console.error(err);
@@ -36,7 +38,6 @@ export default function CommentCard({ comment }: { comment: any }) {
       <div className="text-xs text-gray-500 space-y-1 font-mono bg-gray-100 p-2 rounded">
         <p>X: {comment.xPercent.toFixed(1)}% | Y: {comment.yPercent.toFixed(1)}%</p>
         <p className="truncate" title={comment.xpath || ''}>DOM: {comment.xpath}</p>
-        <p>Screen: {comment.screenSize}</p>
       </div>
 
       {proposedCode && (
@@ -47,7 +48,8 @@ export default function CommentCard({ comment }: { comment: any }) {
 
       <div className="mt-4 flex justify-between items-center">
         <span className="text-xs text-gray-400">{new Date(comment.createdAt).toLocaleString()}</span>
-        {localStatus === 'OPEN' && (
+        
+        {localStatus === 'OPEN' ? (
           <button 
             onClick={handleDeployAgent}
             disabled={isDeploying}
@@ -55,6 +57,10 @@ export default function CommentCard({ comment }: { comment: any }) {
           >
             {isDeploying ? 'Agent Analyzing...' : 'Deploy AI Agent →'}
           </button>
+        ) : prUrl && (
+          <a href={prUrl} target="_blank" rel="noreferrer" className="text-sm text-blue-600 font-medium hover:underline">
+            Review GitHub PR ↗
+          </a>
         )}
       </div>
     </div>

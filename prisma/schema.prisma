@@ -8,19 +8,20 @@ datasource db {
 }
 
 model Project {
-  id        String   @id @default(uuid())
-  name      String
-  domain    String   // e.g., "ashbi.ca"
-  pages     Page[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         String   @id @default(uuid())
+  name       String
+  domain     String
+  githubRepo String?  // e.g., "camster91/dublin-painters-website"
+  pages      Page[]
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }
 
 model Page {
   id        String    @id @default(uuid())
   projectId String
   project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  path      String    // e.g., "/about"
+  path      String
   comments  Comment[]
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -34,16 +35,15 @@ model Comment {
   page          Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
   author        String   @default("Client")
   text          String
-  status        String   @default("OPEN") // OPEN, RESOLVED
+  status        String   @default("OPEN")
   
-  // DOM anchoring
-  xPercent      Float    // X coordinate as % of screen width
-  yPercent      Float    // Y coordinate as % of screen height
-  xpath         String?  // Exact DOM element selector
-  screenSize    String?  // e.g., "1920x1080" (to help recreate the layout)
+  xPercent      Float
+  yPercent      Float
+  xpath         String?
+  screenSize    String?
   
-  // Agentic Action
-  proposedCode  String?  // If the AI agent writes a fix, store it here
+  proposedCode  String?
+  pullRequestUrl String? // Link to the generated GitHub PR
 
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
