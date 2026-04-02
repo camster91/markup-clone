@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import CommentCard from '../components/CommentCard';
 
 const prisma = new PrismaClient();
 
@@ -49,23 +50,7 @@ export default async function Dashboard() {
                       <h3 className="text-lg font-medium text-gray-800 mb-4 border-b pb-2">Path: {page.path}</h3>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {page.comments.map(comment => (
-                          <div key={comment.id} className="bg-gray-50 p-4 rounded-lg border border-gray-200 relative">
-                            <div className="absolute top-4 right-4 flex items-center space-x-2">
-                              <span className={`px-2 py-1 text-xs font-medium rounded-full ${comment.status === 'OPEN' ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'}`}>
-                                {comment.status}
-                              </span>
-                            </div>
-                            <p className="font-medium text-gray-900 mt-1 mb-2">"{comment.text}"</p>
-                            <div className="text-xs text-gray-500 space-y-1 font-mono bg-gray-100 p-2 rounded">
-                              <p>X: {comment.xPercent.toFixed(1)}% | Y: {comment.yPercent.toFixed(1)}%</p>
-                              <p className="truncate" title={comment.xpath || ''}>DOM: {comment.xpath}</p>
-                              <p>Screen: {comment.screenSize}</p>
-                            </div>
-                            <div className="mt-4 flex justify-between items-center">
-                              <span className="text-xs text-gray-400">{new Date(comment.createdAt).toLocaleString()}</span>
-                              <button className="text-sm text-pink-600 font-medium hover:text-pink-700">Deploy AI Agent &rarr;</button>
-                            </div>
-                          </div>
+                          <CommentCard key={comment.id} comment={comment} />
                         ))}
                         {page.comments.length === 0 && (
                           <p className="text-sm text-gray-500 italic">No feedback pins on this page yet.</p>
