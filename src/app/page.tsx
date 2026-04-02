@@ -1,65 +1,84 @@
-import Image from "next/image";
+import { PrismaClient } from '@prisma/client';
 
-export default function Home() {
+const prisma = new PrismaClient();
+
+export default async function Dashboard() {
+  const projects = await prisma.project.findMany({
+    include: {
+      pages: {
+        include: {
+          comments: {
+            orderBy: { createdAt: 'desc' }
+          }
+        }
+      }
+    }
+  });
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+    <div className="min-h-screen bg-gray-50 p-8">
+      <div className="max-w-6xl mx-auto">
+        <header className="mb-8 flex justify-between items-center">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Visual Feedback Dashboard</h1>
+            <p className="text-gray-500 mt-2">Manage incoming client feedback pins and agent tasks.</p>
+          </div>
+          <div className="bg-white px-4 py-2 rounded-lg shadow-sm border border-gray-200">
+            <span className="text-sm text-gray-500">Widget Snippet: </span>
+            <code className="text-sm bg-gray-100 px-2 py-1 rounded text-pink-600">&lt;script src="https://your-domain.com/widget.js"&gt;&lt;/script&gt;</code>
+          </div>
+        </header>
+
+        {projects.length === 0 ? (
+          <div className="bg-white p-12 text-center rounded-xl shadow-sm border border-gray-200">
+            <h3 className="text-lg font-medium text-gray-900">No projects yet</h3>
+            <p className="text-gray-500 mt-2">Install the widget snippet on a client site to capture the first pin.</p>
+          </div>
+        ) : (
+          <div className="space-y-8">
+            {projects.map(project => (
+              <div key={project.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <div className="bg-gray-900 px-6 py-4">
+                  <h2 className="text-xl font-semibold text-white">{project.name}</h2>
+                  <p className="text-gray-400 text-sm">{project.domain}</p>
+                </div>
+                
+                <div className="p-6">
+                  {project.pages.map(page => (
+                    <div key={page.id} className="mb-8 last:mb-0">
+                      <h3 className="text-lg font-medium text-gray-800 mb-4 border-b pb-2">Path: {page.path}</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {page.comments.map(comment => (
+                          <div key={comment.id} className="bg-gray-50 p-4 rounded-lg border border-gray-200 relative">
+                            <div className="absolute top-4 right-4 flex items-center space-x-2">
+                              <span className={`px-2 py-1 text-xs font-medium rounded-full ${comment.status === 'OPEN' ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'}`}>
+                                {comment.status}
+                              </span>
+                            </div>
+                            <p className="font-medium text-gray-900 mt-1 mb-2">"{comment.text}"</p>
+                            <div className="text-xs text-gray-500 space-y-1 font-mono bg-gray-100 p-2 rounded">
+                              <p>X: {comment.xPercent.toFixed(1)}% | Y: {comment.yPercent.toFixed(1)}%</p>
+                              <p className="truncate" title={comment.xpath || ''}>DOM: {comment.xpath}</p>
+                              <p>Screen: {comment.screenSize}</p>
+                            </div>
+                            <div className="mt-4 flex justify-between items-center">
+                              <span className="text-xs text-gray-400">{new Date(comment.createdAt).toLocaleString()}</span>
+                              <button className="text-sm text-pink-600 font-medium hover:text-pink-700">Deploy AI Agent &rarr;</button>
+                            </div>
+                          </div>
+                        ))}
+                        {page.comments.length === 0 && (
+                          <p className="text-sm text-gray-500 italic">No feedback pins on this page yet.</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
