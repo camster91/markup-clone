@@ -1,6 +1,8 @@
 import { PrismaClient } from '@prisma/client';
 import CommentCard from '../components/CommentCard';
 
+export const dynamic = 'force-dynamic';
+
 const prisma = new PrismaClient();
 
 export default async function Dashboard() {
