@@ -1,0 +1,23 @@
+name: Deploy to Coolify
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Coolify Deploy
+        run: |
+          response=$(curl -s -w "\n%{http_code}" \
+            "${{ secrets.COOLIFY_WEBHOOK }}" \
+            -H "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}")
+          http_code=$(echo "$response" | tail -1)
+          body=$(echo "$response" | head -n -1)
+          echo "$body"
+          if [ "$http_code" != "200" ]; then
+            echo "Deploy failed with status $http_code"
+            exit 1
+          fi
