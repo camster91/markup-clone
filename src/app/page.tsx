@@ -1,9 +1,9 @@
-import { PrismaClient } from '@prisma/client';
 import CommentCard from '../components/CommentCard';
+import NewProjectForm from '@/components/NewProjectForm';
+import WidgetSnippet from '@/components/WidgetSnippet';
+import { prisma } from '@/lib/prisma';
 
 export const dynamic = 'force-dynamic';
-
-const prisma = new PrismaClient();
 
 export default async function Dashboard() {
   const projects = await prisma.project.findMany({
@@ -28,9 +28,11 @@ export default async function Dashboard() {
           </div>
           <div className="bg-white px-4 py-2 rounded-lg shadow-sm border border-gray-200">
             <span className="text-sm text-gray-500">Widget Snippet: </span>
-            <code className="text-sm bg-gray-100 px-2 py-1 rounded text-pink-600">&lt;script src="https://your-domain.com/widget.js"&gt;&lt;/script&gt;</code>
+            <WidgetSnippet />
           </div>
         </header>
+
+        <NewProjectForm />
 
         {projects.length === 0 ? (
           <div className="bg-white p-12 text-center rounded-xl shadow-sm border border-gray-200">

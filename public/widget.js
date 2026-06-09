@@ -2,7 +2,49 @@
   // Glow Feedback Widget
   console.log("Glow Feedback Widget Loaded.");
 
-  let isFeedbackMode = true; // Toggle this via a floating UI button later
+  // Derive API URL from the script src
+  const scriptEl = document.currentScript || (function(){ const s = document.getElementsByTagName('script'); return s[s.length-1]; })();
+  const SCRIPT_SRC = scriptEl ? scriptEl.src : '';
+  const API_URL = SCRIPT_SRC.replace(/\/widget\.js.*$/, '') + '/api/comments';
+
+  let isFeedbackMode = false; // Default OFF
+
+  // Create floating toggle button
+  function createToggleButton() {
+    const btn = document.createElement('button');
+    btn.id = 'glow-feedback-toggle';
+    btn.textContent = 'Feedback';
+    btn.style.position = 'fixed';
+    btn.style.bottom = '20px';
+    btn.style.right = '20px';
+    btn.style.zIndex = '999999';
+    btn.style.padding = '10px 16px';
+    btn.style.backgroundColor = '#888888';
+    btn.style.color = 'white';
+    btn.style.border = 'none';
+    btn.style.borderRadius = '20px';
+    btn.style.cursor = 'pointer';
+    btn.style.fontFamily = 'sans-serif';
+    btn.style.fontSize = '14px';
+    btn.style.fontWeight = 'bold';
+    btn.style.boxShadow = '0 2px 6px rgba(0,0,0,0.3)';
+
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      isFeedbackMode = !isFeedbackMode;
+      if (isFeedbackMode) {
+        btn.textContent = 'Stop Feedback';
+        btn.style.backgroundColor = '#FF0055';
+      } else {
+        btn.textContent = 'Feedback';
+        btn.style.backgroundColor = '#888888';
+      }
+    });
+
+    document.body.appendChild(btn);
+  }
+
+  createToggleButton();
 
   // Helper to get a unique CSS selector for an element
   function getPathTo(element) {
@@ -25,7 +67,7 @@
     if (!isFeedbackMode) return;
 
     // Ignore clicks on our own feedback UI
-    if (e.target.closest('#glow-feedback-container')) return;
+    if (e.target.closest('#glow-feedback-toggle')) return;
 
     e.preventDefault();
     e.stopPropagation();
@@ -71,19 +113,25 @@
   }
 
   async function submitComment(data) {
-    // In production, this URL will be dynamic based on the script src
-    const API_URL = 'http://localhost:3000/api/comments';
-    
     try {
       const response = await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...data, projectId: 'dev-project' })
+        body: JSON.stringify({ ...data, domain: window.location.hostname })
       });
       if (response.ok) {
         console.log("Feedback saved successfully.");
       } else {
-        console.error("Failed to save feedback.");
+        let errorData = {};
+        try {
+          errorData = await response.json();
+        } catch (_) {}
+        if (response.status === 400) {
+          console.warn("Markup.io: no project registered for this domain. The feedback will not be saved.");
+          console.error("Error:", errorData);
+        } else {
+          console.error("Failed to save feedback.", errorData);
+        }
       }
     } catch (err) {
       console.error("Network error:", err);

@@ -1,19 +1,21 @@
 import { NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { prisma } from '../../../lib/prisma';
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { projectId, path, text, xPercent, yPercent, xpath, screenSize } = body;
+    const { domain, projectId, path, text, xPercent, yPercent, xpath, screenSize } = body;
 
-    // 1. Ensure the Project exists (for MVP we auto-create a default one if missing)
-    let project = await prisma.project.findFirst({ where: { domain: 'dev-domain.com' } });
+    // Look up project by domain or projectId
+    let project = null;
+    if (domain) {
+      project = await prisma.project.findFirst({ where: { domain } });
+    } else if (projectId) {
+      project = await prisma.project.findUnique({ where: { id: projectId } });
+    }
+
     if (!project) {
-      project = await prisma.project.create({
-        data: { name: 'Development Project', domain: 'dev-domain.com' }
-      });
+      return NextResponse.json({ error: 'No project for domain' }, { status: 400 });
     }
 
     // 2. Ensure the Page exists
