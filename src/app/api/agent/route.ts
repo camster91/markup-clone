@@ -151,15 +151,31 @@ export async function POST(req: Request) {
         if (!commitRes.ok) throw new Error('Commit create failed: ' + JSON.stringify(commitData));
         const newCommitSha = commitData.sha;
 
-        // 7. Update the branch ref to point at the new commit
-        const updateRefRes = await fetch(base + '/repos/' + owner + '/' + repoName + '/git/refs/heads/' + branchName, {
-          method: 'PATCH', headers, body: JSON.stringify({
-            sha: newCommitSha,
-            force: true
-          })
-        });
-        const updateRefData = await updateRefRes.json();
-        if (!updateRefRes.ok) throw new Error('Branch update failed: ' + JSON.stringify(updateRefData));
+        // 7. Create the branch if it doesn't exist (must exist before we PATCH it)
+        const branchCheck = await fetch(base + '/repos/' + owner + '/' + repoName + '/git/ref/heads/' + branchName, { headers });
+        if (branchCheck.status === 404) {
+          const createBranchRes = await fetch(base + '/repos/' + owner + '/' + repoName + '/git/refs', {
+            method: 'POST', headers, body: JSON.stringify({
+              ref: 'refs/heads/' + branchName,
+              sha: newCommitSha
+            })
+          });
+          const createBranchData = await createBranchRes.json();
+          // 422 = branch already exists (race), that's fine
+          if (!createBranchRes.ok && createBranchRes.status !== 422) {
+            throw new Error('Branch create failed: ' + JSON.stringify(createBranchData));
+          }
+        } else {
+          // 8. Branch exists, update it to point at the new commit
+          const updateRefRes = await fetch(base + '/repos/' + owner + '/' + repoName + '/git/refs/heads/' + branchName, {
+            method: 'PATCH', headers, body: JSON.stringify({
+              sha: newCommitSha,
+              force: true
+            })
+          });
+          const updateRefData = await updateRefRes.json();
+          if (!updateRefRes.ok) throw new Error('Branch update failed: ' + JSON.stringify(updateRefData));
+        }
 
         // 8. Create the PR
         const prRes = await fetch(base + '/repos/' + owner + '/' + repoName + '/pulls', {
