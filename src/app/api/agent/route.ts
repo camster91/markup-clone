@@ -24,26 +24,61 @@ export async function POST(req: Request) {
       const llmUrl = process.env.MATON_LLM_URL;
       if (llmUrl) {
         llmAttempted = true;
-        const llmRes = await fetch(llmUrl, {
-          method: 'POST',
-          headers: {
-            'Authorization': 'Bearer ' + (process.env.MATON_API_KEY || process.env.MATON_API_KEY_ASHBI || ''),
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: process.env.MATON_LLM_MODEL || 'gpt-4o-mini',
-            messages: [
-              { role: 'system', content: 'You are a frontend code assistant. Given a client comment and DOM context, output ONLY a code fix (HTML/CSS/React/JSX). No explanation.' },
-              { role: 'user', content: `Comment: "${comment.text}"\nXPath: ${comment.xpath}\nClick position: X=${comment.xPercent}%, Y=${comment.yPercent}%\nPage: ${comment.page.path}\n\nOutput a code fix.` }
-            ]
-          })
-        });
+        const llmModel = process.env.MATON_LLM_MODEL || 'gpt-4o-mini';
+        const llmAuth = process.env.MATON_LLM_KEY || process.env.MATON_API_KEY_ASHBI || process.env.MATON_API_KEY || '';
+
+        // Detect Anthropic-format endpoints (have /anthropic in path or end with /v1/messages)
+        const isAnthropic = llmUrl.includes('/anthropic') || llmUrl.endsWith('/v1/messages');
+
+        const systemPrompt = 'You are a frontend code assistant. Given a client comment and DOM context, output ONLY a code fix (HTML/CSS/React/JSX). No explanation.';
+        const userPrompt = `Comment: "${comment.text}"\nXPath: ${comment.xpath}\nClick position: X=${comment.xPercent}%, Y=${comment.yPercent}%\nPage: ${comment.page.path}\n\nOutput a code fix.`;
+
+        let llmRes: Response;
+        if (isAnthropic) {
+          llmRes = await fetch(llmUrl, {
+            method: 'POST',
+            headers: {
+              'x-api-key': llmAuth,
+              'anthropic-version': '2023-06-01',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: llmModel,
+              max_tokens: 1024,
+              system: systemPrompt,
+              messages: [{ role: 'user', content: userPrompt }]
+            })
+          });
+        } else {
+          llmRes = await fetch(llmUrl, {
+            method: 'POST',
+            headers: {
+              'Authorization': 'Bearer ' + llmAuth,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: llmModel,
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userPrompt }
+              ]
+            })
+          });
+        }
+
         if (llmRes.ok) {
           const data = await llmRes.json();
-          proposedCode = data.choices?.[0]?.message?.content?.trim() || data.content?.[0]?.text?.trim() || '';
+          if (isAnthropic) {
+            // Anthropic: data.content[0].text
+            proposedCode = (data.content?.[0]?.text || '').trim();
+          } else {
+            // OpenAI: data.choices[0].message.content
+            proposedCode = (data.choices?.[0]?.message?.content || '').trim();
+          }
           if (!proposedCode) throw new Error('LLM returned empty content');
         } else {
-          throw new Error('LLM ' + llmRes.status);
+          const errText = await llmRes.text();
+          throw new Error('LLM ' + llmRes.status + ': ' + errText.substring(0, 200));
         }
       } else {
         throw new Error('MATON_LLM_URL not set');
