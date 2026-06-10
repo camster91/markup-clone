@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '../../../lib/prisma';
+import { requireApiKey } from '@/lib/auth';
 
 export async function POST(req: Request) {
+  const authErr = requireApiKey(req);
+  if (authErr) return authErr;
+
   try {
     const body = await req.json();
     const { domain, projectId, path, text, xPercent, yPercent, xpath, screenSize } = body;

@@ -6,6 +6,7 @@
   const scriptEl = document.currentScript || (function(){ const s = document.getElementsByTagName('script'); return s[s.length-1]; })();
   const SCRIPT_SRC = scriptEl ? scriptEl.src : '';
   const API_URL = SCRIPT_SRC.replace(/\/widget\.js.*$/, '') + '/api/comments';
+  const API_KEY = scriptEl ? scriptEl.getAttribute('data-api-key') : '';
 
   let isFeedbackMode = false; // Default OFF
 
@@ -114,9 +115,11 @@
 
   async function submitComment(data) {
     try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (API_KEY) headers['X-Api-Key'] = API_KEY;
       const response = await fetch(API_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ ...data, domain: window.location.hostname })
       });
       if (response.ok) {

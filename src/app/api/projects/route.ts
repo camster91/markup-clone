@@ -1,12 +1,18 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { requireApiKey } from '@/lib/auth';
 
-export async function GET() {
+export async function GET(req: Request) {
+  const authErr = requireApiKey(req);
+  if (authErr) return authErr;
   const projects = await prisma.project.findMany({ orderBy: { createdAt: 'desc' } });
   return NextResponse.json(projects);
 }
 
 export async function POST(req: Request) {
+  const authErr = requireApiKey(req);
+  if (authErr) return authErr;
+
   try {
     const body = await req.json();
     const { name, domain, githubRepo } = body;
