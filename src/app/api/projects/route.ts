@@ -6,7 +6,16 @@ import crypto from 'crypto';
 export async function GET(req: Request) {
   const authErr = requireApiKey(req);
   if (authErr) return authErr;
-  const projects = await prisma.project.findMany({ orderBy: { createdAt: 'desc' } });
+  const projects = await prisma.project.findMany({
+    include: {
+      pages: {
+        include: {
+          comments: { orderBy: { createdAt: 'desc' } }
+        }
+      }
+    },
+    orderBy: { createdAt: 'desc' }
+  });
   return NextResponse.json(projects);
 }
 
