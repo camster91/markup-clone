@@ -325,20 +325,16 @@
     const commentText = currentModal.textarea.value.trim();
     if (!commentText) return;
 
-    // Close modal
+    // Capture data before tearing down modal
+    const data = Object.assign({}, pendingClickData, { text: commentText });
+
+    // Close modal (sets currentModal = null and pendingClickData = null)
     hideCommentModal();
 
     // Pin stays drawn (currentPin is already set)
 
     // Send to server
-    submitComment({
-      path: pendingClickData.path,
-      text: commentText,
-      xPercent: pendingClickData.xPercent,
-      yPercent: pendingClickData.yPercent,
-      xpath: pendingClickData.xpath,
-      screenSize: pendingClickData.screenSize
-    });
+    submitComment(data);
   }
 
   // Intercept Clicks
