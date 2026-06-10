@@ -28,7 +28,7 @@ export default async function Dashboard() {
           </div>
           <div className="bg-white px-4 py-2 rounded-lg shadow-sm border border-gray-200">
             <span className="text-sm text-gray-500">Widget Snippet: </span>
-            <WidgetSnippet />
+            <WidgetSnippet apiKey={process.env.MUP_API_KEY} />
           </div>
         </header>
 
