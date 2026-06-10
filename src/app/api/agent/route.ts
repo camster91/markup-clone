@@ -1,11 +1,8 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '../../../lib/prisma';
-import { requireApiKey } from '@/lib/auth';
+import { requireProjectKey } from '@/lib/auth';
 
 export async function POST(req: Request) {
-  const authErr = requireApiKey(req);
-  if (authErr) return authErr;
-
   try {
     const { commentId } = await req.json();
     if (!commentId) return NextResponse.json({ error: 'commentId required' }, { status: 400 });
@@ -15,6 +12,10 @@ export async function POST(req: Request) {
       include: { page: { include: { project: true } } }
     });
     if (!comment) return NextResponse.json({ error: 'Comment not found' }, { status: 404 });
+
+    // Verify the X-Api-Key matches the project's apiKey
+    const authErr = await requireProjectKey(req, comment.page.project.id);
+    if (authErr) return authErr;
 
     // STEP 1: Generate the proposed fix
     let proposedCode: string;

@@ -1,11 +1,8 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '../../../lib/prisma';
-import { requireApiKey } from '@/lib/auth';
+import { requireProjectKey } from '@/lib/auth';
 
 export async function POST(req: Request) {
-  const authErr = requireApiKey(req);
-  if (authErr) return authErr;
-
   try {
     const body = await req.json();
     const { domain, projectId, path, text, xPercent, yPercent, xpath, screenSize } = body;
@@ -22,7 +19,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'No project for domain' }, { status: 400 });
     }
 
-    // 2. Ensure the Page exists
+    // Verify the X-Api-Key matches this project's apiKey
+    const authErr = await requireProjectKey(req, project.id);
+    if (authErr) return authErr;
+
+    // Ensure the Page exists
     let page = await prisma.page.findFirst({
       where: { projectId: project.id, path: path || '/' }
     });
@@ -33,7 +34,7 @@ export async function POST(req: Request) {
       });
     }
 
-    // 3. Create the Comment
+    // Create the Comment
     const comment = await prisma.comment.create({
       data: {
         pageId: page.id,

@@ -6,9 +6,11 @@ export default function CommentCard({ comment }: { comment: any }) {
   const [localStatus, setLocalStatus] = useState(comment.status);
   const [proposedCode, setProposedCode] = useState(comment.proposedCode);
   const [prUrl, setPrUrl] = useState(comment.pullRequestUrl);
+  const [error, setError] = useState<string | null>(null);
 
   const handleDeployAgent = async () => {
     setIsDeploying(true);
+    setError(null);
     try {
       const res = await fetch('/api/agent', {
         method: 'POST',
@@ -22,7 +24,7 @@ export default function CommentCard({ comment }: { comment: any }) {
         setPrUrl(data.data.pullRequestUrl);
       }
     } catch (err) {
-      console.error(err);
+      setError(err instanceof Error ? err.message : 'Agent request failed. Check console.');
     }
     setIsDeploying(false);
   };
@@ -53,9 +55,14 @@ export default function CommentCard({ comment }: { comment: any }) {
           <button 
             onClick={handleDeployAgent}
             disabled={isDeploying}
-            className="text-sm text-pink-600 font-medium hover:text-pink-700 disabled:opacity-50"
+            className="text-sm text-pink-600 font-medium hover:text-pink-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isDeploying ? 'Agent Analyzing...' : 'Deploy AI Agent →'}
+            {isDeploying ? (
+              <span className="flex items-center gap-2">
+                <div className="animate-spin h-3 w-3 border-2 border-pink-600 border-t-transparent rounded-full" />
+                <span className="opacity-75">Analyzing... (this can take 10s)</span>
+              </span>
+            ) : 'Deploy AI Agent →'}
           </button>
         ) : prUrl && (
           <a href={prUrl} target="_blank" rel="noreferrer" className="text-sm text-blue-600 font-medium hover:underline">
@@ -63,6 +70,11 @@ export default function CommentCard({ comment }: { comment: any }) {
           </a>
         )}
       </div>
+      {error && (
+        <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2 mt-2">
+          {error}
+        </div>
+      )}
     </div>
   );
 }

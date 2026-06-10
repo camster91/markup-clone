@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { prisma } from './prisma';
 
 const DASHBOARD_HOST = process.env.DASHBOARD_HOST || 'markup.ashbi.ca';
 
@@ -7,15 +8,10 @@ export function requireApiKey(req: Request): NextResponse | null {
   if (!required) return null; // Auth disabled if not configured (dev mode)
 
   // Same-origin browser requests from the dashboard are implicitly trusted.
-  // The browser's Origin header is the dashboard host, and the request cookie
-  // (if we ever set one) would prove it. For now: skip auth when the Origin
-  // header matches the configured dashboard host.
   const origin = req.headers.get('origin');
   if (origin && origin.includes(DASHBOARD_HOST)) {
     return null;
   }
-  // For server-to-server or same-origin fetch without Origin (e.g. older
-  // clients), also accept Sec-Fetch-Site=same-origin.
   const secFetchSite = req.headers.get('sec-fetch-site');
   if (secFetchSite === 'same-origin') {
     return null;
@@ -25,4 +21,20 @@ export function requireApiKey(req: Request): NextResponse | null {
   if (provided === required) return null;
 
   return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+}
+
+export async function requireProjectKey(req: Request, projectId: string): Promise<NextResponse | null> {
+  // Same-origin bypass
+  const origin = req.headers.get('origin');
+  if (origin && origin.includes(DASHBOARD_HOST)) return null;
+  const secFetchSite = req.headers.get('sec-fetch-site');
+  if (secFetchSite === 'same-origin') return null;
+
+  const project = await prisma.project.findUnique({ where: { id: projectId } });
+  if (!project || !project.apiKey) return NextResponse.json({ error: 'No API key for project' }, { status: 403 });
+  const provided = req.headers.get('x-api-key');
+  if (provided !== project.apiKey) {
+    return NextResponse.json({ error: 'Invalid API key' }, { status: 401 });
+  }
+  return null;
 }

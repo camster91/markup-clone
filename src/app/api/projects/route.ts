@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireApiKey } from '@/lib/auth';
+import crypto from 'crypto';
 
 export async function GET(req: Request) {
   const authErr = requireApiKey(req);
@@ -19,7 +20,8 @@ export async function POST(req: Request) {
     if (!name || !domain) return NextResponse.json({ error: 'name and domain required' }, { status: 400 });
     const existing = await prisma.project.findFirst({ where: { domain } });
     if (existing) return NextResponse.json({ error: 'domain already exists' }, { status: 409 });
-    const project = await prisma.project.create({ data: { name, domain, githubRepo: githubRepo || null } });
+    const apiKey = 'mup_' + crypto.randomBytes(16).toString('hex');
+    const project = await prisma.project.create({ data: { name, domain, githubRepo: githubRepo || null, apiKey } });
     return NextResponse.json(project, { status: 201 });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : 'Unknown' }, { status: 500 });
