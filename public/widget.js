@@ -256,6 +256,9 @@
 
     textarea.addEventListener('input', updateSaveButton);
 
+    // Wire up save button click
+    saveBtn.addEventListener('click', submitFromModal);
+
     // Handle keyboard shortcuts
     textarea.addEventListener('keydown', function(e) {
       // Cmd+Enter or Ctrl+Enter to submit
