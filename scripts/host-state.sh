@@ -394,6 +394,24 @@ for c in state["docker"]["containers"]:
             state["markup_clone"]["health"] = "unreachable"
         break
 
+# Caddy pre-flight: check for markup.ashbi.ca route in /opt/caddy/Caddyfile
+CADDYFILE = "/opt/caddy/Caddyfile"
+caddy_route_present = False
+caddy_route_warning = ""
+if caddy_text:
+    caddy_lower = caddy_text.lower()
+    if "markup.ashbi.ca" in caddy_lower:
+        caddy_route_present = True
+    else:
+        caddy_route_present = False
+        caddy_route_warning = "markup.ashbi.ca route is missing from /opt/caddy/Caddyfile"
+else:
+    caddy_route_warning = "markup.ashbi.ca route is missing from /opt/caddy/Caddyfile"
+
+state["markup_clone"]["caddy_route_present"] = caddy_route_present
+if caddy_route_warning:
+    state["markup_clone"]["caddy_route_warning"] = caddy_route_warning
+
 print(json.dumps(state, indent=2, sort_keys=True))
 PYEOF
 python3 /tmp/_build_state.py > "$JSON"
@@ -489,6 +507,10 @@ rm -f /tmp/_build_state.py
     echo "| Health | \`$HEALTH\` |"
   else
     echo "| Container | not present |"
+  fi
+  echo "| Caddy route for markup.ashbi.ca | $(if [ -f /opt/caddy/Caddyfile ] && grep -qi "markup.ashbi.ca" /opt/caddy/Caddyfile; then echo "present"; else echo "**MISSING** — see warning above"; fi) |"
+  if [ -f /opt/caddy/Caddyfile ] && ! grep -qi "markup.ashbi.ca" /opt/caddy/Caddyfile; then
+    echo "| WARNING | markup.ashbi.ca route is missing from /opt/caddy/Caddyfile — dashboard will be unreachable |"
   fi
   echo "| Public URL | https://markup.ashbi.ca |"
   echo "| Container port mapping | 127.0.0.1:3030 -> container:3000 |"

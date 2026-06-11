@@ -166,4 +166,31 @@ fi
 rm -f /tmp/smoke-shot.png
 echo "OK (${SHOT_SIZE} bytes)"
 
+# ────────────────────────────────────────────────────────────────
+# 6/6. Verify widget.js contains the new behavior patterns:
+#    - scrollHeight (full-page capture, task 1)
+#    - outline (hover outline, task 2)
+#    Deliberately 6/6 (not 6/5) to keep the [N/M] counter clean;
+#    6/5 would make it unclear whether M=5 (steps before) or M=6 (total).
+# ────────────────────────────────────────────────────────────────
+echo -n "[6/6] Widget contains hover-outline and full-page capture... "
+WIDGET_RESP=$(curl -sS -w "\n%{http_code}" "${HOST}:${PORT}/widget.js" -o /tmp/smoke-widget.js)
+WIDGET_HTTP=$(echo "$WIDGET_RESP" | tail -1)
+
+if [ "$WIDGET_HTTP" != "200" ]; then
+  echo "HTTP $WIDGET_HTTP"
+  exit 1
+fi
+
+HAS_OUTLINE=$(grep -c 'outline' /tmp/smoke-widget.js 2>/dev/null || echo 0)
+HAS_SCROLLHEIGHT=$(grep -c 'scrollHeight' /tmp/smoke-widget.js 2>/dev/null || echo 0)
+rm -f /tmp/smoke-widget.js
+
+if [ "$HAS_OUTLINE" -gt 0 ] && [ "$HAS_SCROLLHEIGHT" -gt 0 ]; then
+  echo "PASS (outline=$HAS_OUTLINE, scrollHeight=$HAS_SCROLLHEIGHT)"
+else
+  echo "FAIL (outline=$HAS_OUTLINE, scrollHeight=$HAS_SCROLLHEIGHT — expected both > 0)"
+  exit 1
+fi
+
 RESULT="PASS"

@@ -24,6 +24,7 @@
   let pendingClick = null;
 
   // ---------- Toggle button ----------
+  let lastHoveredEl = null;
 
   function createToggleButton() {
     const btn = document.createElement('button');
@@ -58,6 +59,16 @@
   function cleanupAll() {
     if (currentModal) hideModal();
     document.querySelectorAll('[id^="markup-pin-"]').forEach(p => p.remove());
+    clearHoverOutline();
+  }
+
+  function clearHoverOutline() {
+    if (lastHoveredEl) {
+      lastHoveredEl.style.outline = '';
+      lastHoveredEl.style.outlineOffset = '';
+      lastHoveredEl.style.transition = '';
+      lastHoveredEl = null;
+    }
   }
 
   // ---------- Element path (CSS selector) ----------
@@ -89,11 +100,16 @@
 
   // ---------- Screenshot capture ----------
   // SVG-foreignObject trick. Works in most modern browsers (Chrome, Safari, Firefox, Edge).
-  // Renders the current DOM (or the part the user clicked on) into a canvas, then to a PNG blob.
+  // Renders the full scrollable page (not just the viewport) into a canvas, then to a PNG blob.
 
   async function captureViewport() {
     const w = window.innerWidth;
-    const h = window.innerHeight;
+    // Use full document scrollHeight so the entire page is captured, not just the viewport
+    const fullH = Math.max(
+      document.documentElement.scrollHeight,
+      document.body.scrollHeight,
+      window.innerHeight
+    );
     const dpr = window.devicePixelRatio || 1;
 
     // Clone the current document body so we can mutate it without affecting the page
@@ -105,7 +121,7 @@
     clone.querySelectorAll('script, [id^="markup-"]').forEach(n => n.remove());
     clone.querySelectorAll('iframe').forEach(n => n.remove());
 
-    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '">' +
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + fullH + '">' +
       '<foreignObject x="0" y="0" width="100%" height="100%">' +
       new XMLSerializer().serializeToString(clone) +
       '</foreignObject></svg>';
@@ -123,7 +139,7 @@
 
       const canvas = document.createElement('canvas');
       canvas.width = w * dpr;
-      canvas.height = h * dpr;
+      canvas.height = fullH * dpr;
       const ctx = canvas.getContext('2d');
       ctx.scale(dpr, dpr);
       ctx.drawImage(img, 0, 0);
@@ -441,8 +457,28 @@
     e.preventDefault();
     e.stopPropagation();
 
+    // Clear hover outline on click so pin doesn't sit on a stale outline
+    clearHoverOutline();
+
     showModal(e.clientX, e.clientY, e.target);
   }, true);
+
+  // Hover outline: draw a subtle dashed outline around the element under the cursor
+  document.addEventListener('mousemove', function (e) {
+    if (!isFeedbackMode) return;
+    if (currentModal) return; // don't show outline while modal is open
+
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    if (!el || el === lastHoveredEl) return;
+    if (el.closest('#markup-toggle')) return;
+
+    clearHoverOutline();
+
+    lastHoveredEl = el;
+    el.style.outline = '2px dashed #FF0055';
+    el.style.outlineOffset = '2px';
+    el.style.transition = 'outline 0.1s';
+  });
 
   // ---------- Boot ----------
 
