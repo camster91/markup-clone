@@ -12,9 +12,9 @@
 #   5. Replace the existing PNG at /data/screenshots/<screenshotId>.png
 #   6. Update the Screenshot row's width/height in the DB
 #
-# Requires: chromium (or chromium-browser) on PATH, postgres client (psql),
-#           access to the markup-postgres container via docker exec,
-#           write access to /data/screenshots/
+# Requires: chromium (or chromium-browser) on PATH, psql (postgres client)
+# OR access to the markup-postgres container via docker exec, write access
+# to /data/screenshots.
 
 set -euo pipefail
 
@@ -27,7 +27,7 @@ if [ -z "$SCREENSHOT_ID" ]; then
   exit 1
 fi
 
-# Find the right binaries (chromium, chromium-browser, or google-chrome)
+# Find the right chromium binary
 CHROME=""
 for c in chromium chromium-browser google-chrome google-chrome-stable; do
   if command -v "$c" >/dev/null 2>&1; then
@@ -40,10 +40,29 @@ if [ -z "$CHROME" ]; then
   exit 2
 fi
 
-# Pick the DB client: psql (if installed) or docker exec into the postgres container.
-# The container has psql; the host fallback uses docker exec.
+# Pick the DB client. Two strategies:
+#   1. psql with explicit -h/-p/-U/-d (alpine busybox psql doesn't accept
+#      a URL as a positional arg). Use DATABASE_URL env to extract params.
+#   2. Fall back to docker exec into the postgres container (host use case).
+PSQL=""
 if command -v psql >/dev/null 2>&1 && [ -n "$DATABASE_URL" ]; then
-  PSQL="psql"
+  # Parse postgresql://user:***@host:port/dbname
+  # Strip scheme first
+  URL_NO_SCHEME=$(echo "$DATABASE_URL" | sed -E "s|^postgresql://||")
+  # Split on the LAST @ (so : in passwords are preserved)
+  USER_PASS=$(echo "$URL_NO_SCHEME" | awk -F'@' '{ for(i=1;i<NF;i++) printf "%s@", $i; print "" }' | sed 's/@$//')
+  HOST_PORT_DB=$(echo "$URL_NO_SCHEME" | awk -F'@' '{ print $NF }')
+  USER=$(echo "$USER_PASS" | awk -F':' '{ print $1 }')
+  HOSTPORT=$(echo "$HOST_PORT_DB" | awk -F'/' '{ print $1 }')
+  DBNAME=$(echo "$HOST_PORT_DB" | awk -F'/' '{ print $2 }')
+  HOST=$(echo "$HOSTPORT" | awk -F':' '{ print $1 }')
+  PORT=$(echo "$HOSTPORT" | awk -F':' '{ print $2 }')
+  PORT="${PORT:-5432}"
+  # Extract password: everything between USER and the next @
+  # USER_PASS is user:***; the password is the part after the first :
+  PGPASSWORD=$(echo "$USER_PASS" | awk -F':' '{$1=""; print substr($0,2)}' )
+  export PGPASSWORD
+  PSQL="psql -h $HOST -p $PORT -U $USER -d $DBNAME"
 elif command -v docker >/dev/null 2>&1; then
   PSQL="docker exec ${PG_CONTAINER:-markup-postgres} psql"
 else
@@ -56,7 +75,7 @@ PG_CONTAINER="${PG_CONTAINER:-markup-postgres}"
 OUT_FILE="$SCREENSHOTS_DIR/$SCREENSHOT_ID.png"
 
 # Look up the project domain + page path
-read -r DOMAIN PATH_ < <($PSQL -U markup -d markup_db -t -A -F'|' \
+read -r DOMAIN PATH_ < <($PSQL -t -A -F'|' \
   -c "SELECT p.domain, pa.path FROM \"Screenshot\" s JOIN \"Page\" pa ON pa.id = s.\"pageId\" JOIN \"Project\" p ON p.id = pa.\"projectId\" WHERE s.id = '$SCREENSHOT_ID'")
 
 if [ -z "$DOMAIN" ]; then
@@ -65,7 +84,7 @@ if [ -z "$DOMAIN" ]; then
 fi
 
 URL="https://${DOMAIN}${PATH_}"
-echo "Re-capturing ${URL} (${WIDTH}x${HEIGHT}) → ${OUT_FILE}"
+echo "Re-capturing ${URL} (${WIDTH}x${HEIGHT}) -> ${OUT_FILE}"
 
 # Capture. --hide-scrollbars + --virtual-time-budget so we wait for fonts.
 "$CHROME" \
@@ -99,7 +118,7 @@ with open('$OUT_FILE', 'rb') as f:
     print(struct.unpack('>I', f.read(4))[0])
 ")
 
-$PSQL -U markup -d markup_db -c \
+$PSQL -c \
   "UPDATE \"Screenshot\" SET width = $W, height = $H WHERE id = '$SCREENSHOT_ID'" >/dev/null
 
 echo "OK: $OUT_FILE (${W}x${H})"
