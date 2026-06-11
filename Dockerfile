@@ -13,7 +13,7 @@ ENV DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy"
 RUN npx prisma generate && npm run build
 
 FROM base AS runner
-RUN apk add --no-cache curl wget bash chromium chromium-headless-shell nss libgbm
+RUN apk add --no-cache curl wget bash chromium chromium-headless-shell nss
 # Symlink: alpine installs chromium-browser; some scripts expect chromium
 RUN ln -sf /usr/bin/chromium-browser /usr/local/bin/chromium 2>/dev/null || true
 ENV NODE_ENV=production
