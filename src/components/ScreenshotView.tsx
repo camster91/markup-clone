@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import PinThread from './PinThread';
 import type { Pin, FeedbackComment, ScreenshotWithPins } from '@/lib/types';
 
@@ -13,7 +13,13 @@ export default function ScreenshotView({
 }) {
   const [activePinId, setActivePinId] = useState<string | null>(null);
   const [pins, setPins] = useState<Pin[]>(screenshot.pins);
-  const imgUrl = `/api/screenshots/${screenshot.id}/image`;
+  const [recaptureStatus, setRecaptureStatus] = useState<'idle' | 'starting' | 'running' | 'done' | 'error'>('idle');
+  const [recaptureError, setRecaptureError] = useState<string | null>(null);
+  const [width, setWidth] = useState(screenshot.width);
+  const [height, setHeight] = useState(screenshot.height);
+  const [capturedAt, setCapturedAt] = useState(screenshot.capturedAt);
+  const [imageKey, setImageKey] = useState(0); // bump to force img reload
+  const imgUrl = `/api/screenshots/${screenshot.id}/image?v=${imageKey}`;
 
   const handlePinStatusChange = async (pinId: string, status: 'OPEN' | 'RESOLVED') => {
     const res = await fetch(`/api/pins/${pinId}`, {
@@ -30,11 +36,66 @@ export default function ScreenshotView({
     setPins(prev => prev.map(p => p.id === pinId ? { ...p, comments: [...p.comments, comment] } : p));
   };
 
+  // Server-side recapture: fire-and-forget spawn on the host, then poll for the
+  // updated width/height in /api/projects. The image src has a cache-buster
+  // so the new PNG renders once the file is replaced on disk.
+  const handleRecapture = async () => {
+    setRecaptureStatus('starting');
+    setRecaptureError(null);
+    try {
+      const res = await fetch(`/api/screenshots/${screenshot.id}/recapture`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      setRecaptureStatus('running');
+      // Poll for the new screenshot (width/height change in the DB).
+      // Cap at 30 polls × 1s = 30s.
+      let updated = false;
+      for (let i = 0; i < 30; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        try {
+          const r2 = await fetch('/api/projects');
+          if (r2.ok) {
+            const data = await r2.json();
+            const found = (Array.isArray(data) ? data : data.projects || [])
+              .flatMap((p: any) => p.pages.flatMap((pa: any) => pa.screenshots))
+              .find((s: any) => s.id === screenshot.id);
+            if (found && (found.width !== width || found.height !== height)) {
+              setWidth(found.width);
+              setHeight(found.height);
+              setCapturedAt(found.capturedAt);
+              setImageKey(k => k + 1);
+              updated = true;
+              break;
+            }
+          }
+        } catch {
+          // keep polling
+        }
+      }
+      setRecaptureStatus(updated ? 'done' : 'error');
+      if (!updated) {
+        setRecaptureError('Timed out waiting for the new screenshot');
+      } else {
+        // Auto-clear the "done" indicator after 3 seconds
+        setTimeout(() => setRecaptureStatus('idle'), 3000);
+      }
+    } catch (err) {
+      setRecaptureStatus('error');
+      setRecaptureError(err instanceof Error ? err.message : 'Recapture failed');
+    }
+  };
+
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden bg-white">
       <div className="bg-gray-50 px-4 py-2 text-xs text-gray-500 flex items-center justify-between border-b border-gray-200">
         <div>
-          Captured: {new Date(screenshot.capturedAt).toLocaleString()} · {screenshot.width}×{screenshot.height}px
+          Captured: {new Date(capturedAt).toLocaleString()} · {width}×{height}px
         </div>
         <div className="flex items-center gap-3">
           <span className="text-gray-400">
@@ -43,6 +104,19 @@ export default function ScreenshotView({
           <span className="text-gray-400">
             {pins.filter(p => p.status === 'RESOLVED').length} resolved
           </span>
+          <button
+            type="button"
+            onClick={handleRecapture}
+            disabled={recaptureStatus === 'starting' || recaptureStatus === 'running'}
+            className="text-xs px-2 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+            title={recaptureError || 'Server-side recapture via headless Chromium'}
+          >
+            {recaptureStatus === 'idle' && 'Recapture'}
+            {recaptureStatus === 'starting' && 'Starting…'}
+            {recaptureStatus === 'running' && 'Capturing…'}
+            {recaptureStatus === 'done' && '✓ Refreshed'}
+            {recaptureStatus === 'error' && '✗ Failed'}
+          </button>
         </div>
       </div>
 
