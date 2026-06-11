@@ -84,6 +84,7 @@ export default function ProjectSubscribers({ projectId }: ProjectSubscribersProp
     <div className="border-t border-gray-100">
       {/* Toggle button */}
       <button
+        type="button"
         onClick={() => setExpanded(v => !v)}
         className="w-full px-6 py-3 flex items-center justify-between text-sm text-gray-600 hover:bg-gray-50 transition-colors"
       >

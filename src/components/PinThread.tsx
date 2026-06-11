@@ -51,7 +51,7 @@ export default function PinThread({
             {pin.status === 'OPEN' ? 'Open' : 'Resolved'}
           </span>
         </div>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
+        <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
       </div>
 
       <div className="space-y-3 mb-4">
