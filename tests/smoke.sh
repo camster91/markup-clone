@@ -150,7 +150,7 @@ echo "OK"
 # ────────────────────────────────────────────────────────────────
 # 5. Fetch the screenshot via the public image endpoint and verify bytes.
 # ────────────────────────────────────────────────────────────────
-echo -n "[5/5] Fetch screenshot image... "
+echo -n "[5/7] Fetch screenshot image... "
 SHOT_HTTP=$(curl -sS -o /tmp/smoke-shot.png -w "%{http_code}" "${HOST}:${PORT}/api/screenshots/${SHOT_ID}/image")
 SHOT_SIZE=$(stat -f %z /tmp/smoke-shot.png 2>/dev/null || stat -c %s /tmp/smoke-shot.png 2>/dev/null)
 
@@ -167,13 +167,44 @@ rm -f /tmp/smoke-shot.png
 echo "OK (${SHOT_SIZE} bytes)"
 
 # ────────────────────────────────────────────────────────────────
-# 6/6. Verify widget.js contains the new behavior patterns:
+# 5b. Reopen the resolved pin by adding a reviewer comment.
+# ────────────────────────────────────────────────────────────────
+echo -n "[5b/7] Reopen pin via reviewer comment... "
+REOPEN_RESP=$(curl -sS -w "\n%{http_code}" -X POST "${HOST}:${PORT}/api/pins/${PIN_ID}/comments" \
+  -H "Content-Type: application/json" \
+  -H "Origin: ${HOST}" \
+  -d '{"text":"Not quite there yet — please revisit.","author":"smoke-reviewer","authorRole":"reviewer"}')
+REOPEN_HTTP=$(echo "$REOPEN_RESP" | tail -1)
+
+if [ "$REOPEN_HTTP" != "201" ] && [ "$REOPEN_HTTP" != "200" ]; then
+  echo "HTTP $REOPEN_HTTP"
+  exit 1
+fi
+echo "OK"
+
+# ────────────────────────────────────────────────────────────────
+# 6. Subscribe a fake email address to the project.
+# ────────────────────────────────────────────────────────────────
+echo -n "[6/7] Subscribe email to project... "
+SUB_EMAIL="smoke+$(date +%s)@ashbi.ca"
+SUB_RESP=$(curl -sS -w "\n%{http_code}" -X POST "${HOST}:${PORT}/api/projects/${PROJECT_ID}/subscribers" \
+  -H "Content-Type: application/json" \
+  -H "Origin: ${HOST}" \
+  -d "{\"email\":\"${SUB_EMAIL}\"}")
+SUB_HTTP=$(echo "$SUB_RESP" | tail -1)
+
+if [ "$SUB_HTTP" != "201" ] && [ "$SUB_HTTP" != "200" ]; then
+  echo "HTTP $SUB_HTTP"
+  exit 1
+fi
+echo "OK (${SUB_EMAIL})"
+
+# ────────────────────────────────────────────────────────────────
+# 7/7. Verify widget.js contains the new behavior patterns:
 #    - scrollHeight (full-page capture, task 1)
 #    - outline (hover outline, task 2)
-#    Deliberately 6/6 (not 6/5) to keep the [N/M] counter clean;
-#    6/5 would make it unclear whether M=5 (steps before) or M=6 (total).
 # ────────────────────────────────────────────────────────────────
-echo -n "[6/6] Widget contains hover-outline and full-page capture... "
+echo -n "[7/7] Widget contains hover-outline and full-page capture... "
 WIDGET_RESP=$(curl -sS -w "\n%{http_code}" "${HOST}:${PORT}/widget.js" -o /tmp/smoke-widget.js)
 WIDGET_HTTP=$(echo "$WIDGET_RESP" | tail -1)
 

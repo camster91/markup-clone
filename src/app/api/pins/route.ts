@@ -5,6 +5,7 @@ import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
 import { requireDashboardOrigin } from '@/lib/auth';
+import { sendSubscriberEmails } from '@/lib/email';
 
 const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || '/data/screenshots';
 const MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024; // 8MB
@@ -88,6 +89,21 @@ export async function POST(req: Request) {
       });
       return { screenshot: ss, pin };
     });
+
+    // Fire-and-forget email notification — query subscribers after tx commits,
+    // then send without blocking the response.
+    const pid = project.id;
+    void prisma.subscriber
+      .findMany({ where: { projectId: pid }, select: { email: true } })
+      .then((subs) =>
+        sendSubscriberEmails({
+          projectName: project.name,
+          path: path_,
+          commentText: text,
+          subscriberEmails: subs.map((s) => s.email),
+        })
+      )
+      .catch((err) => console.error('[email] subscriber lookup error:', err));
 
     return NextResponse.json({ success: true, data: result }, { status: 201 });
   } catch (error) {
