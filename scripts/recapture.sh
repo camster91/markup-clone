@@ -40,12 +40,23 @@ if [ -z "$CHROME" ]; then
   exit 2
 fi
 
+# Pick the DB client: psql (if installed) or docker exec into the postgres container.
+# The container has psql; the host fallback uses docker exec.
+if command -v psql >/dev/null 2>&1 && [ -n "$DATABASE_URL" ]; then
+  PSQL="psql"
+elif command -v docker >/dev/null 2>&1; then
+  PSQL="docker exec ${PG_CONTAINER:-markup-postgres} psql"
+else
+  echo "No psql and no docker; cannot update DB" >&2
+  exit 5
+fi
+
 SCREENSHOTS_DIR="${SCREENSHOTS_DIR:-/data/screenshots}"
 PG_CONTAINER="${PG_CONTAINER:-markup-postgres}"
 OUT_FILE="$SCREENSHOTS_DIR/$SCREENSHOT_ID.png"
 
 # Look up the project domain + page path
-read -r DOMAIN PATH_ < <(docker exec "$PG_CONTAINER" psql -U markup -d markup_db -t -A -F'|' \
+read -r DOMAIN PATH_ < <($PSQL -U markup -d markup_db -t -A -F'|' \
   -c "SELECT p.domain, pa.path FROM \"Screenshot\" s JOIN \"Page\" pa ON pa.id = s.\"pageId\" JOIN \"Project\" p ON p.id = pa.\"projectId\" WHERE s.id = '$SCREENSHOT_ID'")
 
 if [ -z "$DOMAIN" ]; then
@@ -88,7 +99,7 @@ with open('$OUT_FILE', 'rb') as f:
     print(struct.unpack('>I', f.read(4))[0])
 ")
 
-docker exec "$PG_CONTAINER" psql -U markup -d markup_db -c \
+$PSQL -U markup -d markup_db -c \
   "UPDATE \"Screenshot\" SET width = $W, height = $H WHERE id = '$SCREENSHOT_ID'" >/dev/null
 
 echo "OK: $OUT_FILE (${W}x${H})"
