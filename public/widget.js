@@ -1,413 +1,454 @@
 (function () {
-  // Glow Feedback Widget
-  console.log("Glow Feedback Widget Loaded.");
+  'use strict';
 
-  // Derive API URL from the script src
-  const scriptEl = document.currentScript || (function(){ const s = document.getElementsByTagName('script'); return s[s.length-1]; })();
+  // Config
+  const scriptEl = document.currentScript || (function () {
+    const s = document.getElementsByTagName('script');
+    return s[s.length - 1];
+  })();
   const SCRIPT_SRC = scriptEl ? scriptEl.src : '';
-  const API_URL = SCRIPT_SRC.replace(/\/widget\.js.*$/, '') + '/api/comments';
-  const API_KEY = scriptEl ? scriptEl.getAttribute('data-api-key') : '';
+  const API_URL = SCRIPT_SRC.replace(/\/widget\.js.*$/, '') + '/api/pins';
+  const API_KEY = scriptEl ? (scriptEl.getAttribute('data-api-key') || scriptEl.getAttribute('data-project-key') || '') : '';
+  const PROJECT_ID = scriptEl ? scriptEl.getAttribute('data-project-id') || '' : '';
+  const AUTHOR_NAME = scriptEl ? scriptEl.getAttribute('data-author-name') || 'Client' : 'Client';
 
-  let isFeedbackMode = false; // Default OFF
+  if (!API_KEY || !PROJECT_ID) {
+    console.warn('[markup] widget missing data-api-key or data-project-id attribute. Not active.');
+    return;
+  }
+
+  // State
+  let isFeedbackMode = false;
   let currentModal = null;
   let currentPin = null;
-  let pendingClickData = null;
+  let pendingClick = null;
 
-  // Create floating toggle button
+  // ---------- Toggle button ----------
+
   function createToggleButton() {
     const btn = document.createElement('button');
-    btn.id = 'glow-feedback-toggle';
-    btn.textContent = 'Feedback';
-    btn.style.position = 'fixed';
-    btn.style.bottom = '20px';
-    btn.style.right = '20px';
-    btn.style.zIndex = '999999';
-    btn.style.padding = '10px 16px';
-    btn.style.backgroundColor = '#888888';
-    btn.style.color = 'white';
-    btn.style.border = 'none';
-    btn.style.borderRadius = '20px';
-    btn.style.cursor = 'pointer';
-    btn.style.fontFamily = 'sans-serif';
-    btn.style.fontSize = '14px';
-    btn.style.fontWeight = 'bold';
-    btn.style.boxShadow = '0 2px 6px rgba(0,0,0,0.3)';
+    btn.id = 'markup-toggle';
+    btn.type = 'button';
+    btn.innerHTML = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#fff;margin-right:6px;vertical-align:middle"></span>Feedback';
+    btn.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:2147483646;padding:10px 16px;background:#0F172A;color:#fff;border:none;border-radius:24px;cursor:pointer;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px;font-weight:600;box-shadow:0 4px 12px rgba(0,0,0,0.2);transition:background 0.15s';
 
-    btn.addEventListener('click', function(e) {
+    btn.addEventListener('click', function (e) {
       e.stopPropagation();
+      e.preventDefault();
       isFeedbackMode = !isFeedbackMode;
       if (isFeedbackMode) {
-        btn.textContent = 'Stop Feedback';
-        btn.style.backgroundColor = '#FF0055';
-      } else {
-        btn.textContent = 'Feedback';
-        btn.style.backgroundColor = '#888888';
-        // Clean up any open modal when disabling feedback mode
-        if (currentModal) {
-          hideCommentModal();
+        btn.style.background = '#DC2626';
+        btn.innerHTML = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#fff;margin-right:6px;vertical-align:middle;animation:markup-pulse 1.2s infinite"></span>Click anywhere to leave feedback';
+        if (!document.getElementById('markup-pulse-style')) {
+          const style = document.createElement('style');
+          style.id = 'markup-pulse-style';
+          style.textContent = '@keyframes markup-pulse{0%,100%{opacity:1}50%{opacity:0.4}}';
+          document.head.appendChild(style);
         }
+      } else {
+        btn.style.background = '#0F172A';
+        btn.innerHTML = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#fff;margin-right:6px;vertical-align:middle"></span>Feedback';
+        cleanupAll();
       }
     });
 
     document.body.appendChild(btn);
   }
 
-  createToggleButton();
-
-  // Helper to get a unique CSS selector for an element
-  function getPathTo(element) {
-    if (element.id !== '') return 'id("' + element.id + '")';
-    if (element === document.body) return element.tagName;
-
-    var ix = 0;
-    var siblings = element.parentNode.childNodes;
-    for (var i = 0; i < siblings.length; i++) {
-      var sibling = siblings[i];
-      if (sibling === element)
-        return getPathTo(element.parentNode) + '/' + element.tagName + '[' + (ix + 1) + ']';
-      if (sibling.nodeType === 1 && sibling.tagName === element.tagName)
-        ix++;
-    }
+  function cleanupAll() {
+    if (currentModal) hideModal();
+    document.querySelectorAll('[id^="markup-pin-"]').forEach(p => p.remove());
   }
 
-  // Calculate modal position to stay within viewport
-  function calculateModalPosition(clickX, clickY, modalWidth, modalHeight) {
-    const margin = 16;
-    const isMobile = window.innerWidth < 480;
+  // ---------- Element path (CSS selector) ----------
 
-    if (isMobile) {
-      // On mobile, position near top with full width
-      return {
-        left: margin,
-        top: margin,
-        width: window.innerWidth - margin * 2
-      };
-    }
-
-    let left = clickX + 16;
-    let top = clickY + 16;
-
-    // Check right edge
-    if (left + modalWidth > window.innerWidth - margin) {
-      left = clickX - modalWidth - 16;
-    }
-
-    // Check bottom edge - if doesn't fit below, show above
-    if (top + modalHeight > window.innerHeight - margin) {
-      top = clickY - modalHeight - 16;
-    }
-
-    // Check top edge
-    if (top < margin) {
-      top = margin;
-    }
-
-    // Check left edge
-    if (left < margin) {
-      left = margin;
-    }
-
-    // Final clamp to ensure within viewport
-    left = Math.max(margin, Math.min(left, window.innerWidth - modalWidth - margin));
-    top = Math.max(margin, Math.min(top, window.innerHeight - modalHeight - margin));
-
-    return { left, top };
-  }
-
-  // Show comment modal near click position
-  function showCommentModal(clickX, clickY, clickData) {
-    // Remove any existing modal
-    if (currentModal) {
-      hideCommentModal();
-    }
-
-    pendingClickData = clickData;
-
-    const modalWidth = 320;
-    const modalHeight = 200; // approximate
-    const pos = calculateModalPosition(clickX, clickY, modalWidth, modalHeight);
-
-    // Create overlay
-    const overlay = document.createElement('div');
-    overlay.id = 'glow-feedback-overlay';
-    overlay.style.cssText = `
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      z-index: 999998;
-    `;
-
-    // Create modal container
-    const modal = document.createElement('div');
-    modal.id = 'glow-feedback-modal';
-    modal.style.cssText = `
-      position: fixed;
-      left: ${pos.left}px;
-      top: ${pos.top}px;
-      width: ${pos.width || modalWidth}px;
-      background: white;
-      border-radius: 8px;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.15);
-      padding: 16px;
-      z-index: 999999;
-      font-family: sans-serif;
-      font-size: 14px;
-      box-sizing: border-box;
-    `;
-
-    // Create header with close button
-    const header = document.createElement('div');
-    header.style.cssText = `
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 12px;
-    `;
-
-    const title = document.createElement('span');
-    title.textContent = 'Leave a comment';
-    title.style.cssText = `
-      font-weight: 600;
-      color: #333;
-    `;
-
-    const closeBtn = document.createElement('button');
-    closeBtn.innerHTML = '&times;';
-    closeBtn.style.cssText = `
-      background: none;
-      border: none;
-      font-size: 20px;
-      cursor: pointer;
-      color: #999;
-      padding: 0;
-      line-height: 1;
-    `;
-    closeBtn.addEventListener('click', hideCommentModal);
-
-    header.appendChild(title);
-    header.appendChild(closeBtn);
-
-    // Create textarea
-    const textarea = document.createElement('textarea');
-    textarea.id = 'glow-feedback-textarea';
-    textarea.placeholder = 'Type your feedback here...';
-    textarea.style.cssText = `
-      width: 100%;
-      height: 80px;
-      padding: 10px;
-      border: 1px solid #d1d5db;
-      border-radius: 6px;
-      resize: none;
-      font-family: sans-serif;
-      font-size: 14px;
-      box-sizing: border-box;
-      outline: none;
-    `;
-
-    // Create button container
-    const btnContainer = document.createElement('div');
-    btnContainer.style.cssText = `
-      display: flex;
-      justify-content: flex-end;
-      gap: 8px;
-      margin-top: 12px;
-    `;
-
-    // Create Cancel button
-    const cancelBtn = document.createElement('button');
-    cancelBtn.textContent = 'Cancel';
-    cancelBtn.style.cssText = `
-      padding: 8px 16px;
-      background: #e5e7eb;
-      color: #374151;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font-family: sans-serif;
-      font-size: 14px;
-    `;
-    cancelBtn.addEventListener('click', hideCommentModal);
-
-    // Create Save button
-    const saveBtn = document.createElement('button');
-    saveBtn.id = 'glow-feedback-save';
-    saveBtn.textContent = 'Save';
-    saveBtn.disabled = true;
-    saveBtn.style.cssText = `
-      padding: 8px 16px;
-      background: #FF0055;
-      color: white;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font-family: sans-serif;
-      font-size: 14px;
-      opacity: 0.5;
-    `;
-
-    // Enable/disable save button based on textarea content
-    function updateSaveButton() {
-      const text = textarea.value.trim();
-      saveBtn.disabled = !text;
-      saveBtn.style.opacity = text ? '1' : '0.5';
-    }
-
-    textarea.addEventListener('input', updateSaveButton);
-
-    // Wire up save button click
-    saveBtn.addEventListener('click', submitFromModal);
-
-    // Handle keyboard shortcuts
-    textarea.addEventListener('keydown', function(e) {
-      // Cmd+Enter or Ctrl+Enter to submit
-      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-        e.preventDefault();
-        if (!saveBtn.disabled) {
-          submitFromModal();
+  function getCssPath(el) {
+    if (!(el instanceof Element)) return '';
+    if (el.id) return '#' + el.id;
+    const parts = [];
+    let cur = el;
+    while (cur && cur.nodeType === 1 && cur !== document.body && parts.length < 6) {
+      let part = cur.tagName.toLowerCase();
+      if (cur.classList && cur.classList.length > 0) {
+        part += '.' + Array.from(cur.classList).slice(0, 2).join('.');
+      } else {
+        const parent = cur.parentNode;
+        if (parent) {
+          let i = 1;
+          for (let sib = cur.previousElementSibling; sib; sib = sib.previousElementSibling) {
+            if (sib.tagName === cur.tagName) i++;
+          }
+          part += ':nth-of-type(' + i + ')';
         }
       }
-      // Escape to cancel
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        hideCommentModal();
-      }
-      // Enter without modifier should insert newline (default behavior)
-    });
-
-    btnContainer.appendChild(cancelBtn);
-    btnContainer.appendChild(saveBtn);
-
-    // Assemble modal
-    modal.appendChild(header);
-    modal.appendChild(textarea);
-    modal.appendChild(btnContainer);
-
-    // Overlay click handler - just no-op (don't close on outside click)
-    overlay.addEventListener('click', function(e) {
-      e.stopPropagation();
-    });
-
-    // Append to DOM
-    document.body.appendChild(overlay);
-    document.body.appendChild(modal);
-
-    currentModal = { overlay, modal, textarea, saveBtn };
-
-    // Draw the pin at click position (before modal appears)
-    currentPin = renderPin(clickX, clickY);
-
-    // Focus textarea
-    setTimeout(function() {
-      textarea.focus();
-    }, 0);
-  }
-
-  // Hide comment modal
-  function hideCommentModal() {
-    if (currentModal) {
-      if (currentModal.overlay && currentModal.overlay.parentNode) {
-        currentModal.overlay.parentNode.removeChild(currentModal.overlay);
-      }
-      if (currentModal.modal && currentModal.modal.parentNode) {
-        currentModal.modal.parentNode.removeChild(currentModal.modal);
-      }
-      currentModal = null;
+      parts.unshift(part);
+      cur = cur.parentNode;
     }
-    pendingClickData = null;
+    return parts.join(' > ');
   }
 
-  // Submit comment from modal
-  function submitFromModal() {
-    if (!currentModal || !pendingClickData) return;
+  // ---------- Screenshot capture ----------
+  // SVG-foreignObject trick. Works in most modern browsers (Chrome, Safari, Firefox, Edge).
+  // Renders the current DOM (or the part the user clicked on) into a canvas, then to a PNG blob.
 
-    const commentText = currentModal.textarea.value.trim();
-    if (!commentText) return;
+  async function captureViewport() {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const dpr = window.devicePixelRatio || 1;
 
-    // Capture data before tearing down modal
-    const data = Object.assign({}, pendingClickData, { text: commentText });
+    // Clone the current document body so we can mutate it without affecting the page
+    const clone = document.documentElement.cloneNode(true);
+    // Inline computed styles for the visible region by walking the original
+    inlineStyles(document.documentElement, clone, document.documentElement);
 
-    // Close modal (sets currentModal = null and pendingClickData = null)
-    hideCommentModal();
+    // Remove scripts, our own UI, and any iframes (we can't capture cross-origin iframes reliably)
+    clone.querySelectorAll('script, [id^="markup-"]').forEach(n => n.remove());
+    clone.querySelectorAll('iframe').forEach(n => n.remove());
 
-    // Pin stays drawn (currentPin is already set)
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '">' +
+      '<foreignObject x="0" y="0" width="100%" height="100%">' +
+      new XMLSerializer().serializeToString(clone) +
+      '</foreignObject></svg>';
 
-    // Send to server
-    submitComment(data);
+    const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+
+    try {
+      const img = await new Promise((resolve, reject) => {
+        const i = new Image();
+        i.onload = () => resolve(i);
+        i.onerror = (e) => reject(new Error('svg load failed'));
+        i.src = url;
+      });
+
+      const canvas = document.createElement('canvas');
+      canvas.width = w * dpr;
+      canvas.height = h * dpr;
+      const ctx = canvas.getContext('2d');
+      ctx.scale(dpr, dpr);
+      ctx.drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+
+      return await new Promise((resolve, reject) => {
+        canvas.toBlob(
+          (b) => b ? resolve(b) : reject(new Error('canvas.toBlob returned null')),
+          'image/png',
+          0.92
+        );
+      });
+    } catch (err) {
+      URL.revokeObjectURL(url);
+      throw err;
+    }
   }
 
-  // Intercept Clicks
-  document.addEventListener('click', function (e) {
-    if (!isFeedbackMode) return;
+  // Recursively copy computed styles from src tree to dst tree.
+  // Walks the actual live DOM so we get the real rendered styles (including media queries).
+  function inlineStyles(srcRoot, dstRoot, srcRef) {
+    if (srcRef.nodeType === 1) {
+      const dstNode = srcRef === document.documentElement ? dstRoot : findCorrespondingNode(srcRef, dstRoot, srcRoot);
+      if (dstNode) {
+        const cs = window.getComputedStyle(srcRef);
+        const important = [
+          'color', 'background', 'background-color', 'background-image',
+          'font', 'font-family', 'font-size', 'font-weight', 'line-height',
+          'border', 'border-radius', 'box-shadow', 'opacity',
+          'padding', 'margin', 'display', 'position',
+          'width', 'height', 'max-width', 'max-height',
+          'top', 'left', 'right', 'bottom',
+          'transform', 'transition', 'animation',
+          'color-scheme', 'filter', 'backdrop-filter',
+          'text-align', 'text-decoration', 'text-transform',
+          'flex', 'flex-direction', 'justify-content', 'align-items', 'gap', 'grid',
+          'overflow', 'overflow-x', 'overflow-y',
+          'visibility', 'z-index',
+        ];
+        let cssText = '';
+        for (const prop of important) {
+          const val = cs.getPropertyValue(prop);
+          if (val) cssText += prop + ':' + val + ';';
+        }
+        // Inline all custom properties used in the document
+        const all = cs.cssText || '';
+        const varMatches = all.match(/--[a-zA-Z0-9-_]+:\s*[^;]+/g);
+        if (varMatches) cssText += varMatches.join(';') + ';';
+        dstNode.setAttribute('style', cssText);
+      }
+    }
+    const srcChildren = srcRef.childNodes;
+    for (let i = 0; i < srcChildren.length; i++) {
+      const srcChild = srcChildren[i];
+      if (srcChild.nodeType === 1) {
+        inlineStyles(srcRoot, dstRoot, srcChild);
+      }
+    }
+  }
 
-    // Ignore clicks on our own feedback UI
-    if (e.target.closest('#glow-feedback-toggle')) return;
-    if (e.target.closest('#glow-feedback-modal')) return;
-    if (e.target.closest('#glow-feedback-overlay')) return;
+  // Walk dst and src in parallel to find the node at the same path
+  function findCorrespondingNode(srcNode, dstRoot, srcRoot) {
+    // Build a path of child indices from the root
+    const path = [];
+    let n = srcNode;
+    while (n && n !== srcRoot) {
+      let i = 0;
+      let sib = n.previousSibling;
+      while (sib) { if (sib.nodeType === 1) i++; sib = sib.previousSibling; }
+      path.unshift(i);
+      n = n.parentNode;
+    }
+    // Walk the dst tree
+    let cur = dstRoot;
+    for (const idx of path) {
+      let i = 0;
+      let child = cur.firstChild;
+      while (child) {
+        if (child.nodeType === 1) {
+          if (i === idx) { cur = child; break; }
+          i++;
+        }
+        child = child.nextSibling;
+      }
+    }
+    return cur;
+  }
 
-    e.preventDefault();
-    e.stopPropagation();
+  // ---------- Modal + pin ----------
 
-    // Calculate percentages
-    const xPercent = (e.clientX / window.innerWidth) * 100;
-    const yPercent = (e.clientY / window.innerHeight) * 100;
-    const xpath = getPathTo(e.target);
+  async function showModal(clickX, clickY, clickTarget) {
+    if (currentModal) hideModal();
 
-    const clickData = {
-      path: window.location.pathname,
-      xPercent,
-      yPercent,
-      xpath,
-      screenSize: `${window.innerWidth}x${window.innerHeight}`
+    // Show "capturing..." pin
+    currentPin = renderPin(clickX, clickY, '…', '#9CA3AF');
+
+    // Capture the screenshot in the background
+    let screenshotBlob = null;
+    let captureError = null;
+    try {
+      screenshotBlob = await captureViewport();
+    } catch (err) {
+      captureError = err;
+      console.error('[markup] screenshot capture failed:', err);
+    }
+
+    pendingClick = {
+      clickX,
+      clickY,
+      xPercent: (clickX / window.innerWidth) * 100,
+      yPercent: (clickY / window.innerHeight) * 100,
+      xpath: getCssPath(clickTarget),
+      elementHTML: clickTarget.outerHTML ? clickTarget.outerHTML.slice(0, 4000) : '',
     };
 
-    // Show custom modal instead of prompt
-    showCommentModal(e.clientX, e.clientY, clickData);
-  }, true);
+    // Replace placeholder pin with real one
+    if (currentPin && currentPin.parentNode) {
+      currentPin.parentNode.removeChild(currentPin);
+    }
+    const pinNum = nextPinNumber();
+    currentPin = renderPin(clickX, clickY, String(pinNum), '#DC2626');
 
-  function renderPin(x, y) {
+    if (captureError) {
+      currentModal = buildModal(clickX, clickY, pinNum, null, captureError);
+    } else {
+      currentModal = buildModal(clickX, clickY, pinNum, screenshotBlob, null);
+    }
+    document.body.appendChild(currentModal.overlay);
+    document.body.appendChild(currentModal.box);
+    setTimeout(() => currentModal.textarea.focus(), 0);
+  }
+
+  let _pinCounter = 0;
+  function nextPinNumber() { return ++_pinCounter; }
+
+  function buildModal(clickX, clickY, pinNum, screenshotBlob, captureError) {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483645;background:rgba(0,0,0,0.05)';
+
+    const box = document.createElement('div');
+    const pos = calculatePosition(clickX, clickY, 320);
+    box.style.cssText = 'position:fixed;left:' + pos.x + 'px;top:' + pos.y + 'px;width:320px;background:#fff;border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,0.25);z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;';
+
+    const header = document.createElement('div');
+    header.style.cssText = 'padding:14px 16px;border-bottom:1px solid #E5E7EB;display:flex;justify-content:space-between;align-items:center';
+    header.innerHTML = '<div style="font-weight:600;color:#111;font-size:14px">Pin #' + pinNum + '</div>';
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.innerHTML = '×';
+    closeBtn.style.cssText = 'background:none;border:none;font-size:22px;color:#9CA3AF;cursor:pointer;line-height:1;padding:0 4px';
+    closeBtn.onclick = hideModal;
+    header.appendChild(closeBtn);
+    box.appendChild(header);
+
+    const body = document.createElement('div');
+    body.style.cssText = 'padding:14px 16px';
+
+    if (captureError) {
+      const warn = document.createElement('div');
+      warn.style.cssText = 'background:#FEF3C7;border:1px solid #FCD34D;color:#92400E;padding:8px 10px;border-radius:6px;font-size:12px;margin-bottom:10px';
+      warn.textContent = 'Could not capture screenshot. Pin will be saved without a screenshot. (' + (captureError.message || 'error') + ')';
+      body.appendChild(warn);
+    }
+
+    const authorLabel = document.createElement('div');
+    authorLabel.style.cssText = 'font-size:12px;color:#6B7280;margin-bottom:4px';
+    authorLabel.textContent = 'Your name';
+    body.appendChild(authorLabel);
+
+    const authorInput = document.createElement('input');
+    authorInput.type = 'text';
+    authorInput.value = AUTHOR_NAME;
+    authorInput.style.cssText = 'width:100%;padding:6px 8px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;margin-bottom:10px;box-sizing:border-box;font-family:inherit';
+    body.appendChild(authorInput);
+
+    const textLabel = document.createElement('div');
+    textLabel.style.cssText = 'font-size:12px;color:#6B7280;margin-bottom:4px';
+    textLabel.textContent = 'Comment';
+    body.appendChild(textLabel);
+
+    const textarea = document.createElement('textarea');
+    textarea.style.cssText = 'width:100%;min-height:70px;padding:8px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;resize:vertical;box-sizing:border-box;font-family:inherit;outline:none';
+    textarea.placeholder = 'What needs to change here?';
+    body.appendChild(textarea);
+
+    const footer = document.createElement('div');
+    footer.style.cssText = 'padding:10px 16px;border-top:1px solid #E5E7EB;display:flex;justify-content:flex-end;gap:8px';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.style.cssText = 'padding:7px 14px;background:#F3F4F6;color:#374151;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500';
+    cancelBtn.onclick = hideModal;
+
+    const submitBtn = document.createElement('button');
+    submitBtn.type = 'button';
+    submitBtn.textContent = 'Save pin';
+    submitBtn.disabled = true;
+    submitBtn.style.cssText = 'padding:7px 14px;background:#0F172A;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;opacity:0.5';
+    function updateBtn() {
+      const ok = textarea.value.trim().length > 0;
+      submitBtn.disabled = !ok;
+      submitBtn.style.opacity = ok ? '1' : '0.5';
+    }
+    textarea.addEventListener('input', updateBtn);
+    textarea.addEventListener('keydown', function (e) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !submitBtn.disabled) {
+        e.preventDefault();
+        submitBtn.click();
+      }
+    });
+    submitBtn.onclick = function () {
+      const text = textarea.value.trim();
+      if (!text) return;
+      submitPending(text, authorInput.value || 'Client', screenshotBlob);
+    };
+
+    footer.appendChild(cancelBtn);
+    footer.appendChild(submitBtn);
+    box.appendChild(body);
+    box.appendChild(footer);
+
+    overlay.onclick = function (e) { e.stopPropagation(); };
+
+    return { overlay, box, textarea, submitBtn, screenshotBlob };
+  }
+
+  function calculatePosition(clickX, clickY, w) {
+    const margin = 12;
+    const h = 220;
+    let x = clickX + 16;
+    let y = clickY + 16;
+    if (x + w > window.innerWidth - margin) x = clickX - w - 16;
+    if (y + h > window.innerHeight - margin) y = clickY - h - 16;
+    x = Math.max(margin, Math.min(x, window.innerWidth - w - margin));
+    y = Math.max(margin, Math.min(y, window.innerHeight - h - margin));
+    return { x, y };
+  }
+
+  function renderPin(x, y, label, color) {
     const pin = document.createElement('div');
-    pin.style.position = 'fixed';
-    pin.style.left = `${x - 12}px`;
-    pin.style.top = `${y - 12}px`;
-    pin.style.width = '24px';
-    pin.style.height = '24px';
-    pin.style.backgroundColor = '#FF0055';
-    pin.style.borderRadius = '50%';
-    pin.style.border = '2px solid white';
-    pin.style.boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
-    pin.style.zIndex = '999997';
-    pin.style.pointerEvents = 'none';
+    pin.id = 'markup-pin-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+    pin.style.cssText = 'position:fixed;left:' + (x - 14) + 'px;top:' + (y - 14) + 'px;width:28px;height:28px;background:' + color + ';color:#fff;border-radius:50%;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;font-family:-apple-system,sans-serif;z-index:2147483644;pointer-events:none';
+    pin.textContent = label;
     document.body.appendChild(pin);
     return pin;
   }
 
-  async function submitComment(data) {
-    try {
-      const headers = { 'Content-Type': 'application/json' };
-      if (API_KEY) headers['X-Api-Key'] = API_KEY;
-      const response = await fetch(API_URL, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ ...data, domain: window.location.hostname })
-      });
-      if (response.ok) {
-        console.log("Feedback saved successfully.");
-      } else {
-        let errorData = {};
-        try {
-          errorData = await response.json();
-        } catch (_) {}
-        if (response.status === 400) {
-          console.warn("Markup.io: no project registered for this domain. The feedback will not be saved.");
-          console.error("Error:", errorData);
-        } else {
-          console.error("Failed to save feedback.", errorData);
-        }
-      }
-    } catch (err) {
-      console.error("Network error:", err);
+  function hideModal() {
+    if (currentModal) {
+      if (currentModal.overlay && currentModal.overlay.parentNode) currentModal.overlay.parentNode.removeChild(currentModal.overlay);
+      if (currentModal.box && currentModal.box.parentNode) currentModal.box.parentNode.removeChild(currentModal.box);
+      currentModal = null;
     }
+    if (currentPin && currentPin.parentNode) {
+      currentPin.parentNode.removeChild(currentPin);
+    }
+    currentPin = null;
+    pendingClick = null;
+  }
+
+  // ---------- Submit ----------
+
+  async function submitPending(text, author, screenshotBlob) {
+    if (!pendingClick) return;
+    const fd = new FormData();
+    fd.append('projectId', PROJECT_ID);
+    fd.append('path', window.location.pathname);
+    fd.append('xPercent', String(pendingClick.xPercent));
+    fd.append('yPercent', String(pendingClick.yPercent));
+    fd.append('elementXPath', pendingClick.xpath || '');
+    fd.append('elementHTML', pendingClick.elementHTML || '');
+    fd.append('text', text);
+    fd.append('authorName', author);
+    if (screenshotBlob) {
+      fd.append('screenshot', screenshotBlob, 'capture.png');
+    }
+
+    if (currentModal && currentModal.submitBtn) {
+      currentModal.submitBtn.disabled = true;
+      currentModal.submitBtn.textContent = 'Saving...';
+    }
+
+    try {
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'X-Api-Key': API_KEY },
+        body: fd,
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error('HTTP ' + res.status + ': ' + errText.slice(0, 200));
+      }
+      // Success: keep the pin in place, close modal
+      hideModal();
+    } catch (err) {
+      console.error('[markup] save failed:', err);
+      if (currentModal && currentModal.submitBtn) {
+        currentModal.submitBtn.disabled = false;
+        currentModal.submitBtn.textContent = 'Save pin';
+      }
+      alert('Could not save feedback. ' + (err.message || 'Unknown error') + '. Check the console.');
+    }
+  }
+
+  // ---------- Click capture ----------
+
+  document.addEventListener('click', function (e) {
+    if (!isFeedbackMode) return;
+    if (e.target.closest('#markup-toggle')) return;
+    if (currentModal && e.target.closest('[id^="markup-pin-"]')) return;
+    if (currentModal && currentModal.box && currentModal.box.contains(e.target)) return;
+    if (currentModal && currentModal.overlay && currentModal.overlay.contains(e.target)) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    showModal(e.clientX, e.clientY, e.target);
+  }, true);
+
+  // ---------- Boot ----------
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', createToggleButton);
+  } else {
+    createToggleButton();
   }
 })();
