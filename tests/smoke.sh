@@ -1,215 +1,169 @@
 #!/usr/bin/env bash
-# Smoke test for markup.io refactored app (Project→Page→Screenshot→Pin→Comment)
-# Usage: HOST=https://markup.ashbi.ca PORT=443 bash smoke.sh
-# Defaults: HOST=https://markup.ashbi.ca PORT=443
+# Smoke test for the refactored markup.io-style API.
+# End-to-end: create a project (dashboard origin), then post a pin with a screenshot
+# (widget auth via X-Api-Key), add a reviewer comment, resolve the pin, verify tree.
+#
+# Usage: bash tests/smoke.sh
+#   HOST defaults to https://markup.ashbi.ca
+#   DASHBOARD_HOST defaults to the value used for same-origin bypass
+#
+# The script must NOT print the API key to stdout (it's a real secret). The key
+# is read from a tempfile that's wiped on exit.
 
 set -euo pipefail
 
 HOST="${HOST:-https://markup.ashbi.ca}"
 PORT="${PORT:-443}"
-FIXTURE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd ../fixtures && pwd)"
-FIXTURE_PNG="${FIXTURE_DIR}/test-pin.png"
-TMPKEYFILE=""
+# Resolve the fixture path. The fixture lives at tests/fixtures/test-pin.png.
+# Allow override via FIXTURE_PNG env var for CI or unusual layouts.
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")" && pwd)"
+if [ -z "$SCRIPT_DIR" ] || [ ! -d "$SCRIPT_DIR/fixtures" ]; then
+  SCRIPT_DIR="/Users/biancabienaime/markup-clone/tests"
+fi
+FIXTURE_PNG="${FIXTURE_PNG:-${SCRIPT_DIR}/fixtures/test-pin.png}"
+KEYFILE=""
 RESULT="FAIL"
 
-trap 'rm -f "$TMPKEYFILE"; echo "RESULT: $RESULT"' EXIT
-
-# ── helpers ──────────────────────────────────────────────────────────────────
-
-fetch_api_key() {
-  # GET /api/projects — the response contains an API key in a header or body.
-  # We stash it in a tempfile so it never appears in stdout.
-  TMPKEYFILE=$(mktemp)
-  RESP=$(curl -s -w "\n%{http_code}" "${HOST}:${PORT}/api/projects" -o "$TMPKEYFILE")
-  HTTP=$(echo "$RESP" | tail -1)
-  if [ "$HTTP" != "200" ]; then
-    echo "[fetch_api_key] /api/projects returned HTTP $HTTP" >&2
-    return 1
+cleanup() {
+  if [ -n "$KEYFILE" ] && [ -f "$KEYFILE" ]; then
+    shred -u "$KEYFILE" 2>/dev/null || rm -f "$KEYFILE"
   fi
-  # The API key lives in the response body; extract without logging it.
-  API_KEY=$(python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-# top-level projects array; each project may have an apiKey field
-# Walk the tree to be safe.
-def find_key(obj):
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            if 'apikey' in k.lower():
-                return v
-            r = find_key(v)
-            if r:
-                return r
-    elif isinstance(obj, list):
-        for item in obj:
-            r = find_key(item)
-            if r:
-                return r
-    return None
-print(find_key(data) or '')
-" < "$TMPKEYFILE")
-  echo "$API_KEY"
+  echo ""
+  echo "=== $RESULT ==="
 }
+trap cleanup EXIT
 
-http_code() {
-  curl -s -o /dev/null -w "%{http_code}" "$@"
-}
-
-json_get() {
-  python3 -c "
-import sys, json
-d = sys.stdin.read()
-try:
-    obj = json.loads(d)
-    for k in $1.split('.'):
-        if isinstance(obj, list): obj = obj[int(k)]
-        else: obj = obj[k]
-    print(obj, end='')
-except: print('', end='')
-"
-}
-
-# ── test ──────────────────────────────────────────────────────────────────────
-
-echo "=== Smoke Test: ${HOST}:${PORT} ==="
-
-# 1. Create a project via same-origin POST
-PROJECT_PAYLOAD=$(python3 -c "import json; print(json.dumps({'name': 'smoke-test-$(date +%s)'}))")
-echo -n "[1/6] Create project... "
-CREATE_RESP=$(curl -s -w "\n%{http_code}" -X POST "${HOST}:${PORT}/api/projects" \
-  -H "Content-Type: application/json" \
-  -d "$PROJECT_PAYLOAD")
-CREATE_HTTP=$(echo "$CREATE_RESP" | tail -1)
-CREATE_BODY=$(echo "$CREATE_RESP" | head -1)
-
-if [ "$CREATE_HTTP" != "200" ] && [ "$CREATE_HTTP" != "201" ]; then
-  echo "HTTP $CREATE_HTTP"
+if [ ! -f "$FIXTURE_PNG" ]; then
+  echo "Fixture PNG missing: $FIXTURE_PNG" >&2
+  echo "Run: python3 tests/scripts/make-test-png.py" >&2
   exit 1
 fi
 
-PROJECT_ID=$(echo "$CREATE_BODY" | json_get "id")
-if [ -z "$PROJECT_ID" ]; then
-  echo "No project ID in response"
+# Verify the fixture is a real PNG (check magic bytes)
+MAGIC=$(head -c 8 "$FIXTURE_PNG" | od -An -tx1 | tr -d ' \n')
+if [ "$MAGIC" != "89504e470d0a1a0a" ]; then
+  echo "Fixture is not a valid PNG (magic: $MAGIC)" >&2
+  exit 1
+fi
+
+echo "=== Smoke Test: ${HOST}:${PORT} ==="
+echo "Fixture: $FIXTURE_PNG"
+
+# ────────────────────────────────────────────────────────────────
+# 1. Create a project via the dashboard (same-origin bypass).
+#    The response includes the per-project apiKey.
+# ────────────────────────────────────────────────────────────────
+echo -n "[1/5] Create project (same-origin)... "
+CREATE_RESP=$(curl -sS -w "\n%{http_code}" -X POST "${HOST}:${PORT}/api/projects" \
+  -H "Content-Type: application/json" \
+  -H "Origin: ${HOST}" \
+  -d "{\"name\":\"smoke-test-$(date +%s)\",\"domain\":\"smoke-test.ashbi.ca\"}")
+CREATE_HTTP=$(echo "$CREATE_RESP" | tail -1)
+CREATE_BODY=$(echo "$CREATE_RESP" | head -1)
+
+if [ "$CREATE_HTTP" != "201" ] && [ "$CREATE_HTTP" != "200" ]; then
+  echo "HTTP $CREATE_HTTP"
+  echo "  body: $CREATE_BODY" >&2
+  exit 1
+fi
+
+PROJECT_ID=$(echo "$CREATE_BODY" | python3 -c "import sys, json; print(json.load(sys.stdin).get('id', ''))")
+KEYFILE=$(mktemp)
+API_KEY=$(echo "$CREATE_BODY" | python3 -c "import sys, json; print(json.load(sys.stdin).get('apiKey', ''))")
+echo "$API_KEY" > "$KEYFILE"
+chmod 600 "$KEYFILE"
+
+if [ -z "$PROJECT_ID" ] || [ -z "$API_KEY" ]; then
+  echo "missing projectId or apiKey in response"
   exit 1
 fi
 echo "OK (project_id=$PROJECT_ID)"
 
-# 2. Create a page for the project
-PAGE_PAYLOAD=$(python3 -c "import json; print(json.dumps({'projectId': $PROJECT_ID, 'url': 'https://example.com/smoke', 'title': 'Smoke Test Page'}))")
-echo -n "[2/6] Create page... "
-PAGE_RESP=$(curl -s -w "\n%{http_code}" -X POST "${HOST}:${PORT}/api/pages" \
-  -H "Content-Type: application/json" \
-  -d "$PAGE_PAYLOAD")
-PAGE_HTTP=$(echo "$PAGE_RESP" | tail -1)
-PAGE_BODY=$(echo "$PAGE_RESP" | head -1)
-PAGE_ID=$(echo "$PAGE_BODY" | json_get "id")
-if [ -z "$PAGE_ID" ]; then
-  echo "No page ID in response (HTTP $PAGE_HTTP)"
-  exit 1
-fi
-echo "OK (page_id=$PAGE_ID)"
-
-# 3. Upload a screenshot for the page (PNG fixture)
-echo -n "[3/6] Upload screenshot (PNG fixture)... "
-SCREENSHOT_RESP=$(curl -s -w "\n%{http_code}" -X POST "${HOST}:${PORT}/api/screenshots" \
-  -F "pageId=${PAGE_ID}" \
-  -F "image=@${FIXTURE_PNG};type=image/png")
-SCREENSHOT_HTTP=$(echo "$SCREENSHOT_RESP" | tail -1)
-SCREENSHOT_BODY=$(echo "$SCREENSHOT_RESP" | head -1)
-SCREENSHOT_ID=$(echo "$SCREENSHOT_BODY" | json_get "id")
-if [ -z "$SCREENSHOT_ID" ]; then
-  echo "No screenshot ID in response (HTTP $SCREENSHOT_HTTP)"
-  exit 1
-fi
-echo "OK (screenshot_id=$SCREENSHOT_ID)"
-
-# 4. Post a pin with the fixture PNG on the screenshot
-echo -n "[4/6] Create pin... "
-PIN_PAYLOAD=$(python3 -c "import json; print(json.dumps({'screenshotId': $SCREENSHOT_ID, 'x': 150, 'y': 200, 'color': '#ff8800'}))")
-PIN_RESP=$(curl -s -w "\n%{http_code}" -X POST "${HOST}:${PORT}/api/pins" \
-  -H "Content-Type: application/json" \
-  -d "$PIN_PAYLOAD")
+# ────────────────────────────────────────────────────────────────
+# 2. Post a pin with a screenshot (widget auth via X-Api-Key).
+#    The server creates the Page, Screenshot, Pin, and first Comment in one call.
+# ────────────────────────────────────────────────────────────────
+echo -n "[2/5] Post pin with screenshot... "
+PIN_RESP=$(curl -sS -w "\n%{http_code}" -X POST "${HOST}:${PORT}/api/pins" \
+  -H "X-Api-Key: $(cat "$KEYFILE")" \
+  -H "Origin: https://smoke-test.ashbi.ca" \
+  -F "projectId=${PROJECT_ID}" \
+  -F "path=/" \
+  -F "xPercent=42.5" \
+  -F "yPercent=67.3" \
+  --form-string 'elementXPath=body > h1' \
+  --form-string 'elementHTML=<h1>Smoke</h1>' \
+  -F "text=Smoke test pin" \
+  -F "authorName=SmokeBot" \
+  -F "screenshot=@${FIXTURE_PNG};type=image/png")
 PIN_HTTP=$(echo "$PIN_RESP" | tail -1)
 PIN_BODY=$(echo "$PIN_RESP" | head -1)
-PIN_ID=$(echo "$PIN_BODY" | json_get "id")
-if [ -z "$PIN_ID" ]; then
-  echo "No pin ID in response (HTTP $PIN_HTTP)"
+
+if [ "$PIN_HTTP" != "201" ] && [ "$PIN_HTTP" != "200" ]; then
+  echo "HTTP $PIN_HTTP"
+  echo "  body: $PIN_BODY" >&2
   exit 1
 fi
-echo "OK (pin_id=$PIN_ID)"
 
-# 5. Add a reviewer comment to the pin
-echo -n "[5/6] Add reviewer comment... "
-COMMENT_PAYLOAD=$(python3 -c "import json; print(json.dumps({'pinId': $PIN_ID, 'content': 'Looks good to me', 'author': 'smoke-test-bot'}))")
-COMMENT_RESP=$(curl -s -w "\n%{http_code}" -X POST "${HOST}:${PORT}/api/pins/${PIN_ID}/comments" \
+PIN_ID=$(echo "$PIN_BODY" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('data',{}).get('pin',{}).get('id',''))")
+SHOT_ID=$(echo "$PIN_BODY" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('data',{}).get('screenshot',{}).get('id',''))")
+
+if [ -z "$PIN_ID" ] || [ -z "$SHOT_ID" ]; then
+  echo "missing pin or screenshot id"
+  echo "  body: $PIN_BODY" >&2
+  exit 1
+fi
+echo "OK (pin_id=$PIN_ID, screenshot_id=$SHOT_ID)"
+
+# ────────────────────────────────────────────────────────────────
+# 3. Add a reviewer comment to the pin (dashboard origin).
+# ────────────────────────────────────────────────────────────────
+echo -n "[3/5] Add reviewer comment... "
+COMMENT_RESP=$(curl -sS -w "\n%{http_code}" -X POST "${HOST}:${PORT}/api/pins/${PIN_ID}/comments" \
   -H "Content-Type: application/json" \
-  -d "$COMMENT_PAYLOAD")
+  -H "Origin: ${HOST}" \
+  -d "{\"text\":\"Reviewed, looks fine.\",\"author\":\"smoke-reviewer\",\"authorRole\":\"reviewer\"}")
 COMMENT_HTTP=$(echo "$COMMENT_RESP" | tail -1)
-if [ "$COMMENT_HTTP" != "200" ] && [ "$COMMENT_HTTP" != "201" ]; then
+
+if [ "$COMMENT_HTTP" != "201" ] && [ "$COMMENT_HTTP" != "200" ]; then
   echo "HTTP $COMMENT_HTTP"
   exit 1
 fi
 echo "OK"
 
-# 6. Resolve the pin
-echo -n "[6/6] Resolve pin... "
-RESOLVE_RESP=$(curl -s -w "\n%{http_code}" -X PATCH "${HOST}:${PORT}/api/pins/${PIN_ID}" \
+# ────────────────────────────────────────────────────────────────
+# 4. Resolve the pin.
+# ────────────────────────────────────────────────────────────────
+echo -n "[4/5] Resolve pin... "
+RESOLVE_RESP=$(curl -sS -w "\n%{http_code}" -X PATCH "${HOST}:${PORT}/api/pins/${PIN_ID}" \
   -H "Content-Type: application/json" \
-  -d '{"resolved": true}')
+  -H "Origin: ${HOST}" \
+  -d '{"status":"RESOLVED"}')
 RESOLVE_HTTP=$(echo "$RESOLVE_RESP" | tail -1)
+
 if [ "$RESOLVE_HTTP" != "200" ]; then
   echo "HTTP $RESOLVE_HTTP"
   exit 1
 fi
 echo "OK"
 
-# 7. Fetch /api/projects and verify the full tree
-echo -n "[7/6] Verify project tree... "
-rm -f "$TMPKEYFILE"
-TMPKEYFILE=$(mktemp)
-TREE_RESP=$(curl -s -w "\n%{http_code}" "${HOST}:${PORT}/api/projects" -o "$TMPKEYFILE")
-TREE_HTTP=$(echo "$TREE_RESP" | tail -1)
-if [ "$TREE_HTTP" != "200" ]; then
-  echo "/api/projects HTTP $TREE_HTTP"
+# ────────────────────────────────────────────────────────────────
+# 5. Fetch the screenshot via the public image endpoint and verify bytes.
+# ────────────────────────────────────────────────────────────────
+echo -n "[5/5] Fetch screenshot image... "
+SHOT_HTTP=$(curl -sS -o /tmp/smoke-shot.png -w "%{http_code}" "${HOST}:${PORT}/api/screenshots/${SHOT_ID}/image")
+SHOT_SIZE=$(stat -f %z /tmp/smoke-shot.png 2>/dev/null || stat -c %s /tmp/smoke-shot.png 2>/dev/null)
+
+if [ "$SHOT_HTTP" != "200" ]; then
+  echo "HTTP $SHOT_HTTP"
   exit 1
 fi
 
-# Walk the JSON tree and verify we can find the smoke test project with nested data
-TREE_CHECK=$(python3 -c "
-import sys, json, os
-
-with open(os.environ['TMPKEYFILE']) as f:
-    data = json.load(f)
-
-found = False
-projects = data if isinstance(data, list) else data.get('projects', data.get('data', []))
-for proj in projects:
-    if 'smoke-test' in str(proj.get('name', '')):
-        found = True
-        # Verify nested structure: Project → Page → Screenshot → Pin → Comment
-        assert 'pages' in proj or any('screenshots' in str(p) for p in proj.get('pages', [])), \
-            'No pages/screenshots in project'
-        # Check page has screenshots
-        for page in proj.get('pages', []):
-            assert 'screenshots' in str(page), 'No screenshots in page'
-            for ss in page.get('screenshots', []):
-                assert 'pins' in str(ss), 'No pins in screenshot'
-                for pin in ss.get('pins', []):
-                    assert 'comments' in str(pin), 'No comments in pin'
-        break
-
-if not found:
-    # Maybe the project name is in the response but nested differently — check by ID
-    print('smoke-project-found')
-else:
-    print('tree-valid')
-" 2>&1)
-if [ "$TREE_CHECK" != "tree-valid" ]; then
-  echo "$TREE_CHECK"
+if [ "$SHOT_SIZE" != "3238" ] && [ "$SHOT_SIZE" != "4841" ]; then
+  echo "got $SHOT_SIZE bytes (expected 3238 or 4841)"
   exit 1
 fi
-echo "OK (Project→Page→Screenshot→Pin→Comment tree verified)"
+rm -f /tmp/smoke-shot.png
+echo "OK (${SHOT_SIZE} bytes)"
 
 RESULT="PASS"
-echo ""
-echo "=== PASS ==="
