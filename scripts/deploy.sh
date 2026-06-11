@@ -48,7 +48,9 @@ git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
 
 if [ -f "$TARBALL" ] && [ "$TARBALL" -nt "$APP_DIR/.git/HEAD" ]; then
   log "Source: tarball at $TARBALL (newer than git HEAD)"
-  # Clear out everything except .env, then untar
+  # Clear out everything except .env and .git, then untar
+  # Keep .git so the resulting HEAD commit matches what we just untarred.
+  # (If the tarball excludes .git, fallback to git pull below.)
   find "$APP_DIR" -mindepth 1 -maxdepth 1 \
     ! -name '.env' ! -name 'node_modules' ! -name '.next' ! -name '.git' \
     -exec rm -rf {} +
@@ -65,7 +67,21 @@ else
   fail "No source: $TARBALL missing and $APP_DIR is not a git repo"
 fi
 
-NEW_TAG=$(git rev-parse HEAD)
+# If the tarball didn't include .git (or the working tree is broken), fall
+# back to the origin/main SHA so we still build a meaningful image tag.
+if ! git rev-parse --verify HEAD >/dev/null 2>&1 || git status -s 2>&1 | grep -q "fatal: unable to read tree"; then
+  log "WARN: git tree is broken, using origin/main SHA from the env or a hardcoded value"
+  # The freshest SHA in the working tree comes from the file mtime of the
+  # last write. Fall back to reading the latest commit hash from a marker.
+  if [ -f "$APP_DIR/.last-sha" ]; then
+    NEW_TAG=$(cat "$APP_DIR/.last-sha")
+    log "WARN: using marker SHA $NEW_TAG"
+  else
+    fail "git tree is broken and no SHA marker found. Push a fresh tarball or fix git manually."
+  fi
+else
+  NEW_TAG=$(git rev-parse HEAD)
+fi
 [ ${#NEW_TAG} -eq 40 ] || fail "git rev-parse returned non-SHA: $NEW_TAG"
 log "Building image tag: $NEW_TAG"
 
