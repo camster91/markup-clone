@@ -23,7 +23,7 @@ fi
 
 mapfile -t OLD_FILES < <(find "$SCREENSHOT_DIR" -maxdepth 1 -name "*.png" -mtime +"$DAYS" -type f 2>/dev/null)
 
-if [ ${#OLD_FILES[@]} -eq 0 ] && [ ${OLD_FILES[0]:-} = "" ]; then
+if [ ${#OLD_FILES[@]} -eq 0 ]; then
   log "No screenshots older than $DAYS days found"
   exit 0
 fi

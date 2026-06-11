@@ -150,6 +150,25 @@ docker run -d \
 # Attach to the postgres network so it can reach markup-postgres by name
 docker network connect "$PG_NET" "$APP_CONTAINER" 2>/dev/null || true
 
+# --- 4b. Caddy route sync ---
+# Make sure /opt/caddy/Caddyfile has a route for ${APP_NAME}.ashbi.ca
+CADDYFILE="/opt/caddy/Caddyfile"
+if [ -f "$CADDYFILE" ]; then
+  if ! grep -qE "${APP_NAME}\.ashbi\.ca" "$CADDYFILE"; then
+    log "Adding Caddy route for ${APP_NAME}.ashbi.ca -> 127.0.0.1:${HOST_PORT}"
+    cat >> "$CADDYFILE" <<EOF
+
+# ${APP_NAME} (auto-added by deploy.sh)
+${APP_NAME}.ashbi.ca {
+    reverse_proxy 127.0.0.1:${HOST_PORT}
+}
+EOF
+    # Caddy auto-watches the file, no reload needed
+  fi
+else
+  log "WARN: $CADDYFILE not found, skipping Caddy route sync"
+fi
+
 # --- 5. Health check ---
 log "Waiting for $APP_CONTAINER to be healthy..."
 for i in $(seq 1 20); do

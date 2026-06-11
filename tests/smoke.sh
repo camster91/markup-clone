@@ -224,4 +224,70 @@ else
   exit 1
 fi
 
+# ────────────────────────────────────────────────────────────────
+# 8. Rename the project to "Smoke Renamed" and verify.
+# ────────────────────────────────────────────────────────────────
+echo -n "[8/9] Rename project to Smoke Renamed... "
+RENAME_RESP=$(curl -sS -w "\n%{http_code}" -X PATCH "${HOST}:${PORT}/api/projects/${PROJECT_ID}" \
+  -H "Content-Type: application/json" \
+  -H "Origin: ${HOST}" \
+  -d '{"name":"Smoke Renamed"}')
+RENAME_HTTP=$(echo "$RENAME_RESP" | tail -1)
+RENAME_BODY=$(echo "$RENAME_RESP" | head -1)
+
+if [ "$RENAME_HTTP" != "200" ]; then
+  echo "HTTP $RENAME_HTTP"
+  echo "  body: $RENAME_BODY" >&2
+  exit 1
+fi
+
+RENAME_NAME=$(echo "$RENAME_BODY" | python3 -c "import sys, json; print(json.load(sys.stdin).get('name', ''))")
+if [ "$RENAME_NAME" != "Smoke Renamed" ]; then
+  echo "expected name 'Smoke Renamed', got '$RENAME_NAME'"
+  exit 1
+fi
+echo "OK"
+
+# ────────────────────────────────────────────────────────────────
+# 9. Create a throwaway project, delete it, then verify it's gone.
+# ────────────────────────────────────────────────────────────────
+echo -n "[9/9] Delete throwaway project and verify... "
+DELETE_CREATE_RESP=$(curl -sS -w "\n%{http_code}" -X POST "${HOST}:${PORT}/api/projects" \
+  -H "Content-Type: application/json" \
+  -H "Origin: ${HOST}" \
+  -d '{"name":"smoke-delete-$(date +%s)","domain":"smoke-delete.ashbi.ca"}')
+DELETE_CREATE_HTTP=$(echo "$DELETE_CREATE_RESP" | tail -1)
+DELETE_CREATE_BODY=$(echo "$DELETE_CREATE_RESP" | head -1)
+
+if [ "$DELETE_CREATE_HTTP" != "201" ] && [ "$DELETE_CREATE_HTTP" != "200" ]; then
+  echo "HTTP $DELETE_CREATE_HTTP"
+  echo "  body: $DELETE_CREATE_BODY" >&2
+  exit 1
+fi
+
+DELETE_ID=$(echo "$DELETE_CREATE_BODY" | python3 -c "import sys, json; print(json.load(sys.stdin).get('id', ''))")
+if [ -z "$DELETE_ID" ]; then
+  echo "missing delete project id"
+  exit 1
+fi
+
+DELETE_RESP=$(curl -sS -w "\n%{http_code}" -X DELETE "${HOST}:${PORT}/api/projects/${DELETE_ID}" \
+  -H "Origin: ${HOST}")
+DELETE_HTTP=$(echo "$DELETE_RESP" | tail -1)
+
+if [ "$DELETE_HTTP" != "200" ]; then
+  echo "HTTP $DELETE_HTTP"
+  exit 1
+fi
+
+# Verify the deleted project is gone
+LIST_RESP=$(curl -sS -X GET "${HOST}:${PORT}/api/projects" \
+  -H "Origin: ${HOST}")
+STILL_THERE=$(echo "$LIST_RESP" | python3 -c "import sys, json; ids=[p.get('id') for p in json.load(sys.stdin)]; print('yes' if '$DELETE_ID' in ids else 'no')")
+if [ "$STILL_THERE" != "no" ]; then
+  echo "FAIL — deleted project $DELETE_ID still appears in project list"
+  exit 1
+fi
+echo "OK"
+
 RESULT="PASS"

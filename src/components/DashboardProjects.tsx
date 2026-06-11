@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import CopyButton from './CopyButton';
 import ScreenshotView from './ScreenshotView';
+import ProjectSettings from './ProjectSettings';
+import ProjectSubscribers from './ProjectSubscribers';
 import type { ProjectWithPages } from '@/lib/types';
 
 export default function DashboardProjects() {
@@ -87,6 +89,11 @@ export default function DashboardProjects() {
                     <span className="text-gray-300">
                       <span className="font-semibold text-yellow-400">{openPins}</span> open
                     </span>
+                    <ProjectSettings
+                      projectId={project.id}
+                      projectName={project.name}
+                      onProjectUpdated={fetchProjects}
+                    />
                   </div>
                 </div>
               </div>
@@ -96,6 +103,8 @@ export default function DashboardProjects() {
                 <code className="bg-white px-2 py-1 rounded border border-gray-200 font-mono">{project.apiKey}</code>
                 <CopyButton text={project.apiKey} />
               </div>
+
+              <ProjectSubscribers projectId={project.id} />
 
               <div className="p-6 space-y-6">
                 {project.pages.length === 0 ? (
