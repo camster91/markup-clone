@@ -180,6 +180,21 @@ else
   log "WARN: $CADDYFILE not found, skipping Caddy route sync"
 fi
 
+# --- 4c. Caddy health check ---
+# Make sure Caddy is running and has the route loaded. If Caddy is dead,
+# route auto-sync is useless (no process to pick up the new Caddyfile).
+if pgrep -f "caddy run" >/dev/null 2>&1; then
+  if curl -sf http://127.0.0.1:2019/config/ >/dev/null 2>&1; then
+    log "Caddy is running and admin API is reachable"
+  else
+    log "WARN: caddy is running but admin API is not reachable at :2019"
+  fi
+else
+  log "WARN: caddy process not running, attempting restart"
+  systemctl restart caddy 2>/dev/null || service caddy restart 2>/dev/null || \
+    log "WARN: could not restart caddy (no systemctl or service). The route is added to Caddyfile but Caddy needs to be running to pick it up."
+fi
+
 # --- 5. Health check ---
 log "Waiting for $APP_CONTAINER to be healthy..."
 for i in $(seq 1 20); do
