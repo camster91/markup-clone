@@ -1,38 +1,54 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireApiKey } from '@/lib/auth';
+import { requireDashboardOrigin, generateApiKey } from '@/lib/auth';
 import crypto from 'crypto';
 
 export async function GET(req: Request) {
-  const authErr = requireApiKey(req);
+  const authErr = requireDashboardOrigin(req);
   if (authErr) return authErr;
+
   const projects = await prisma.project.findMany({
     include: {
       pages: {
         include: {
-          comments: { orderBy: { createdAt: 'desc' } }
-        }
-      }
+          screenshots: {
+            orderBy: { capturedAt: 'desc' },
+            include: {
+              pins: {
+                orderBy: { createdAt: 'asc' },
+                include: {
+                  comments: {
+                    orderBy: { createdAt: 'asc' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
     },
-    orderBy: { createdAt: 'desc' }
+    orderBy: { createdAt: 'desc' },
   });
   return NextResponse.json(projects);
 }
 
 export async function POST(req: Request) {
-  const authErr = requireApiKey(req);
+  const authErr = requireDashboardOrigin(req);
   if (authErr) return authErr;
 
   try {
-    const body = await req.json();
-    const { name, domain, githubRepo } = body;
-    if (!name || !domain) return NextResponse.json({ error: 'name and domain required' }, { status: 400 });
-    const existing = await prisma.project.findFirst({ where: { domain } });
-    if (existing) return NextResponse.json({ error: 'domain already exists' }, { status: 409 });
-    const apiKey = 'mup_' + crypto.randomBytes(16).toString('hex');
-    const project = await prisma.project.create({ data: { name, domain, githubRepo: githubRepo || null, apiKey } });
+    const { name, domain } = await req.json();
+    if (!name || !domain) {
+      return NextResponse.json({ error: 'name and domain required' }, { status: 400 });
+    }
+
+    const apiKey = generateApiKey();
+    const project = await prisma.project.create({
+      data: { name, domain, apiKey },
+    });
     return NextResponse.json(project, { status: 201 });
-  } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : 'Unknown' }, { status: 500 });
+  } catch (error) {
+    console.error('Project create error:', error);
+    return NextResponse.json({ error: 'Failed to create project' }, { status: 500 });
   }
 }

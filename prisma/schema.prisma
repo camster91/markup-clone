@@ -8,44 +8,60 @@ datasource db {
 }
 
 model Project {
-  id         String   @id @default(uuid())
-  name       String
-  domain     String
-  githubRepo String?  // e.g., "camster91/dublin-painters-website"
-  apiKey     String?  @unique
-  pages      Page[]
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id        String   @id @default(uuid())
+  name      String
+  domain    String
+  apiKey    String   @unique
+  pages     Page[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Page {
-  id        String    @id @default(uuid())
-  projectId String
-  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  path      String
-  comments  Comment[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id          String       @id @default(uuid())
+  projectId   String
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  path        String
+  screenshots Screenshot[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 
   @@unique([projectId, path])
 }
 
-model Comment {
-  id            String   @id @default(uuid())
-  pageId        String
-  page          Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
-  author        String   @default("Client")
-  text          String
-  status        String   @default("OPEN")
-  
-  xPercent      Float
-  yPercent      Float
-  xpath         String?
-  screenSize    String?
-  
-  proposedCode  String?
-  pullRequestUrl String? // Link to the generated GitHub PR
+model Screenshot {
+  id         String   @id @default(uuid())
+  pageId     String
+  page       Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  storageKey String   @unique
+  width      Int
+  height     Int
+  capturedAt DateTime @default(now())
+  pins       Pin[]
+}
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+model Pin {
+  id           String    @id @default(uuid())
+  screenshotId String
+  screenshot   Screenshot @relation(fields: [screenshotId], references: [id], onDelete: Cascade)
+  xPercent     Float
+  yPercent     Float
+  elementXPath String?
+  elementHTML  String?
+  authorName   String    @default("Client")
+  status       String    @default("OPEN")
+  comments     Comment[]
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model Comment {
+  id         String   @id @default(uuid())
+  pinId      String
+  pin        Pin      @relation(fields: [pinId], references: [id], onDelete: Cascade)
+  author     String   @default("Client")
+  authorRole String   @default("client")
+  text       String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }
