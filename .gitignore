@@ -41,3 +41,7 @@ yarn-error.log*
 next-env.d.ts
 
 /src/generated/prisma
+
+# runtime markers (used by deploy.sh, not source)
+.last-sha
+.deploy-exclude
