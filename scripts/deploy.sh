@@ -46,6 +46,13 @@ fail() { log "FAIL: $*"; exit 1; }
 cd "$APP_DIR"
 git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
 
+# Optional: dev machine can pass LAST_SHA=<sha> env to bypass the .last-sha
+# file dependency (which is gitignored, so it doesn't survive a tarball push).
+if [ -n "${LAST_SHA:-}" ]; then
+  log "WARN: using LAST_SHA env override: $LAST_SHA"
+  echo -n "$LAST_SHA" > "$APP_DIR/.last-sha"
+fi
+
 if [ -f "$TARBALL" ] && [ "$TARBALL" -nt "$APP_DIR/.git/HEAD" ]; then
   log "Source: tarball at $TARBALL (newer than git HEAD)"
   # Clear out everything except .env and .git, then untar
@@ -70,14 +77,16 @@ fi
 # If the tarball didn't include .git (or the working tree is broken), fall
 # back to the origin/main SHA so we still build a meaningful image tag.
 if ! git rev-parse --verify HEAD >/dev/null 2>&1 || git status -s 2>&1 | grep -q "fatal: unable to read tree"; then
-  log "WARN: git tree is broken, using origin/main SHA from the env or a hardcoded value"
-  # The freshest SHA in the working tree comes from the file mtime of the
-  # last write. Fall back to reading the latest commit hash from a marker.
-  if [ -f "$APP_DIR/.last-sha" ]; then
+  log "WARN: git tree is broken, falling back to .last-sha marker or LAST_SHA env"
+  # Prefer LAST_SHA env (set by dev machine), fall back to .last-sha file.
+  if [ -n "${LAST_SHA:-}" ]; then
+    NEW_TAG="$LAST_SHA"
+    log "WARN: using LAST_SHA env $NEW_TAG"
+  elif [ -f "$APP_DIR/.last-sha" ]; then
     NEW_TAG=$(cat "$APP_DIR/.last-sha")
     log "WARN: using marker SHA $NEW_TAG"
   else
-    fail "git tree is broken and no SHA marker found. Push a fresh tarball or fix git manually."
+    fail "git tree is broken and no SHA source. Pass LAST_SHA=<sha> env or write .last-sha."
   fi
 else
   NEW_TAG=$(git rev-parse HEAD)
