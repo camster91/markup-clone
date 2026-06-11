@@ -23,7 +23,10 @@ export async function POST(
 
     // Fire-and-forget the recapture (it's slow — 5s+ for Chromium to spin up)
     // Caller can poll GET /api/projects to see when the new PNG is served.
-    const child = spawn('bash', [RECAPTURE_SCRIPT, id], {
+    // The script lives at /opt/app-scripts/recapture.sh on the container, which
+    // is a bind mount of the host's /root/markup-clone/scripts/ (set up by
+    // deploy.sh). bash is in the image (added to Dockerfile for this).
+    const child = spawn('bash', ['/opt/app-scripts/recapture.sh', id], {
       detached: true,
       stdio: 'ignore',
     });

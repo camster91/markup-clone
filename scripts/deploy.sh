@@ -139,6 +139,7 @@ docker run -d \
   --restart unless-stopped \
   --env-file "$APP_DIR/.env" \
   -v "$SCREENSHOTS_DIR:/data/screenshots" \
+  -v "$APP_DIR/scripts:/opt/app-scripts:ro" \
   -p "127.0.0.1:${HOST_PORT}:3000" \
   --label traefik.enable=true \
   --label "traefik.http.routers.${APP_NAME}.entrypoints=websecure" \
