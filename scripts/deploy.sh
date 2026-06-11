@@ -151,19 +151,20 @@ docker run -d \
 docker network connect "$PG_NET" "$APP_CONTAINER" 2>/dev/null || true
 
 # --- 4b. Caddy route sync ---
-# Make sure /opt/caddy/Caddyfile has a route for ${APP_NAME}.ashbi.ca
+# Make sure /opt/caddy/Caddyfile has a route for the public hostname.
+# PUBLIC_HOSTNAME env var (default markup.ashbi.ca) controls what gets added.
 CADDYFILE="/opt/caddy/Caddyfile"
+PUBLIC_HOSTNAME="${PUBLIC_HOSTNAME:-markup.ashbi.ca}"
 if [ -f "$CADDYFILE" ]; then
-  if ! grep -qE "${APP_NAME}\.ashbi\.ca" "$CADDYFILE"; then
-    log "Adding Caddy route for ${APP_NAME}.ashbi.ca -> 127.0.0.1:${HOST_PORT}"
+  if ! grep -qE "^${PUBLIC_HOSTNAME//./\\.}\s*\\{" "$CADDYFILE"; then
+    log "Adding Caddy route for ${PUBLIC_HOSTNAME} -> 127.0.0.1:${HOST_PORT}"
     cat >> "$CADDYFILE" <<EOF
 
 # ${APP_NAME} (auto-added by deploy.sh)
-${APP_NAME}.ashbi.ca {
+${PUBLIC_HOSTNAME} {
     reverse_proxy 127.0.0.1:${HOST_PORT}
 }
 EOF
-    # Caddy auto-watches the file, no reload needed
   fi
 else
   log "WARN: $CADDYFILE not found, skipping Caddy route sync"
