@@ -23,6 +23,14 @@ export async function POST(
         authorRole: authorRole || 'reviewer',
       },
     });
+
+    // Reopen-on-reply: if the pin was RESOLVED, flip it back to OPEN.
+    // This is the reviewer-side signal that more work is needed.
+    const pin = await prisma.pin.findUnique({ where: { id }, select: { status: true } });
+    if (pin?.status === 'RESOLVED') {
+      await prisma.pin.update({ where: { id }, data: { status: 'OPEN' } });
+    }
+
     return NextResponse.json({ success: true, data: comment }, { status: 201 });
   } catch (error) {
     console.error('Comment create error:', error);
