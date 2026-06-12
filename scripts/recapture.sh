@@ -41,27 +41,37 @@ if [ -z "$CHROME" ]; then
 fi
 
 # Pick the DB client. Two strategies:
-#   1. psql with explicit -h/-p/-U/-d (alpine busybox psql doesn't accept
+#   1. psql with explicit -h/-p/-U/-d (alpine busybox psql does not accept
 #      a URL as a positional arg). Use DATABASE_URL env to extract params.
 #   2. Fall back to docker exec into the postgres container (host use case).
 PSQL=""
 if command -v psql >/dev/null 2>&1 && [ -n "$DATABASE_URL" ]; then
-  # Parse postgresql://user:***@host:port/dbname
-  # Strip scheme first
-  URL_NO_SCHEME=$(echo "$DATABASE_URL" | sed -E "s|^postgresql://||")
-  # Split on the LAST @ (so : in passwords are preserved)
-  USER_PASS=$(echo "$URL_NO_SCHEME" | awk -F'@' '{ for(i=1;i<NF;i++) printf "%s@", $i; print "" }' | sed 's/@$//')
-  HOST_PORT_DB=$(echo "$URL_NO_SCHEME" | awk -F'@' '{ print $NF }')
-  USER=$(echo "$USER_PASS" | awk -F':' '{ print $1 }')
-  HOSTPORT=$(echo "$HOST_PORT_DB" | awk -F'/' '{ print $1 }')
-  DBNAME=$(echo "$HOST_PORT_DB" | awk -F'/' '{ print $2 }')
-  HOST=$(echo "$HOSTPORT" | awk -F':' '{ print $1 }')
-  PORT=$(echo "$HOSTPORT" | awk -F':' '{ print $2 }')
-  PORT="${PORT:-5432}"
-  # Extract password: everything between USER and the next @
-  # USER_PASS is user:***; the password is the part after the first :
-  PGPASSWORD=$(echo "$USER_PASS" | awk -F':' '{$1=""; print substr($0,2)}' )
+  # Parse postgresql connection URL into its parts.
+  # Use bash parameter expansion to split on the LAST at-sign (so passwords
+  # containing at-signs do not break the parse) and URL-decode the password
+  # (real-world DATABASE_URLs escape at and colon in passwords as %40/%3A).
+  URL_NO_SCHEME="${DATABASE_URL#postgresql://}"
+  USER_PASS="${URL_NO_SCHEME%@*}"        # before last at-sign
+  HOST_PORT_DB="${URL_NO_SCHEME##*@}"   # after last at-sign
+  HOSTPORT="${HOST_PORT_DB%%/*}"
+  DBNAME="${HOST_PORT_DB#*/}"
+  # user is everything before the first colon in the credentials half
+  USER="${USER_PASS%%:*}"
+  # password is the rest of the credentials half, URL-decoded
+  PGPASSWORD_RAW="${USER_PASS#*:}"
+  PGPASSWORD=$(python3 -c "import sys, urllib.parse; print(urllib.parse.unquote(sys.argv[1]), end='')" "$PGPASSWORD_RAW")
   export PGPASSWORD
+  # HOST and PORT — handle the no-port case explicitly because the
+  # bash ${var#*:} / ${var%%:*} expansions do not compose well when the
+  # colon is absent (they would return the whole string instead of empty).
+  if [[ "$HOSTPORT" == *:* ]]; then
+    HOST="${HOSTPORT%%:*}"
+    PORT="${HOSTPORT#*:}"
+  else
+    HOST="$HOSTPORT"
+    PORT=""
+  fi
+  PORT="${PORT:-5432}"
   PSQL="psql -h $HOST -p $PORT -U $USER -d $DBNAME"
 elif command -v docker >/dev/null 2>&1; then
   PSQL="docker exec ${PG_CONTAINER:-markup-postgres} psql"
