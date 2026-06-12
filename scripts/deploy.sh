@@ -31,6 +31,11 @@ APP_DIR="/root/markup-clone"
 APP_NAME="markup-clone"
 APP_CONTAINER="markup-clone"
 PG_CONTAINER="markup-postgres"
+PG_NET="markup-net"
+HOST_PORT="${HOST_PORT:-3030}"
+LOG="/var/log/markup-deploy.log"
+SCREENSHOTS_DIR="/data/screenshots"
+TARBALL="/root/markup-clone.tgz"
 
 # Ensure the postgres container is running before we try to talk to it.
 # If Coolify (or some other orchestrator) shut it down between deploys, the
@@ -56,11 +61,6 @@ docker network connect "${PG_NET}" "${PG_CONTAINER}" 2>/dev/null || true
 # Note: we don't connect ${APP_CONTAINER} here — it's about to be recreated
 # with --network bridge, then re-connected below. The connect step below is the
 # authoritative one for the app container.
-PG_NET="markup-net"
-HOST_PORT="${HOST_PORT:-3030}"
-LOG="/var/log/markup-deploy.log"
-SCREENSHOTS_DIR="/data/screenshots"
-TARBALL="/root/markup-clone.tgz"
 
 mkdir -p "$(dirname "$LOG")"
 
