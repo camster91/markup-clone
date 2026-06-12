@@ -15,14 +15,26 @@ export async function POST(
 
   const { id } = await params;
 
-  // Rate limit by Origin header: 5 tokens, 1 per 10 seconds
+  // Rate limit: split into two buckets so a busy operator who clicks
+  // Recapture on many screenshots doesn't share a single bucket and end up
+  // throttling themselves on every other screenshot. The original key was
+  // `${origin}:${id}` which conflated the two — 5 captures on one screenshot
+  // would block recapture on every other screenshot for the same origin.
   const origin = req.headers.get('origin') ?? 'unknown';
-  const rateLimitKey = `${origin}:${id}`;
-  const rateLimit = consume(rateLimitKey, { maxTokens: 5, refillRate: 0.1 });
-  if (!rateLimit.ok) {
+  // Per-screenshot: prevent one stuck screenshot from monopolising Chromium.
+  const perShot = consume(`recapture:shot:${id}`, { maxTokens: 3, refillRate: 0.1 });
+  if (!perShot.ok) {
     return NextResponse.json(
-      { error: 'Too many requests', retryAfterSec: rateLimit.retryAfterSec },
-      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfterSec) } }
+      { error: 'Too many recaptures on this screenshot', retryAfterSec: perShot.retryAfterSec },
+      { status: 429, headers: { 'Retry-After': String(perShot.retryAfterSec) } }
+    );
+  }
+  // Per-origin: prevent one operator from running away (run-a-Cromium-tab DoS).
+  const perOrigin = consume(`recapture:origin:${origin}`, { maxTokens: 10, refillRate: 0.5 });
+  if (!perOrigin.ok) {
+    return NextResponse.json(
+      { error: 'Too many recaptures from this dashboard session', retryAfterSec: perOrigin.retryAfterSec },
+      { status: 429, headers: { 'Retry-After': String(perOrigin.retryAfterSec) } }
     );
   }
 
