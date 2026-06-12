@@ -6,6 +6,13 @@ import path from 'path';
 import crypto from 'crypto';
 import { requireDashboardOrigin } from '@/lib/auth';
 import { sendSubscriberEmails } from '@/lib/email';
+import {
+  LIMITS,
+  validatePagePath,
+  validatePercent,
+  sanitizeText,
+  validateScreenshotId,
+} from '@/lib/validation';
 
 const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || '/data/screenshots';
 const MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024; // 8MB
@@ -14,22 +21,45 @@ export async function POST(req: Request) {
   try {
     const form = await req.formData();
     const projectId = form.get('projectId') as string | null;
-    const path_ = (form.get('path') as string | null) || '/';
+    const pathRaw = (form.get('path') as string | null) || '/';
     const xPercent = parseFloat(form.get('xPercent') as string);
     const yPercent = parseFloat(form.get('yPercent') as string);
     const elementXPath = (form.get('elementXPath') as string | null) || null;
     const elementHTML = (form.get('elementHTML') as string | null) || null;
     const screenshot = form.get('screenshot') as File | null;
-    const text = (form.get('text') as string | null) || '';
-    const authorName = (form.get('authorName') as string | null) || 'Client';
+    const textRaw = (form.get('text') as string | null) || '';
+    const authorNameRaw = (form.get('authorName') as string | null) || 'Client';
 
+    // === Input validation (returns 400 with a specific error message) ===
     if (!projectId) return NextResponse.json({ error: 'projectId required' }, { status: 400 });
     if (!screenshot) return NextResponse.json({ error: 'screenshot required' }, { status: 400 });
-    if (Number.isNaN(xPercent) || Number.isNaN(yPercent)) {
-      return NextResponse.json({ error: 'xPercent and yPercent required' }, { status: 400 });
-    }
     if (screenshot.size > MAX_SCREENSHOT_BYTES) {
       return NextResponse.json({ error: 'screenshot too large' }, { status: 413 });
+    }
+
+    const pathRes = validatePagePath(pathRaw);
+    if (!pathRes.ok) return NextResponse.json({ error: pathRes.error }, { status: 400 });
+    const path_ = pathRes.value;
+
+    const xRes = validatePercent(xPercent, 'xPercent');
+    if (!xRes.ok) return NextResponse.json({ error: xRes.error }, { status: 400 });
+    const yRes = validatePercent(yPercent, 'yPercent');
+    if (!yRes.ok) return NextResponse.json({ error: yRes.error }, { status: 400 });
+
+    const textRes = sanitizeText(textRaw, LIMITS.TEXT_MAX, 'text');
+    if (!textRes.ok) return NextResponse.json({ error: textRes.error }, { status: 400 });
+    const text = textRes.value;
+
+    const authorRes = sanitizeText(authorNameRaw, LIMITS.AUTHOR_NAME_MAX, 'authorName');
+    if (!authorRes.ok) return NextResponse.json({ error: authorRes.error }, { status: 400 });
+    const authorName = authorRes.value;
+
+    // Validate optional element fields if present
+    if (elementXPath && elementXPath.length > LIMITS.ELEMENT_XPATH_MAX) {
+      return NextResponse.json({ error: `elementXPath must be ≤${LIMITS.ELEMENT_XPATH_MAX} chars` }, { status: 400 });
+    }
+    if (elementHTML && elementHTML.length > LIMITS.ELEMENT_HTML_MAX) {
+      return NextResponse.json({ error: `elementHTML must be ≤${LIMITS.ELEMENT_HTML_MAX} chars` }, { status: 400 });
     }
 
     // Widget auth: project apiKey via X-Api-Key header

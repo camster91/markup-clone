@@ -15,6 +15,18 @@ export async function DELETE(
   try {
     const { id } = await params;
 
+    // Verify the project exists BEFORE attempting destructive ops. Without
+    // this, prisma.project.delete throws P2025 (not found) which we catch
+    // as 500. The user can't distinguish "project not found" from "the
+    // database exploded" — both come back as the same generic 500.
+    const existing = await prisma.project.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!existing) {
+      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+    }
+
     // Collect all screenshot storageKeys for this project before deleting.
     // CASCADE: Page → Screenshot → Pin → Comment are handled by the DB,
     // but screenshot PNG files on disk are NOT in the DB cascade.
@@ -57,6 +69,22 @@ export async function PATCH(
     const { id } = await params;
     const body = await req.json();
     const { name, regenerateKey } = body as { name?: string; regenerateKey?: boolean };
+
+    // Validate inputs. Reject empty name, non-string, or ridiculously long.
+    // Without these, prisma throws an opaque error that the user can't act on.
+    if (name !== undefined && (typeof name !== 'string' || name.length === 0 || name.length > 200)) {
+      return NextResponse.json({ error: 'name must be a non-empty string ≤200 chars' }, { status: 400 });
+    }
+    if (regenerateKey !== undefined && typeof regenerateKey !== 'boolean') {
+      return NextResponse.json({ error: 'regenerateKey must be a boolean' }, { status: 400 });
+    }
+
+    // Verify the project exists. Without this, prisma.update throws P2025
+    // (not found) which we catch as 500 — no signal to the user.
+    const existing = await prisma.project.findUnique({ where: { id }, select: { id: true } });
+    if (!existing) {
+      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+    }
 
     const data: { name?: string; apiKey?: string } = {};
     if (name !== undefined) data.name = name;

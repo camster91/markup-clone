@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server';
 import { prisma } from './prisma';
 
-const DASHBOARD_HOST = process.env.DASHBOARD_HOST || 'markup.ashbi.ca';
+function getDashboardHost(): string {
+  return process.env.DASHBOARD_HOST || 'markup.ashbi.ca';
+}
 
-function isDashboardOrigin(req: Request): boolean {
+export function isDashboardOrigin(req: Request): boolean {
+  const dashboardHost = getDashboardHost();
   const origin = req.headers.get('origin');
-  if (origin && origin.includes(DASHBOARD_HOST)) return true;
+  if (origin && origin.includes(dashboardHost)) return true;
   if (req.headers.get('sec-fetch-site') === 'same-origin') return true;
   return false;
 }
