@@ -177,7 +177,20 @@ ${PUBLIC_HOSTNAME} {
 EOF
   fi
 else
-  log "WARN: $CADDYFILE not found, skipping Caddy route sync"
+  log "WARN: $CADDYFILE not found, creating it"
+  mkdir -p "$(dirname "$CADDYFILE")"
+  touch "$CADDYFILE"
+  # Now re-run the route check (the file is empty, so the route isn't there yet)
+  if ! grep -qE "^${PUBLIC_HOSTNAME//./\\.}\s*\\{" "$CADDYFILE"; then
+    log "Adding Caddy route for ${PUBLIC_HOSTNAME} -> 127.0.0.1:${HOST_PORT}"
+    cat >> "$CADDYFILE" <<EOF
+
+# ${APP_NAME} (auto-added by deploy.sh)
+${PUBLIC_HOSTNAME} {
+    reverse_proxy 127.0.0.1:${HOST_PORT}
+}
+EOF
+  fi
 fi
 
 # --- 4c. Caddy health check ---
