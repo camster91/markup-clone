@@ -19,7 +19,10 @@ export default defineConfig({
     },
   },
   test: {
-    environment: 'node', // default; tests can opt into jsdom via /\* @vitest-environment jsdom \*/
+      environment: 'node', // default; tests can opt into jsdom via /* @vitest-environment jsdom */
+      environmentMatchGlobs: [
+        ['tests/widget/**', 'jsdom'],
+      ],
     globals: true, // describe/it/expect without imports
     setupFiles: ['./tests/setup.ts'],
     include: ['tests/**/*.test.{ts,tsx}', 'src/**/*.test.{ts,tsx}'],
