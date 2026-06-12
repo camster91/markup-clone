@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardOrigin } from '@/lib/auth';
 import { spawn } from 'child_process';
+import { consume } from '@/lib/rate-limit';
 
 const RECAPTURE_SCRIPT = process.env.RECAPTURE_SCRIPT || '/root/markup-clone/scripts/recapture.sh';
 
@@ -12,8 +13,20 @@ export async function POST(
   const authErr = requireDashboardOrigin(req);
   if (authErr) return authErr;
 
+  const { id } = await params;
+
+  // Rate limit by Origin header: 5 tokens, 1 per 10 seconds
+  const origin = req.headers.get('origin') ?? 'unknown';
+  const rateLimitKey = `${origin}:${id}`;
+  const rateLimit = consume(rateLimitKey, { maxTokens: 5, refillRate: 0.1 });
+  if (!rateLimit.ok) {
+    return NextResponse.json(
+      { error: 'Too many requests', retryAfterSec: rateLimit.retryAfterSec },
+      { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfterSec) } }
+    );
+  }
+
   try {
-    const { id } = await params;
 
     // Verify the screenshot exists
     const ss = await prisma.screenshot.findUnique({ where: { id } });

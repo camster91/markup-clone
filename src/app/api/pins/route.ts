@@ -13,6 +13,7 @@ import {
   sanitizeText,
   validateScreenshotId,
 } from '@/lib/validation';
+import { consume } from '@/lib/rate-limit';
 
 const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || '/data/screenshots';
 const MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024; // 8MB
@@ -65,6 +66,17 @@ export async function POST(req: Request) {
     // Widget auth: project apiKey via X-Api-Key header
     const authErr = await requireProjectKey(req, projectId);
     if (authErr) return authErr;
+
+    // Rate limit by IP + projectId: 30 tokens, 1 per 10 seconds
+    const ip = req.headers.get('x-forwarded-for') ?? 'unknown';
+    const rateLimitKey = `${ip}:${projectId}`;
+    const rateLimit = consume(rateLimitKey, { maxTokens: 30, refillRate: 0.1 });
+    if (!rateLimit.ok) {
+      return NextResponse.json(
+        { error: 'Too many requests', retryAfterSec: rateLimit.retryAfterSec },
+        { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfterSec) } }
+      );
+    }
 
     // Ensure project + page exist
     const project = await prisma.project.findUnique({ where: { id: projectId } });
