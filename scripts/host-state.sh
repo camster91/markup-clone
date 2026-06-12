@@ -412,6 +412,27 @@ state["markup_clone"]["caddy_route_present"] = caddy_route_present
 if caddy_route_warning:
     state["markup_clone"]["caddy_route_warning"] = caddy_route_warning
 
+# Recapture pre-flight: chromium, script, and bind-mount health
+recapture_chromium = sh("command -v chromium chromium-browser google-chrome 2>/dev/null | head -1", "")
+recapture_script_path = sh("ls -la /root/markup-clone/scripts/recapture.sh 2>&1", "")
+recapture_script_present = "/root/markup-clone/scripts/recapture.sh" in recapture_script_path
+
+app_scripts_mount = ""
+try:
+    mp = subprocess.check_output(
+        ["docker", "inspect", "markup-clone", "--format", "{{range .Mounts}}{{.Destination}} {{end}}"],
+        text=True, timeout=2,
+    )
+    app_scripts_mount = "mounted" if "/opt/app-scripts" in mp else "missing"
+except Exception:
+    app_scripts_mount = "container-down"
+
+state["markup_clone"]["recapture_health"] = {
+    "chromium_on_host": recapture_chromium or "missing",
+    "recapture_script": "present" if recapture_script_present else "missing",
+    "app_scripts_mount": app_scripts_mount,
+}
+
 print(json.dumps(state, indent=2, sort_keys=True))
 PYEOF
 python3 /tmp/_build_state.py > "$JSON"
