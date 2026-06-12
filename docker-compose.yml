@@ -1,0 +1,71 @@
+# Local development stack for markup-clone.
+#
+#   docker compose up --build
+#   open http://localhost:3030
+#
+# What this gives you:
+# - postgres:16-alpine on the local docker network
+# - markup-clone app on http://localhost:3030 (port configurable via APP_PORT)
+# - bind-mounted /data/screenshots and ./scripts so recapture.sh works locally
+# - healthcheck on /api/health
+#
+# For production, prefer `docker build` + the existing deploy.sh on the
+# Hostinger VPS. This file is for local dev / smoke tests only.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: markup-postgres
+    environment:
+      POSTGRES_USER: markup
+      POSTGRES_PASSWORD: markup_dev_pw
+      POSTGRES_DB: markup_db
+    volumes:
+      - markup_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U markup -d markup_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - markup-net
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: markup-clone
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://markup:***@postgres:5432/markup_db
+      DASHBOARD_HOST: localhost:3030
+      PORT: 3000
+      SCREENSHOTS_DIR: /data/screenshots
+      MAILGUN_API_KEY: ${MAILGUN_API_KEY:-test_disabled}
+      MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-example.com}
+    volumes:
+      # Persist screenshots across container recreations
+      - screenshots:/data/screenshots
+      # Local scripts dir so recapture.sh works in the container
+      - ./scripts:/opt/app-scripts:ro
+    ports:
+      - "${APP_PORT:-3030}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - markup-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+
+volumes:
+  markup_pgdata:
+  screenshots:
+
+networks:
+  markup-net:
+    driver: bridge

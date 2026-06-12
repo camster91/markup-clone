@@ -1,0 +1,44 @@
+# Build context exclusions for `docker build`.
+# Without this, the build context ships .git, .env, node_modules, and
+# .next into the builder image — wasted cache and a real chance of
+# leaking secrets into the image history.
+
+# VCS
+.git
+.gitignore
+
+# Local env files
+.env
+.env.*
+!.env.example
+
+# Node / Next
+node_modules
+.next
+out
+build
+coverage
+.npm
+.pnpm-debug.log*
+
+# Editors / OS
+.DS_Store
+.vscode
+.idea
+*.swp
+*.swo
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Generated Prisma
+/src/generated/prisma
+
+# Deploy runtime markers (host-only state, not source)
+.last-sha
+.deploy-exclude
+
+# Local dev artifacts
+/data
+/screenshots
