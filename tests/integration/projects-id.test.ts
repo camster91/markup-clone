@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   screenshot: { findUnique: vi.fn(), delete: vi.fn(), findMany: vi.fn() }, // findMany is used by the DELETE cascade
   pin: { delete: vi.fn() },
   subscriber: { findMany: vi.fn(), create: vi.fn(), findUnique: vi.fn(), delete: vi.fn() },
+  auditLog: { create: vi.fn().mockResolvedValue({ id: 'audit-log-1' }) },
 }));
 
 vi.mock('@/lib/prisma', () => ({
