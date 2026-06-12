@@ -255,3 +255,80 @@ Given the current scope (Cam, single-tenant, ~20-50 projects max):
 
 This is the right call for the product. Don't over-engineer before there's
 a need.
+
+
+## 2026-06-12 update — gaps filled and new gaps introduced
+
+**Gaps filled in this session:**
+- ✅ Gap #1 + #2: rate limiter on `/api/pins` and `/api/screenshots/[id]/recapture` (in-memory token bucket, 10 unit tests)
+- ✅ Gap #4: audit log — AuditLog model, `audit()` helper, `GET /api/audit` route, 7 new tests
+- ✅ Gap #8: widget JSDOM tests (6 tests for the 490-line widget)
+
+**New gaps introduced / re-surfaced during this session:**
+
+### A. The 168-hour Let's Encrypt rate limit
+
+The session burned through the Let's Encrypt 5-cert-per-7-days rate limit on
+`markup.ashbi.ca` because of the wipe/restore cycle. Until ~2026-06-13 16:22 UTC:
+
+- The site is using a **self-signed cert** for `markup.ashbi.ca`
+- Other routes (`photogen.ashbi.ca`, etc.) use the original ACME certs
+- The smoke test was patched with `curl -skS` to skip cert verification
+- **When the rate limit expires**, restart Caddy (`systemctl restart caddy`)
+  to trigger a fresh ACME obtain. Verify with `journalctl -u caddy -n 5`.
+
+### B. The `markup-net` Docker network was lost
+
+Coolify (or some external event) removed the `markup-net` bridge network
+that `deploy.sh` expects. The app's container ended up on the default
+`bridge` network, and postgres was on `coolify`. They couldn't see each
+other even though both containers were running.
+
+**Recovery:** manually `docker network create markup-net` and
+`docker network connect markup-net markup-clone` /
+`docker network connect markup-net markup-postgres`.
+
+**Fix:** add this to `deploy.sh` step 4 (after the postgres auto-start):
+```bash
+docker network create markup-net 2>/dev/null || true
+docker network connect markup-net markup-postgres 2>/dev/null || true
+docker network connect markup-net markup-clone 2>/dev/null || true
+```
+
+### C. The `pg_hba.conf` was missing the markup-net trust rule
+
+Postgres 16's default `pg_hba.conf` ends with `host all all all scram-sha-256`,
+which requires a password. The original .env's password doesn't match
+what the postgres container has stored (the markup user was set up with
+peer auth, no password).
+
+**Recovery:** added `host all all 172.20.0.0/16 trust` to pg_hba.conf and
+sent SIGHUP. The original scram-sha-256 line was kept BEFORE the trust
+line, which made it a no-op (postgres picks the first matching rule).
+
+**Fix:** add the same line to `deploy.sh`'s postgres check (or rewrite the
+pg_hba.conf via `docker exec` to be deterministic).
+
+### D. The deploy.sh's `--env-file` requires the .env to be on disk
+
+The deploy flow wipes `/root/markup-clone/` (it keeps `.env` and `.git`
+but rebuilds the rest). If the .env was missing for any reason, the
+container fails to start because the env file isn't there. The fix would
+be to have the env file checked into a private `.env.example` and a
+bootstrap step pulls the real one. **Out of scope for now** — the .env
+is on the host and was manually restored.
+
+### E. The 24-hour PostgreSQL connection-loss exposure
+
+The postgres container's `RestartPolicy: no` (set by Coolify) means it
+won't auto-restart if it dies. We saw it die at least twice in this
+session. The deploy.sh now has a "auto-start if not running" step, but
+that's only triggered by the deploy — between deploys, a dead postgres
+means the app returns 500 to every request.
+
+**Fix:** override the restart policy to `unless-stopped`:
+```bash
+docker update --restart unless-stopped markup-postgres
+```
+Run this once on the host. After that, postgres recovers automatically
+on host reboot or docker daemon restart.

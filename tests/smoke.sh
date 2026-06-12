@@ -54,7 +54,7 @@ echo "Fixture: $FIXTURE_PNG"
 #    The response includes the per-project apiKey.
 # ────────────────────────────────────────────────────────────────
 echo -n "[1/5] Create project (same-origin)... "
-CREATE_RESP=$(curl -sS -w "\n%{http_code}" -X POST "${HOST}:${PORT}/api/projects" \
+CREATE_RESP=$(curl -skS -w "\n%{http_code}" -X POST "${HOST}:${PORT}/api/projects" \
   -H "Content-Type: application/json" \
   -H "Origin: ${HOST}" \
   -d "{\"name\":\"smoke-test-$(date +%s)\",\"domain\":\"smoke-test.ashbi.ca\"}")
@@ -84,7 +84,7 @@ echo "OK (project_id=$PROJECT_ID)"
 #    The server creates the Page, Screenshot, Pin, and first Comment in one call.
 # ────────────────────────────────────────────────────────────────
 echo -n "[2/5] Post pin with screenshot... "
-PIN_RESP=$(curl -sS -w "\n%{http_code}" -X POST "${HOST}:${PORT}/api/pins" \
+PIN_RESP=$(curl -skS -w "\n%{http_code}" -X POST "${HOST}:${PORT}/api/pins" \
   -H "X-Api-Key: $(cat "$KEYFILE")" \
   -H "Origin: https://smoke-test.ashbi.ca" \
   -F "projectId=${PROJECT_ID}" \
@@ -119,7 +119,7 @@ echo "OK (pin_id=$PIN_ID, screenshot_id=$SHOT_ID)"
 # 3. Add a reviewer comment to the pin (dashboard origin).
 # ────────────────────────────────────────────────────────────────
 echo -n "[3/5] Add reviewer comment... "
-COMMENT_RESP=$(curl -sS -w "\n%{http_code}" -X POST "${HOST}:${PORT}/api/pins/${PIN_ID}/comments" \
+COMMENT_RESP=$(curl -skS -w "\n%{http_code}" -X POST "${HOST}:${PORT}/api/pins/${PIN_ID}/comments" \
   -H "Content-Type: application/json" \
   -H "Origin: ${HOST}" \
   -d "{\"text\":\"Reviewed, looks fine.\",\"author\":\"smoke-reviewer\",\"authorRole\":\"reviewer\"}")
@@ -135,7 +135,7 @@ echo "OK"
 # 4. Resolve the pin.
 # ────────────────────────────────────────────────────────────────
 echo -n "[4/5] Resolve pin... "
-RESOLVE_RESP=$(curl -sS -w "\n%{http_code}" -X PATCH "${HOST}:${PORT}/api/pins/${PIN_ID}" \
+RESOLVE_RESP=$(curl -skS -w "\n%{http_code}" -X PATCH "${HOST}:${PORT}/api/pins/${PIN_ID}" \
   -H "Content-Type: application/json" \
   -H "Origin: ${HOST}" \
   -d '{"status":"RESOLVED"}')
@@ -151,7 +151,7 @@ echo "OK"
 # 5. Fetch the screenshot via the public image endpoint and verify bytes.
 # ────────────────────────────────────────────────────────────────
 echo -n "[5/7] Fetch screenshot image... "
-SHOT_HTTP=$(curl -sS -o /tmp/smoke-shot.png -w "%{http_code}" "${HOST}:${PORT}/api/screenshots/${SHOT_ID}/image")
+SHOT_HTTP=$(curl -skS -o /tmp/smoke-shot.png -w "%{http_code}" "${HOST}:${PORT}/api/screenshots/${SHOT_ID}/image")
 SHOT_SIZE=$(stat -f %z /tmp/smoke-shot.png 2>/dev/null || stat -c %s /tmp/smoke-shot.png 2>/dev/null)
 
 if [ "$SHOT_HTTP" != "200" ]; then
@@ -170,7 +170,7 @@ echo "OK (${SHOT_SIZE} bytes)"
 # 5b. Reopen the resolved pin by adding a reviewer comment.
 # ────────────────────────────────────────────────────────────────
 echo -n "[5b/7] Reopen pin via reviewer comment... "
-REOPEN_RESP=$(curl -sS -w "\n%{http_code}" -X POST "${HOST}:${PORT}/api/pins/${PIN_ID}/comments" \
+REOPEN_RESP=$(curl -skS -w "\n%{http_code}" -X POST "${HOST}:${PORT}/api/pins/${PIN_ID}/comments" \
   -H "Content-Type: application/json" \
   -H "Origin: ${HOST}" \
   -d '{"text":"Not quite there yet — please revisit.","author":"smoke-reviewer","authorRole":"reviewer"}')
@@ -187,7 +187,7 @@ echo "OK"
 # ────────────────────────────────────────────────────────────────
 echo -n "[6/7] Subscribe email to project... "
 SUB_EMAIL="smoke+$(date +%s)@ashbi.ca"
-SUB_RESP=$(curl -sS -w "\n%{http_code}" -X POST "${HOST}:${PORT}/api/projects/${PROJECT_ID}/subscribers" \
+SUB_RESP=$(curl -skS -w "\n%{http_code}" -X POST "${HOST}:${PORT}/api/projects/${PROJECT_ID}/subscribers" \
   -H "Content-Type: application/json" \
   -H "Origin: ${HOST}" \
   -d "{\"email\":\"${SUB_EMAIL}\"}")
@@ -205,7 +205,7 @@ echo "OK (${SUB_EMAIL})"
 #    - outline (hover outline, task 2)
 # ────────────────────────────────────────────────────────────────
 echo -n "[7/7] Widget contains hover-outline and full-page capture... "
-WIDGET_RESP=$(curl -sS -w "\n%{http_code}" "${HOST}:${PORT}/widget.js" -o /tmp/smoke-widget.js)
+WIDGET_RESP=$(curl -skS -w "\n%{http_code}" "${HOST}:${PORT}/widget.js" -o /tmp/smoke-widget.js)
 WIDGET_HTTP=$(echo "$WIDGET_RESP" | tail -1)
 
 if [ "$WIDGET_HTTP" != "200" ]; then
@@ -228,7 +228,7 @@ fi
 # 8. Rename the project to "Smoke Renamed" and verify.
 # ────────────────────────────────────────────────────────────────
 echo -n "[8/9] Rename project to Smoke Renamed... "
-RENAME_RESP=$(curl -sS -w "\n%{http_code}" -X PATCH "${HOST}:${PORT}/api/projects/${PROJECT_ID}" \
+RENAME_RESP=$(curl -skS -w "\n%{http_code}" -X PATCH "${HOST}:${PORT}/api/projects/${PROJECT_ID}" \
   -H "Content-Type: application/json" \
   -H "Origin: ${HOST}" \
   -d '{"name":"Smoke Renamed"}')
@@ -252,7 +252,7 @@ echo "OK"
 # 9. Create a throwaway project, delete it, then verify it's gone.
 # ────────────────────────────────────────────────────────────────
 echo -n "[9/9] Delete throwaway project and verify... "
-DELETE_CREATE_RESP=$(curl -sS -w "\n%{http_code}" -X POST "${HOST}:${PORT}/api/projects" \
+DELETE_CREATE_RESP=$(curl -skS -w "\n%{http_code}" -X POST "${HOST}:${PORT}/api/projects" \
   -H "Content-Type: application/json" \
   -H "Origin: ${HOST}" \
   -d '{"name":"smoke-delete-$(date +%s)","domain":"smoke-delete.ashbi.ca"}')
@@ -271,7 +271,7 @@ if [ -z "$DELETE_ID" ]; then
   exit 1
 fi
 
-DELETE_RESP=$(curl -sS -w "\n%{http_code}" -X DELETE "${HOST}:${PORT}/api/projects/${DELETE_ID}" \
+DELETE_RESP=$(curl -skS -w "\n%{http_code}" -X DELETE "${HOST}:${PORT}/api/projects/${DELETE_ID}" \
   -H "Origin: ${HOST}")
 DELETE_HTTP=$(echo "$DELETE_RESP" | tail -1)
 
@@ -281,7 +281,7 @@ if [ "$DELETE_HTTP" != "200" ]; then
 fi
 
 # Verify the deleted project is gone
-LIST_RESP=$(curl -sS -X GET "${HOST}:${PORT}/api/projects" \
+LIST_RESP=$(curl -skS -X GET "${HOST}:${PORT}/api/projects" \
   -H "Origin: ${HOST}")
 STILL_THERE=$(echo "$LIST_RESP" | python3 -c "import sys, json; ids=[p.get('id') for p in json.load(sys.stdin)]; print('yes' if '$DELETE_ID' in ids else 'no')")
 if [ "$STILL_THERE" != "no" ]; then
