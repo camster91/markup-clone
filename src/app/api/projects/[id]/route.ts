@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardOrigin, generateApiKey } from '@/lib/auth';
+import { audit } from '@/lib/audit';
 import { unlink } from 'fs/promises';
 
 const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || '/data/screenshots';
@@ -21,7 +22,7 @@ export async function DELETE(
     // database exploded" — both come back as the same generic 500.
     const existing = await prisma.project.findUnique({
       where: { id },
-      select: { id: true },
+      select: { id: true, name: true, domain: true },
     });
     if (!existing) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
@@ -46,6 +47,7 @@ export async function DELETE(
     }
 
     await prisma.project.delete({ where: { id } });
+    audit({ actor: id, action: 'project.delete', target: id, metadata: { name: existing.name, domain: existing.domain } });
 
     return NextResponse.json({ deleted: true, filesRemoved, projects: 1 });
   } catch (error) {
@@ -94,7 +96,9 @@ export async function PATCH(
       return NextResponse.json({ error: 'name or regenerateKey required' }, { status: 400 });
     }
 
+    const changes = { ...data };
     const project = await prisma.project.update({ where: { id }, data });
+    audit({ actor: id, action: 'project.update', target: id, metadata: { changes } });
     return NextResponse.json(project);
   } catch (error) {
     console.error('Project update error:', error);

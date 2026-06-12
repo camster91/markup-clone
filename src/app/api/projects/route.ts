@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardOrigin, generateApiKey } from '@/lib/auth';
+import { audit } from '@/lib/audit';
 import crypto from 'crypto';
 
 export async function GET(req: Request) {
@@ -46,6 +47,7 @@ export async function POST(req: Request) {
     const project = await prisma.project.create({
       data: { name, domain, apiKey },
     });
+    audit({ actor: project.id, action: 'project.create', target: project.id });
     return NextResponse.json(project, { status: 201 });
   } catch (error) {
     console.error('Project create error:', error);

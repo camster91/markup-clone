@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardOrigin } from '@/lib/auth';
+import { audit } from '@/lib/audit';
 import { unlink } from 'fs/promises';
 
 const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || '/data/screenshots';
@@ -64,6 +65,7 @@ export async function DELETE(
 
     // Delete the pin
     await prisma.pin.delete({ where: { id } });
+    audit({ actor: pin.screenshotId, action: 'pin.delete', target: id });
 
     return NextResponse.json({
       deleted: true,
