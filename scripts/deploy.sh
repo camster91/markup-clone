@@ -169,6 +169,15 @@ log "Building image: $APP_NAME:$NEW_TAG"
 docker build -t "$APP_NAME:$NEW_TAG" -t "$APP_NAME:latest" "$APP_DIR" 2>&1 | tail -5 | tee -a "$LOG"
 
 # --- 4. Recreate the container ---
+# Notes for the docker run block:
+# - Next.js 16 standalone server.js does `process.env.HOSTNAME ||
+#   "0.0.0.0"`. Docker sets HOSTNAME to the container ID by default,
+#   which makes next-server bind to that single interface (10.x.x.x
+#   inside the container). That breaks in-container healthchecks
+#   against 127.0.0.1 and any container-to-container traffic.
+#   Override to 0.0.0.0 so the app listens on all interfaces.
+#   Discovered the hard way when docker healthcheck reported
+#   FailingStreak=1030 even though the app itself was fine.
 log "Recreating container $APP_CONTAINER"
 docker rm -f "$APP_CONTAINER" 2>/dev/null || true
 docker run -d \
@@ -176,14 +185,6 @@ docker run -d \
   --network bridge \
   --restart unless-stopped \
   --env-file "$APP_DIR/.env" \
-  # Next.js 16 standalone server.js does `process.env.HOSTNAME || '0.0.0.0'`.
-  # Docker sets HOSTNAME to the container ID by default, which makes
-  # next-server bind to that single interface (10.x.x.x inside the
-  # container). That breaks in-container healthchecks against 127.0.0.1
-  # and any container-to-container traffic. Override to 0.0.0.0 so the
-  # app listens on all interfaces. Discovered the hard way when
-  # docker healthcheck reported FailingStreak=1030 even though the app
-  # itself was fine.
   -e "HOSTNAME=0.0.0.0" \
   -v "$SCREENSHOTS_DIR:/data/screenshots" \
   -v "$APP_DIR/scripts:/opt/app-scripts:ro" \
