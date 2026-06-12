@@ -57,9 +57,13 @@ export async function sendSubscriberEmails(params: {
 }
 
 function escapeHtml(s: string): string {
+  // Order matters: replace `&` first so the `&` in entities like `&lt;`
+  // gets re-encoded to `&amp;lt;`. Otherwise the resulting HTML decodes
+  // back to the original `<` in some clients and we get email XSS.
   return s
-    .replace(/&/g, '&')
-    .replace(/</g, '<')
-    .replace(/>/g, '>')
-    .replace(/"/g, '"');
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }

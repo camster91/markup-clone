@@ -256,7 +256,7 @@ describe('Mailgun request shape', () => {
     expect(body.html).toContain('Great work!');
   });
 
-  it('escapeHtml escapes &, <, >, " but NOT single quotes', async () => {
+  it('escapeHtml escapes &, <, >, ", and single quotes', async () => {
     (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
       new Response('', { status: 200 })
     );
@@ -271,14 +271,27 @@ describe('Mailgun request shape', () => {
     const [, options] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
     const body = parseFormBody(options.body as string);
 
-    // The four HTML entities should be escaped
+    // The five HTML entities should be escaped
     expect(body.html).toContain('&amp;');
     expect(body.html).toContain('&lt;');
     expect(body.html).toContain('&gt;');
     expect(body.html).toContain('&quot;');
+    expect(body.html).toContain('&#39;');
 
-    // Single quotes should NOT be escaped (current implementation)
-    expect(body.html).toContain("'");
+    // Raw <, >, ", ' must not appear outside of HTML tags we own.
+    // (We can't grep the full body, but we can confirm the comment text
+    // produced entity-encoded output, not raw characters.)
+    expect(body.html).toContain('Comment with &quot;double&quot; and &#39;single&#39;');
+
+    // Critically: the original `&` between "Fish" and "<Birds>" was encoded
+    // first, so the output is `Fish &amp; &lt;Birds&gt;` — not `Fish & <Birds>`.
+    // If the order were reversed, the `&` in the emitted `&lt;` entity would
+    // be re-encoded on the next pass and produce `&amp;lt;`, which is harmless
+    // but verbose. The real bug is the old `&`→`&` no-op: that would have
+    // emitted `Fish & <Birds>` and let email clients re-decode the trailing
+    // entities.
+    expect(body.html).toContain('Fish &amp; &lt;Birds&gt;');
+    expect(body.html).not.toMatch(/Fish & <Birds>/);
   });
 });
 
