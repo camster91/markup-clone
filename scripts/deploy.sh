@@ -40,6 +40,22 @@ if ! docker ps --filter "name=^${PG_CONTAINER}$" --format '{{.Names}}' | grep -q
   docker start "${PG_CONTAINER}" 2>&1 || log "WARN: failed to start ${PG_CONTAINER}; migrations will skip"
   sleep 2
 fi
+
+# Ensure the postgres container is configured to auto-restart. Without this,
+# a host reboot or daemon restart leaves postgres down until the next deploy.
+# (Coolify's default restart policy is 'no' for managed containers.)
+docker inspect "${PG_CONTAINER}" --format '{{.HostConfig.RestartPolicy.Name}}' 2>/dev/null | grep -q "^no$" && \
+  docker update --restart unless-stopped "${PG_CONTAINER}" 2>/dev/null || true
+
+# Ensure the markup-net bridge network exists and both containers are on it.
+# If Coolify (or some external event) removed the network, the app container
+# ends up on the default 'bridge' network with no DNS route to postgres.
+docker network inspect "${PG_NET}" >/dev/null 2>&1 || \
+  docker network create "${PG_NET}" >/dev/null 2>&1
+docker network connect "${PG_NET}" "${PG_CONTAINER}" 2>/dev/null || true
+# Note: we don't connect ${APP_CONTAINER} here — it's about to be recreated
+# with --network bridge, then re-connected below. The connect step below is the
+# authoritative one for the app container.
 PG_NET="markup-net"
 HOST_PORT="${HOST_PORT:-3030}"
 LOG="/var/log/markup-deploy.log"
@@ -172,6 +188,18 @@ docker run -d \
 
 # Attach to the postgres network so it can reach markup-postgres by name
 docker network connect "$PG_NET" "$APP_CONTAINER" 2>/dev/null || true
+
+# Ensure postgres has a trust rule for connections from markup-net. Without
+# this, a fresh postgres container starts with a default pg_hba.conf that
+# requires scram-sha-256 passwords, but the .env's stored password may not
+# match. The trust rule bypasses that for the markup-net subnet only.
+docker exec "$PG_CONTAINER" sh -c "
+  if ! grep -q '172.20.0.0/16' /var/lib/postgresql/data/pg_hba.conf 2>/dev/null; then
+    echo 'host    all             all             172.20.0.0/16            trust' >> /var/lib/postgresql/data/pg_hba.conf
+    kill -HUP \$(cat /var/lib/postgresql/data/postmaster.pid | head -1) 2>/dev/null || true
+    echo 'pg_hba updated for markup-net trust'
+  fi
+" || true
 
 # --- 4b. Caddy route sync ---
 # Make sure /opt/caddy/Caddyfile has a route for the public hostname.
