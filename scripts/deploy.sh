@@ -31,6 +31,15 @@ APP_DIR="/root/markup-clone"
 APP_NAME="markup-clone"
 APP_CONTAINER="markup-clone"
 PG_CONTAINER="markup-postgres"
+
+# Ensure the postgres container is running before we try to talk to it.
+# If Coolify (or some other orchestrator) shut it down between deploys, the
+# migration step would otherwise fail with "container is not running".
+if ! docker ps --filter "name=^${PG_CONTAINER}$" --format '{{.Names}}' | grep -q "${PG_CONTAINER}"; then
+  log "WARN: ${PG_CONTAINER} is not running, attempting to start it"
+  docker start "${PG_CONTAINER}" 2>&1 || log "WARN: failed to start ${PG_CONTAINER}; migrations will skip"
+  sleep 2
+fi
 PG_NET="markup-net"
 HOST_PORT="${HOST_PORT:-3030}"
 LOG="/var/log/markup-deploy.log"
