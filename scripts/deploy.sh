@@ -62,6 +62,10 @@ if [ -f "$TARBALL" ] && [ "$TARBALL" -nt "$APP_DIR/.git/HEAD" ]; then
     ! -name '.env' ! -name 'node_modules' ! -name '.next' ! -name '.git' \
     -exec rm -rf {} +
   tar -xzf "$TARBALL" -C "$APP_DIR"
+  # Restore executable bit on scripts/ (tar preserves mtime but not +x by default)
+  if [ -d "$APP_DIR/scripts" ]; then
+    chmod +x "$APP_DIR/scripts/"*.sh 2>/dev/null || true
+  fi
   # Consume the tarball so the next deploy without a fresh push uses git pull
   rm -f "$TARBALL"
   log "Tarball consumed"

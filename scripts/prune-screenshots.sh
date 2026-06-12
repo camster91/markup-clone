@@ -7,9 +7,9 @@
 
 set -euo pipefail
 
-SCREENSHOT_DIR="/data/screenshots"
-DAYS=90
-LOG_FILE="/var/log/prune-screenshots.log"
+SCREENSHOT_DIR="${SCREENSHOT_DIR:-/data/screenshots}"
+DAYS="${RETENTION_DAYS:-90}"
+LOG_FILE="${LOG_FILE:-/var/log/prune-screenshots.log}"
 
 log() {
   echo "[$(date -Iseconds)] $*" | tee -a "$LOG_FILE" 2>/dev/null || echo "[$(date -Iseconds)] $*"
@@ -55,7 +55,7 @@ fi
 if [ "${DRY_RUN:-}" != "1" ]; then
   log "Orphaning Screenshot rows older than $DAYS days in DB..."
   docker exec markup-postgres psql -U markup -d markup_db -c \
-    "DELETE FROM \"Screenshot\" WHERE \"capturedAt\" < NOW() - INTERVAL '90 days'" \
+    "DELETE FROM \"Screenshot\" WHERE \"capturedAt\" < NOW() - INTERVAL '$DAYS days'" \\
     2>&1 | tee -a "$LOG_FILE" || log "WARN: DB cleanup failed (container or query error)"
 fi
 
