@@ -64,6 +64,17 @@ describe('isDashboardOrigin', () => {
   it('treats an empty-string Origin as absent', () => {
     expect(isDashboardOrigin(makeReq({ origin: '' }))).toBe(false);
   });
+
+  it('rejects an Origin that contains the dashboard host as a substring (not a host match)', () => {
+    // Old `String.includes()` check accepted these. The strict-host check must not.
+    expect(isDashboardOrigin(makeReq({ origin: 'https://evil.com/?next=markup.ashbi.ca' }))).toBe(false);
+    expect(isDashboardOrigin(makeReq({ origin: 'https://markup.ashbi.ca.evil.com' }))).toBe(false);
+  });
+
+  it('rejects an Origin with a different port even on the same host', () => {
+    // `markup.ashbi.ca:8080` is not the dashboard host.
+    expect(isDashboardOrigin(makeReq({ origin: 'https://markup.ashbi.ca:8080' }))).toBe(false);
+  });
 });
 
 describe('requireDashboardOrigin', () => {

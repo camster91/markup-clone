@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from './prisma';
+import { timingSafeEqual } from 'crypto';
 
 function getDashboardHost(): string {
   return process.env.DASHBOARD_HOST || 'markup.ashbi.ca';
@@ -8,7 +9,18 @@ function getDashboardHost(): string {
 export function isDashboardOrigin(req: Request): boolean {
   const dashboardHost = getDashboardHost();
   const origin = req.headers.get('origin');
-  if (origin && origin.includes(dashboardHost)) return true;
+  if (origin) {
+    // Accept exact match OR a subdomain of the dashboard host
+    // (`admin.markup.ashbi.ca` → allowed; `markup.ashbi.ca.evil.com` → not).
+    // We do NOT use String.includes() — that accepts e.g. an `evil.com` Origin
+    // whose URL contains the dashboard host as a query parameter.
+    try {
+      const host = new URL(origin).host;
+      if (host === dashboardHost || host.endsWith('.' + dashboardHost)) return true;
+    } catch {
+      // Malformed Origin header — fall through to sec-fetch-site.
+    }
+  }
   if (req.headers.get('sec-fetch-site') === 'same-origin') return true;
   return false;
 }
@@ -31,7 +43,14 @@ export async function requireProjectKey(req: Request, projectId: string): Promis
   if (!project || !project.apiKey) {
     return NextResponse.json({ error: 'No API key for project' }, { status: 403 });
   }
-  if (provided !== project.apiKey) {
+  // Constant-time comparison: keys are 40 hex chars (160 bits) so a timing
+  // leak is academic on the network, but the cost of the safer check is nil
+  // and the protection is one-directional (we want every project key in
+  // the DB to be equally easy/hard to reject). Short-circuit on length to
+  // keep the steady-state cost the same.
+  const a = Buffer.from(provided);
+  const b = Buffer.from(project.apiKey);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
     return NextResponse.json({ error: 'Invalid API key' }, { status: 401 });
   }
   return null;
