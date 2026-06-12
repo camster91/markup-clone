@@ -195,4 +195,39 @@ describe('PATCH /api/projects/[id]', () => {
       { params: Promise.resolve({ id: 'proj-1' }) });
     expect(res.status).toBe(400);
   });
+
+  it('does NOT log the new apiKey plaintext when regenerateKey is true', async () => {
+    // Regression: PATCH /api/projects/[id] used to spread the entire `data`
+    // object (including the freshly-generated apiKey) into the audit log
+    // metadata. That meant GET /api/audit could leak the new key to anyone
+    // with dashboard access. The fix: record `apiKey: 'rotated'` instead.
+    mocks.project.update.mockImplementation(async ({ data }: any) => ({
+      id: 'proj-1', name: 'Test', domain: 'example.com',
+      apiKey: data.apiKey || 'mk_xx', createdAt: new Date(), updatedAt: new Date(),
+      pages: [], subscribers: [],
+    }));
+    // The audit log call is fire-and-forget, so wait a microtask before
+    // asserting on the mock.
+    mocks.auditLog.create.mockClear();
+    mocks.auditLog.create.mockResolvedValue({ id: 'audit-log-1' });
+    const res = await PATCH(reqWithBody('PATCH', { regenerateKey: true }, { origin: 'https://markup.ashbi.ca' }),
+      { params: Promise.resolve({ id: 'proj-1' }) });
+    expect(res.status).toBe(200);
+    // Drain the microtask queue so the fire-and-forget call has been recorded.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mocks.auditLog.create).toHaveBeenCalled();
+    // The audit() helper wraps metadata inside a `data` field for prisma.
+    // We pull `changes` from inside that wrapper.
+    const callArg = mocks.auditLog.create.mock.calls[0][0];
+    const metadata = callArg?.data?.metadata;
+    expect(metadata?.changes).toBeDefined();
+    // The apiKey field, if present, must be a non-sensitive marker — not the
+    // plaintext key. Defense against future changes that might add another
+    // sensitive field to `data` and forget to redact it.
+    const apiKeyInLog = metadata.changes.apiKey;
+    if (apiKeyInLog !== undefined) {
+      expect(apiKeyInLog).not.toMatch(/^mk_[0-9a-f]{40}$/);
+      expect(apiKeyInLog).toBe('rotated');
+    }
+  });
 });

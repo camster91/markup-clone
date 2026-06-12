@@ -96,7 +96,14 @@ export async function PATCH(
       return NextResponse.json({ error: 'name or regenerateKey required' }, { status: 400 });
     }
 
-    const changes = { ...data };
+    // Redact sensitive fields before writing to the audit log. apiKey is the
+    // canonical example: if we store the new plaintext key in AuditLog, the
+    // /api/audit endpoint (and any future log-search UI) leaks it to anyone
+    // with dashboard access. Record a "was rotated" marker instead.
+    const changes: Record<string, unknown> = {};
+    if (name !== undefined) changes.name = name;
+    if (regenerateKey === true) changes.apiKey = 'rotated';
+
     const project = await prisma.project.update({ where: { id }, data });
     audit({ actor: id, action: 'project.update', target: id, metadata: { changes } });
     return NextResponse.json(project);
