@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireProjectKey } from '@/lib/auth';
-import { writeFile, mkdir } from 'fs/promises';
+import { writeFile, mkdir, rename } from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
 import { requireDashboardOrigin } from '@/lib/auth';
@@ -19,6 +19,18 @@ const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || '/data/screenshots';
 const MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024; // 8MB
 
 export async function POST(req: Request) {
+  // Validate Content-Type up front. `req.formData()` throws on anything
+  // other than multipart/form-data (or application/x-www-form-urlencoded),
+  // and that error would otherwise be caught and returned as a 500 — masking
+  // what is really a malformed request.
+  const contentType = req.headers.get('content-type') ?? '';
+  if (!contentType.toLowerCase().startsWith('multipart/form-data')) {
+    return NextResponse.json(
+      { error: 'Content-Type must be multipart/form-data' },
+      { status: 415 }
+    );
+  }
+
   try {
     const form = await req.formData();
     const projectId = form.get('projectId') as string | null;
@@ -92,45 +104,65 @@ export async function POST(req: Request) {
     const bytes = Buffer.from(await screenshot.arrayBuffer());
     const dimensions = readPngDimensions(bytes);
 
-    // Save screenshot to disk
+    // Write-then-rename pattern. We stage the PNG as `<id>.tmp.<rand>` and
+    // only atomically rename to `<id>.png` after the DB transaction commits.
+    // If the tx fails, we unlink the temp file in the catch — no orphan files
+    // pile up in /data/screenshots on DB outages. The temp name uses a random
+    // suffix so two concurrent writes for the same screenshotId (UUID, but
+    // belt-and-suspenders) can't collide.
     const screenshotId = crypto.randomUUID();
     const storageKey = `${screenshotId}.png`;
+    const tempKey = `${screenshotId}.tmp.${crypto.randomBytes(4).toString('hex')}`;
     await mkdir(SCREENSHOTS_DIR, { recursive: true });
-    await writeFile(path.join(SCREENSHOTS_DIR, storageKey), bytes);
+    const tempPath = path.join(SCREENSHOTS_DIR, tempKey);
+    const finalPath = path.join(SCREENSHOTS_DIR, storageKey);
+    await writeFile(tempPath, bytes);
 
     // Create screenshot, pin, and first comment in one transaction
-    const result = await prisma.$transaction(async (tx) => {
-      const ss = await tx.screenshot.create({
-        data: {
-          id: screenshotId,
-          pageId: page.id,
-          storageKey,
-          width: dimensions.width,
-          height: dimensions.height,
-        },
+    let result;
+    try {
+      result = await prisma.$transaction(async (tx) => {
+        const ss = await tx.screenshot.create({
+          data: {
+            id: screenshotId,
+            pageId: page.id,
+            storageKey,
+            width: dimensions.width,
+            height: dimensions.height,
+          },
+        });
+        const pin = await tx.pin.create({
+          data: {
+            screenshotId: ss.id,
+            xPercent,
+            yPercent,
+            elementXPath: elementXPath || undefined,
+            elementHTML: elementHTML || undefined,
+            authorName,
+            comments: text
+              ? {
+                  create: {
+                    author: authorName,
+                    authorRole: 'client',
+                    text,
+                  },
+                }
+              : undefined,
+          },
+          include: { comments: true },
+        });
+        return { screenshot: ss, pin };
       });
-      const pin = await tx.pin.create({
-        data: {
-          screenshotId: ss.id,
-          xPercent,
-          yPercent,
-          elementXPath: elementXPath || undefined,
-          elementHTML: elementHTML || undefined,
-          authorName,
-          comments: text
-            ? {
-                create: {
-                  author: authorName,
-                  authorRole: 'client',
-                  text,
-                },
-              }
-            : undefined,
-        },
-        include: { comments: true },
-      });
-      return { screenshot: ss, pin };
-    });
+      // Tx committed — atomically promote the temp file to the final name.
+      // rename(2) is atomic on the same filesystem; readers (GET /api/screenshots/...)
+      // either see the old file (and 304) or the new one, never a half-written one.
+      await rename(tempPath, finalPath);
+    } catch (txErr) {
+      // Tx failed: remove the temp file so /data/screenshots doesn't fill up.
+      const { unlink } = await import('fs/promises');
+      try { await unlink(tempPath); } catch { /* may not exist */ }
+      throw txErr;
+    }
 
     // Fire-and-forget email notification — query subscribers after tx commits,
     // then send without blocking the response.
