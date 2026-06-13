@@ -204,11 +204,33 @@ docker network connect "$PG_NET" "$APP_CONTAINER" 2>/dev/null || true
 # this, a fresh postgres container starts with a default pg_hba.conf that
 # requires scram-sha-256 passwords, but the .env's stored password may not
 # match. The trust rule bypasses that for the markup-net subnet only.
+#
+# Discover the subnet dynamically: docker userland bridge networks get
+# assigned 172.x.0.0/16 subnets on creation, and the exact x depends on
+# the host. The previous version of this script hard-coded 172.20.0.0/16
+# which broke when a fresh postgres container was created on a host whose
+# docker daemon had already used 172.20 for something else (then the
+# app container's IP was 172.19.x and the trust rule did not match).
+# Use docker network inspect to read the real subnet.
+PG_SUBNET=$(docker network inspect "$PG_NET" --format '{{(index .IPAM.Config 0).Subnet}}' 2>/dev/null | head -1)
+if [ -z "$PG_SUBNET" ]; then
+  log "WARN: could not determine subnet for $PG_NET; falling back to 172.20.0.0/16"
+  PG_SUBNET="172.20.0.0/16"
+fi
+log "Postgres trust subnet: $PG_SUBNET"
 docker exec "$PG_CONTAINER" sh -c "
-  if ! grep -q '172.20.0.0/16' /var/lib/postgresql/data/pg_hba.conf 2>/dev/null; then
-    echo 'host    all             all             172.20.0.0/16            trust' >> /var/lib/postgresql/data/pg_hba.conf
+  if ! grep -q '$PG_SUBNET' /var/lib/postgresql/data/pg_hba.conf 2>/dev/null; then
+    # HBA is first-match wins, and the default 'host all all all scram-sha-256'
+    # line is added by the postgres image at the top of the file. We
+    # need our trust rule BEFORE that line, otherwise the scram-sha-256
+    # check fires first and the password mismatches. Use sed to insert
+    # after the first line (which is the comment header).
+    sed -i \"1 a\\\\\n# markup-clone deploy.sh: trust the app container on this subnet\nhost    all             all             $PG_SUBNET            trust\" /var/lib/postgresql/data/pg_hba.conf
     kill -HUP \$(cat /var/lib/postgresql/data/postmaster.pid | head -1) 2>/dev/null || true
-    echo 'pg_hba updated for markup-net trust'
+    # pg_reload_conf reloads pg_hba but only some of it; the trust
+    # rules need a full restart. Restart gracefully.
+    pg_ctl -D /var/lib/postgresql/data restart -m fast 2>&1 | tail -3
+    echo 'pg_hba updated for trust on $PG_SUBNET'
   fi
 " || true
 
