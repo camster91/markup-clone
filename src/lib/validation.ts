@@ -80,11 +80,38 @@ export function validateScreenshotId(id: string): ValidationResult<string> {
   return { ok: true, value: id };
 }
 
-/** Validates a project name (used in the dashboard lifecycle). */
+/** Validates a project name (used in the dashboard lifecycle).
+ *
+ *  Unicode / bidi-override policy: ACCEPT-AND-RENDER-SAFELY.
+ *
+ *  We intentionally do NOT reject Unicode bidi override characters (e.g. U+202E
+ *  RIGHT-TO-LEFT OVERRIDE) or zero-width / format characters (U+200B ZERO WIDTH
+ *  SPACE, U+FEFF BOM, etc.) in project names. The trade-off:
+ *
+ *  - XSS: React escapes string children by default. A bidi override in a name
+ *    renders as that codepoint, not as markup. There is no XSS vector here.
+ *  - Layout/spoofing: bidi overrides can visually reorder the *end* of a
+ *    string in screenshots and dashboards (e.g. "evil\u202Egpj.exe" rendering
+ *    as "evil.exe.jpg"). This is a real but low-severity UX issue, mitigated
+ *    in practice by the dashboard showing the project domain alongside the
+ *    name, and by the name being visible to its author in the create form.
+ *  - Internationalization: rejecting zero-width / joiner / bidi marks would
+ *    block legitimate names in Arabic, Hebrew, and many South / Southeast
+ *    Asian scripts that rely on these codepoints for correct rendering.
+ *
+ *  Defense-in-depth: we still reject U+0000 (null byte) at the
+ *  `validatePagePath` / DB-layer boundary for free-form text fields. Null
+ *  bytes truncate C strings and have historically broken log aggregators
+ *  and a few ORMs; bidi / zero-width chars do not. We also reject U+0000
+ *  here so a project name with a stray null never reaches the DB / filesystem.
+ *  See `validation.test.ts` for the explicit accept / reject tests. */
 export function validateProjectName(name: string): ValidationResult<string> {
   if (typeof name !== 'string') return { ok: false, error: 'name must be a string' };
   if (name.length === 0) return { ok: false, error: 'name must not be empty' };
   if (name.length > LIMITS.PROJECT_NAME_MAX) return { ok: false, error: `name must be ≤${LIMITS.PROJECT_NAME_MAX} chars` };
+  // Defense-in-depth: reject U+0000 (null byte). Bidi / zero-width chars
+  // are still accepted (see policy comment above).
+  if (name.includes('\x00')) return { ok: false, error: 'name must not contain null bytes' };
   return { ok: true, value: name };
 }
 

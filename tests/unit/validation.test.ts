@@ -180,6 +180,39 @@ describe('validateProjectName', () => {
   it('rejects a name longer than 200', () => {
     expect(validateProjectName('a'.repeat(201)).ok).toBe(false);
   });
+
+  // Unicode / bidi-override policy tests — see doc comment on
+  // `validateProjectName` in src/lib/validation.ts. We accept-and-render-safely:
+  // React escapes string children, so bidi / zero-width chars are not an XSS
+  // vector. They are accepted so that names in Arabic / Hebrew / many Asian
+  // scripts (which rely on zero-width joiners and bidi marks) keep working.
+
+  it('accepts U+202E (RIGHT-TO-LEFT OVERRIDE) in a name', () => {
+    // Classic "evil\u202Egpj.exe" -> "evil.exe.jpg" spoof. We accept the
+    // input; React escapes it on render, and the dashboard shows the
+    // domain next to the name, so the spoof doesn't reach a victim.
+    const r = validateProjectName('paypal\u202Egpj.exe');
+    expect(r.ok).toBe(true);
+    expect(r.value).toBe('paypal\u202Egpj.exe');
+  });
+
+  it('accepts U+200B (ZERO WIDTH SPACE) in a name', () => {
+    // Zero-width joiners / spaces are part of legitimate CJK and Arabic
+    // rendering. Rejecting them would break valid project names.
+    const r = validateProjectName('hello\u200Bworld');
+    expect(r.ok).toBe(true);
+    expect(r.value).toBe('hello\u200Bworld');
+  });
+
+  it('rejects U+0000 (null byte) — defense-in-depth', () => {
+    // Null bytes truncate C strings, have broken log aggregators and a
+    // few ORMs in the past, and never appear in a legitimate name. We
+    // reject them at the project-name boundary so a stray null never
+    // reaches the DB / filesystem layer.
+    const r = validateProjectName('hello\u0000world');
+    expect(r.ok).toBe(false);
+    expect(r.error).toBe('name must not contain null bytes');
+  });
 });
 
 describe('validateProjectDomain', () => {
