@@ -178,6 +178,12 @@ docker build -t "$APP_NAME:$NEW_TAG" -t "$APP_NAME:latest" "$APP_DIR" 2>&1 | tai
 #   Override to 0.0.0.0 so the app listens on all interfaces.
 #   Discovered the hard way when docker healthcheck reported
 #   FailingStreak=1030 even though the app itself was fine.
+# - Traefik labels are intentionally absent: the public proxy on
+#   this host is Caddy, not Traefik. Caddy reads its config from
+#   /opt/caddy/Caddyfile (mounted by the systemd override) and
+#   from the running admin-API state. Traefik labels would just
+#   add noise to `docker inspect`. The Caddy route is added
+#   separately further down in this script.
 log "Recreating container $APP_CONTAINER"
 docker rm -f "$APP_CONTAINER" 2>/dev/null || true
 docker run -d \
@@ -189,12 +195,6 @@ docker run -d \
   -v "$SCREENSHOTS_DIR:/data/screenshots" \
   -v "$APP_DIR/scripts:/opt/app-scripts:ro" \
   -p "127.0.0.1:${HOST_PORT}:3000" \
-  # Traefik labels removed in this revision: the public proxy on this
-  # host is Caddy, not Traefik. Caddy reads its config from
-  # /opt/caddy/Caddyfile (mounted by the systemd override) and from
-  # the running admin-API state. The label block below is a no-op on
-  # the current host and just adds noise to `docker inspect`. The
-  # Caddy route is added separately at the end of this script.
   "$APP_NAME:$NEW_TAG" 2>&1 | tee -a "$LOG"
 
 # Attach to the postgres network so it can reach markup-postgres by name
