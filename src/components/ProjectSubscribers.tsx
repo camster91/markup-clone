@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 
 type ProjectSubscribersProps = {
   projectId: string;
@@ -14,7 +14,7 @@ export default function ProjectSubscribers({ projectId }: ProjectSubscribersProp
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchSubscribers = async () => {
+  const fetchSubscribers = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -30,13 +30,17 @@ export default function ProjectSubscribers({ projectId }: ProjectSubscribersProp
     } finally {
       setLoading(false);
     }
-  };
+  }, [projectId]);
 
   useEffect(() => {
     if (expanded && subscribers.length === 0) {
       fetchSubscribers();
     }
-  }, [expanded, projectId]);
+    // fetchSubscribers is stable (useCallback keyed on projectId); subscribers.length
+    // is intentionally omitted — including it would re-fire fetchSubscribers() every
+    // time the list updates, which would clobber optimistic UI in handleAdd/handleRemove.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded, projectId, fetchSubscribers]);
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -9,7 +9,7 @@
 // - Error responses with correct status codes
 // - SQL schema mismatches (prisma calls the right methods)
 
-import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // Mock prisma BEFORE importing routes. vi.mock is hoisted, so the factory
 // can't reference module-level vars. Use vi.hoisted() to get shared state.
@@ -27,7 +27,7 @@ vi.mock('@/lib/prisma', () => ({
 }));
 
 
-import { DELETE, GET, PATCH } from '../../src/app/api/projects/[id]/route';
+import { DELETE, PATCH } from '../../src/app/api/projects/[id]/route';
 import { NextRequest } from 'next/server';
 
 function req(method: string, headers: Record<string, string> = {}): NextRequest {

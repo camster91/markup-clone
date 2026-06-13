@@ -3,7 +3,6 @@ import { prisma } from '@/lib/prisma';
 import { requireDashboardOrigin, generateApiKey } from '@/lib/auth';
 import { audit } from '@/lib/audit';
 import { validateProjectDomain, validateProjectName } from '@/lib/validation';
-import crypto from 'crypto';
 
 export async function GET(req: Request) {
   const authErr = requireDashboardOrigin(req);

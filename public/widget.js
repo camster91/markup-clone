@@ -133,7 +133,7 @@
       const img = await new Promise((resolve, reject) => {
         const i = new Image();
         i.onload = () => resolve(i);
-        i.onerror = (e) => reject(new Error('svg load failed'));
+        i.onerror = () => reject(new Error('svg load failed'));
         i.src = url;
       });
 

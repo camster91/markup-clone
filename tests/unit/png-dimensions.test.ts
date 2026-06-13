@@ -4,7 +4,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { writeFileSync, readFileSync, mkdtempSync, unlinkSync, existsSync } from 'node:fs';
+import { writeFileSync, mkdtempSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

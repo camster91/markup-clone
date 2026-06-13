@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import PinThread from './PinThread';
 import type { Pin, FeedbackComment, ScreenshotWithPins } from '@/lib/types';
 
@@ -121,6 +121,7 @@ export default function ScreenshotView({
       </div>
 
       <div className="relative" style={{ maxWidth: '100%' }}>
+        {/* eslint-disable-next-line @next/next/no-img-element -- served from /api/screenshots/[id]/image with immutable Cache-Control + ETag; the dynamic recapture cache-buster query string and the disk-backed PNG stream are intentional (not a static asset the optimizer can help with). */}
         <img
           src={imgUrl}
           alt={`Screenshot of ${pagePath}`}

@@ -59,7 +59,6 @@ describe('markup widget', () => {
       'screenshotBlob = await captureViewport();',
       'screenshotBlob = new Blob(["fake"], { type: "image/png" });'
     );
-    // eslint-disable-next-line no-eval
     (0, eval)(widgetSource);
   }
 

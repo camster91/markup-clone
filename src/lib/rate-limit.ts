@@ -108,7 +108,7 @@ function startCleanup(): void {
   cleanupTimer.unref?.();
 }
 
-function stopCleanup(): void {
+export function stopCleanup(): void {
   if (cleanupTimer) {
     clearInterval(cleanupTimer);
     cleanupTimer = null;

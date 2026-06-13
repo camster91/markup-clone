@@ -4,14 +4,12 @@ import { requireProjectKey } from '@/lib/auth';
 import { writeFile, mkdir, rename } from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
-import { requireDashboardOrigin } from '@/lib/auth';
 import { sendSubscriberEmails } from '@/lib/email';
 import {
   LIMITS,
   validatePagePath,
   validatePercent,
   sanitizeText,
-  validateScreenshotId,
 } from '@/lib/validation';
 import { consume } from '@/lib/rate-limit';
 
