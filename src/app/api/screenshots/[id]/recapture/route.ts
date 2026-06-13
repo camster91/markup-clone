@@ -3,8 +3,13 @@ import { prisma } from '@/lib/prisma';
 import { requireDashboardOrigin } from '@/lib/auth';
 import { spawn } from 'child_process';
 import { consume } from '@/lib/rate-limit';
+import { audit } from '@/lib/audit';
 
-const RECAPTURE_SCRIPT = process.env.RECAPTURE_SCRIPT || '/root/markup-clone/scripts/recapture.sh';
+// RECAPTURE_SCRIPT lets the operator override the script path at
+// runtime (e.g. to mount scripts at a different location in a
+// non-standard deploy). Default is the bind-mount path that deploy.sh
+// creates at /root/markup-clone/scripts/ -> /opt/app-scripts:ro.
+const RECAPTURE_SCRIPT = process.env.RECAPTURE_SCRIPT || '/opt/app-scripts/recapture.sh';
 
 export async function POST(
   req: Request,
@@ -46,16 +51,59 @@ export async function POST(
       return NextResponse.json({ error: 'screenshot not found' }, { status: 404 });
     }
 
-    // Fire-and-forget the recapture (it's slow — 5s+ for Chromium to spin up)
+    // Fire-and-forget the recapture (it's slow — 5s+ for Chromium to spin up).
     // Caller can poll GET /api/projects to see when the new PNG is served.
-    // The script lives at /opt/app-scripts/recapture.sh on the container, which
-    // is a bind mount of the host's /root/markup-clone/scripts/ (set up by
-    // deploy.sh). bash is in the image (added to Dockerfile for this).
-    const child = spawn('bash', ['/opt/app-scripts/recapture.sh', id], {
+    //
+    // We capture stderr (capped at 4 KB) and attach exit/error listeners so
+    // that a missing chromium binary, a script syntax error, or a non-zero
+    // exit code produces a real error message in the container logs and an
+    // audit entry. Without this, the HTTP response is 200 {"status":
+    // "started"} and the operator has no idea why the screenshot never
+    // updates. Previously the child had no listeners and stdio was
+    // 'ignore', so chromium-missing was completely silent.
+    const child = spawn('bash', [RECAPTURE_SCRIPT, id], {
       detached: true,
-      stdio: 'ignore',
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     child.unref();
+
+    let stderrTail = '';
+    const STDERR_CAP = 4096;
+    if (child.stderr) {
+      child.stderr.on('data', (chunk: Buffer) => {
+        if (stderrTail.length < STDERR_CAP) {
+          stderrTail += chunk.toString('utf8').slice(0, STDERR_CAP - stderrTail.length);
+        }
+      });
+    }
+    child.on('error', (err) => {
+      console.error(`[recapture] spawn error for ${id}:`, err);
+      audit({
+        actor: 'system',
+        action: 'screenshot.recapture',
+        target: id,
+        metadata: { status: 'spawn_error', message: String(err) },
+      });
+    });
+    child.on('exit', (code, signal) => {
+      if (code === 0) {
+        audit({
+          actor: 'system',
+          action: 'screenshot.recapture',
+          target: id,
+          metadata: { status: 'ok', pid: child.pid },
+        });
+        return;
+      }
+      const message = stderrTail.trim() || `exit ${code}${signal ? ` (signal ${signal})` : ''}`;
+      console.error(`[recapture] ${id} failed: ${message}`);
+      audit({
+        actor: 'system',
+        action: 'screenshot.recapture',
+        target: id,
+        metadata: { status: 'failed', code, signal, stderr: message },
+      });
+    });
 
     return NextResponse.json({
       success: true,

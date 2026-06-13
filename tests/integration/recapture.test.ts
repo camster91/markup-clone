@@ -3,7 +3,7 @@
 //
 // The recapture rate limiter was previously a single bucket
 // `${origin}:${id}`, which conflated per-screenshot and per-origin
-// throttling. One operator clicking Recapture on one stuck screenshot
+// throttling. One operator clicking Recapture on many stuck screenshots
 // would end up throttled on every other screenshot for the same origin.
 // The fix splits into two buckets so a busy operator doesn't get
 // self-throttled across the dashboard.
@@ -12,6 +12,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   consume: vi.fn().mockReturnValue({ ok: true, remaining: 5 }),
+  spawn: vi.fn(),
+  audit: vi.fn(),
 }));
 
 vi.mock('@/lib/prisma', () => ({
@@ -24,23 +26,71 @@ vi.mock('@/lib/rate-limit', () => ({
   consume: mocks.consume,
 }));
 
+vi.mock('@/lib/audit', () => ({
+  audit: mocks.audit,
+}));
+
+// Mock child_process.spawn with a fake child that exposes the same API
+// surface (stdout/stderr streams, 'exit' and 'error' events, pid, unref).
+//
+// The real route attaches its 'data' and 'exit' listeners synchronously
+// after `spawn()` returns. To simulate that we have to schedule the
+// stderr/end events on the next event-loop tick, AFTER the listeners are
+// attached. queueMicrotask + setTimeout(0) is the simplest pattern that
+// runs after the route's synchronous listener-attachment code completes.
+function makeFakeChild(pid: number, opts: {
+  exitCode?: number; signal?: NodeJS.Signals; stderr?: string;
+  spawnError?: Error;
+}) {
+  const { Readable } = require('node:stream') as typeof import('node:stream');
+  const stdout = new Readable({ read() {} });
+  const stderr = new Readable({ read() {} });
+  const handlers: Record<string, Array<(...args: any[]) => void>> = {
+    exit: [],
+    error: [],
+  };
+  const child: any = {
+    pid,
+    stdout,
+    stderr,
+    on(event: string, cb: (...args: any[]) => void) {
+      (handlers[event] ||= []).push(cb);
+      return child;
+    },
+    unref: vi.fn(),
+  };
+  if (opts.spawnError) {
+    setImmediate(() => (handlers.error || []).forEach((cb) => cb(opts.spawnError)));
+    return child;
+  }
+  setImmediate(() => {
+    if (opts.stderr) {
+      stderr.push(Buffer.from(opts.stderr));
+    }
+    (handlers.exit || []).forEach((cb) => cb(opts.exitCode ?? 0, opts.signal ?? null));
+  });
+  return child;
+}
+
+vi.mock('child_process', () => ({
+  spawn: (...args: any[]) => mocks.spawn(...args),
+}));
+
 // Auth: by default the route's requireDashboardOrigin is satisfied (the
 // test sends an Origin: https://markup.ashbi.ca header). The auth function
 // is real (not mocked) so we exercise it in the test, not stub it.
 
 import { POST } from '../../src/app/api/screenshots/[id]/recapture/route';
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   mocks.consume.mockReturnValue({ ok: true, remaining: 5 });
-  // The route imports prisma at the top of its module; the mock is wired
-  // through vi.mock. We just need to set the screenshot.findUnique return
-  // value here. Reach the mocked prisma via the consume module's
-  // vi.hoisted shared state — but the cleanest path is to re-mock through
-  // the module loader: the route has already imported prisma, so we can
-  // reach it through the route's own reference. We use the public
-  // dynamic-import path to keep the @-alias working.
-  return import('@/lib/prisma').then(({ prisma }) => {
+  // Default: a successful spawn that exits 0. The exit event fires on
+  // the next microtask, by which time the route has already returned
+  // its 200 response, so the audit('ok') call is observable from the
+  // test (we wait a tick before asserting).
+  mocks.spawn.mockImplementation(() => makeFakeChild(1234, { exitCode: 0 }));
+  await import('@/lib/prisma').then(({ prisma }) => {
     (prisma.screenshot.findUnique as any).mockResolvedValue({ id: 'ss-1' });
   });
 });
@@ -125,5 +175,75 @@ describe('POST /api/screenshots/[id]/recapture — rate limit keying', () => {
     });
     // ss-2 should NOT inherit the throttle from ss-1.
     expect(r2.status).not.toBe(429);
+  });
+});
+
+describe('POST /api/screenshots/[id]/recapture — spawn + audit', () => {
+  it('spawns bash with the bind-mount script path and the screenshot id', async () => {
+    const res = await POST(makeReq({ origin: 'https://markup.ashbi.ca' }), {
+      params: Promise.resolve({ id: 'ss-spawn-1' }),
+    });
+    expect(res.status).toBe(200);
+    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+    const [cmd, args, opts] = mocks.spawn.mock.calls[0];
+    expect(cmd).toBe('bash');
+    expect(args).toEqual(['/opt/app-scripts/recapture.sh', 'ss-spawn-1']);
+    expect(opts).toMatchObject({ detached: true });
+    // stdio must be [ignore, pipe, pipe] so we can capture stderr.
+    expect(opts.stdio).toEqual(['ignore', 'pipe', 'pipe']);
+  });
+
+  it('records an audit entry with status=ok when the script exits 0', async () => {
+    mocks.spawn.mockImplementation(() => makeFakeChild(42, { exitCode: 0 }));
+    mocks.audit.mockClear();
+    await POST(makeReq({ origin: 'https://markup.ashbi.ca' }), {
+      params: Promise.resolve({ id: 'ss-audit-ok' }),
+    });
+    // The exit event fires on setImmediate; wait two ticks.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(mocks.audit).toHaveBeenCalled();
+    const call = mocks.audit.mock.calls.find((c) =>
+      (c[0] as any)?.action === 'screenshot.recapture' && (c[0] as any)?.target === 'ss-audit-ok'
+    );
+    expect(call).toBeDefined();
+    expect((call![0] as any).metadata).toMatchObject({ status: 'ok', pid: 42 });
+  });
+
+  it('records an audit entry with stderr when the script exits non-zero', async () => {
+    mocks.spawn.mockImplementation(() => makeFakeChild(99, {
+      exitCode: 2,
+      stderr: 'No chromium binary found on PATH\n',
+    }));
+    mocks.audit.mockClear();
+    await POST(makeReq({ origin: 'https://markup.ashbi.ca' }), {
+      params: Promise.resolve({ id: 'ss-audit-fail' }),
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(mocks.audit).toHaveBeenCalled();
+    const call = mocks.audit.mock.calls.find((c) =>
+      (c[0] as any)?.action === 'screenshot.recapture' && (c[0] as any)?.target === 'ss-audit-fail'
+    );
+    expect(call).toBeDefined();
+    expect((call![0] as any).metadata).toMatchObject({
+      status: 'failed',
+      code: 2,
+      stderr: expect.stringContaining('No chromium'),
+    });
+  });
+
+  it('records an audit entry on spawn error', async () => {
+    mocks.spawn.mockImplementation(() => makeFakeChild(0, {
+      spawnError: Object.assign(new Error('ENOENT: no such file or directory, spawn bash'), { code: 'ENOENT' }),
+    }));
+    mocks.audit.mockClear();
+    await POST(makeReq({ origin: 'https://markup.ashbi.ca' }), {
+      params: Promise.resolve({ id: 'ss-spawn-err' }),
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    const call = mocks.audit.mock.calls.find((c) =>
+      (c[0] as any)?.action === 'screenshot.recapture' && (c[0] as any)?.target === 'ss-spawn-err'
+    );
+    expect(call).toBeDefined();
+    expect((call![0] as any).metadata).toMatchObject({ status: 'spawn_error' });
   });
 });
