@@ -77,7 +77,10 @@ export async function POST(req: Request) {
     const authErr = await requireProjectKey(req, projectId);
     if (authErr) return authErr;
 
-    // Rate limit by IP + projectId: 30 tokens, 1 per 10 seconds
+    // Rate limit by IP + projectId: 30 tokens, 1 per 10 seconds.
+    // Note: rate-limit state is in-process (see src/lib/rate-limit.ts).
+    // Fine for the current single-instance deploy; will not share buckets
+    // across instances if we ever scale horizontally.
     const ip = req.headers.get('x-forwarded-for') ?? 'unknown';
     const rateLimitKey = `${ip}:${projectId}`;
     const rateLimit = consume(rateLimitKey, { maxTokens: 30, refillRate: 0.1 });

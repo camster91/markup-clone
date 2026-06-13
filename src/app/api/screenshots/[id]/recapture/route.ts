@@ -25,6 +25,9 @@ export async function POST(
   // throttling themselves on every other screenshot. The original key was
   // `${origin}:${id}` which conflated the two — 5 captures on one screenshot
   // would block recapture on every other screenshot for the same origin.
+  // Note: rate-limit state is in-process (see src/lib/rate-limit.ts).
+  // Fine for the current single-instance deploy; will not share buckets
+  // across instances if we ever scale horizontally.
   const origin = req.headers.get('origin') ?? 'unknown';
   // Per-screenshot: prevent one stuck screenshot from monopolising Chromium.
   const perShot = consume(`recapture:shot:${id}`, { maxTokens: 3, refillRate: 0.1 });

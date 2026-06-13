@@ -7,6 +7,25 @@
  * { ok: false, retryAfterSec } if the bucket is empty.
  *
  * Old buckets are cleaned up every 5 minutes to avoid memory leaks.
+ *
+ * ─── Per-process limitation ────────────────────────────────────────────────
+ * Bucket state is held in a module-level `Map` that lives entirely in this
+ * Node.js process's memory. There is no cross-process sharing. The current
+ * single-process deploy (next start behind PM2 with a single instance) makes
+ * this fine — every request hits the same buckets. If the app is ever scaled
+ * horizontally (multiple Node workers, multiple containers, or a serverless
+ * runtime), each instance would maintain its own buckets and the effective
+ * rate limit would be `N × maxTokens` per key, defeating the throttle.
+ *
+ * The migration path is to back the buckets with a shared store — typically
+ * a Postgres table with `(key, tokens, last_refill)` and a row-level lock
+ * (or `SELECT … FOR UPDATE`) inside `consume()` for atomic refill+decrement.
+ * A Redis `INCR` + `EXPIRE` pair is the lighter alternative if Redis is
+ * already in the stack. The `consume(key, opts)` signature is intentionally
+ * the only seam that would need to change; callers stay the same.
+ *
+ * For now, do not horizontally scale this service without first swapping
+ * the implementation. Documented at the callsites too.
  */
 
 interface Bucket {
