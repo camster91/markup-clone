@@ -37,6 +37,121 @@ LOG="/var/log/markup-deploy.log"
 SCREENSHOTS_DIR="/data/screenshots"
 TARBALL="/root/markup-clone.tgz"
 
+# --- Pre-flight: kill orphan caddy processes from prior debug sessions ---
+#
+# Background: an operator (or the script) runs `caddy run --config
+# /opt/caddy/Caddyfile 2>&1 | tail -30` in an SSH session to debug
+# something. The SSH session closes (timeout, network blip, ctrl-c
+# of the parent Hermes terminal call). The bash pipe stays alive
+# because of the `tail` holding the read end open, and `caddy run`
+# keeps running indefinitely. The result: a `caddy run` process
+# whose parent is NOT the systemd caddy unit (and not PID 1 — it's
+# some other init reparented ancestor or a lingering bash subshell).
+# It binds :443/80, the systemd caddy fails to bind, and HTTPS
+# requests break with TLS internal errors until the orphan is
+# killed manually.
+#
+# Verified 2026-06-13: 3 such orphan caddies (PIDs 879926, 880158,
+# 923874) caused ~30 min of broken TLS on the next deploy.
+#
+# The fix: before any deploy work, scan for `caddy run` (or bare
+# `caddy`) processes whose PPID is NOT 1, and kill them. The
+# systemd-managed caddy is always a direct child of PID 1, so it's
+# automatically preserved. The standalone variant of this same
+# logic is in scripts/cleanup-caddy-orphans.sh so operators can
+# run it ad-hoc without doing a full deploy.
+#
+# Note: we match `caddy` and `caddy run` but NOT `caddy adapt`,
+# `caddy fmt`, `caddy file-server`, etc. — those are transients
+# used by markup-caddy-guard.sh and pose no orphan risk.
+cleanup_caddy_orphans() {
+  local self_pid=$$
+  # Find caddy processes using the executable basename (comm field)
+  # rather than grepping args — args can contain "caddy" inside
+  # heredocs/scripts that aren't actually caddy. comm is the
+  # actual binary name as the kernel sees it.
+  #
+  # ps syntax is portable: `ps -eo pid=,ppid=,comm=,args=` works on
+  # both Linux (GNU ps) and macOS (BSD ps). On macOS the comm field
+  # is the full executable path (e.g. `/usr/bin/caddy`); on Linux
+  # it's just the basename (`caddy`). Match both with a regex that
+  # requires "caddy" preceded by / or start-of-line.
+  local orphans=""
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    # fields: pid ppid comm args...
+    local pid ppid comm args
+    pid=$(echo "$line" | awk '{print $1}')
+    ppid=$(echo "$line" | awk '{print $2}')
+    comm=$(echo "$line" | awk '{print $3}')
+    args=$(echo "$line" | cut -d' ' -f4-)
+    # Skip ourselves and our parent shell.
+    [ "$pid" = "$self_pid" ] && continue
+    # Skip anything parented to PID 1 (systemd-managed caddy lives there).
+    [ "$ppid" = "1" ] && continue
+    # Filter to actual caddy binaries. comm is the kernel-reported
+    # executable name, so a shell running a script that mentions
+    # "caddy" in its source will have comm=bash/sh, not caddy.
+    case "$comm" in
+      *caddy)
+        # Only target long-running caddy server invocations. `caddy adapt`,
+        # `caddy fmt`, `caddy file-server`, `caddy version` are short-lived
+        # and the `caddy run` (or bare `caddy`) form is what orphans.
+        case "$args" in
+          caddy\ run*|"caddy"|*"/caddy run"*|*"/caddy"|*"caddy run "*)
+            orphans="${orphans}${orphans:+ }${pid}"
+            ;;
+        esac
+        ;;
+    esac
+  done < <(ps -eo pid=,ppid=,comm=,args= 2>/dev/null | grep -E '(^|/)caddy( |$)' || true)
+
+  if [ -z "$orphans" ]; then
+    return 0
+  fi
+
+  log "PRE-FLIGHT: found orphan caddy process(es) (PPID != 1): $orphans"
+  for pid in $orphans; do
+    local cmd
+    cmd=$(ps -o args= -p "$pid" 2>/dev/null | head -c 200 || true)
+    log "PRE-FLIGHT: killing orphan caddy pid=$pid cmd='$cmd'"
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+  # Give them a moment to exit cleanly.
+  sleep 1
+  # Force-kill anything that didn't respond to SIGTERM. Same macOS
+  # reap-race note as in cleanup-caddy-orphans.sh: SIGKILL'd children
+  # can take a few hundred ms to be reaped, so retry briefly.
+  for pid in $orphans; do
+    needs_kill=0
+    for _ in 1 2 3 4 5; do
+      if kill -0 "$pid" 2>/dev/null; then
+        needs_kill=1
+        sleep 0.2
+      else
+        needs_kill=0
+        break
+      fi
+    done
+    if [ "$needs_kill" = "1" ]; then
+      log "PRE-FLIGHT: force-killing orphan caddy pid=$pid with SIGKILL"
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  done
+  return 0
+}
+
+mkdir -p "$(dirname "$LOG")"
+
+log() { echo "[$(date -Iseconds)] $*" | tee -a "$LOG"; }
+fail() { log "FAIL: $*"; exit 1; }
+
+# Run the orphan-caddy guard BEFORE we touch the tarball, build the
+# image, or do anything else. If the systemd caddy is going to fail
+# to bind :443 because of an orphan, we want to know now — not 4
+# minutes into a deploy.
+cleanup_caddy_orphans
+
 # Ensure the postgres container is running before we try to talk to it.
 # If Coolify (or some other orchestrator) shut it down between deploys, the
 # migration step would otherwise fail with "container is not running".
@@ -62,10 +177,6 @@ docker network connect "${PG_NET}" "${PG_CONTAINER}" 2>/dev/null || true
 # with --network bridge, then re-connected below. The connect step below is the
 # authoritative one for the app container.
 
-mkdir -p "$(dirname "$LOG")"
-
-log() { echo "[$(date -Iseconds)] $*" | tee -a "$LOG"; }
-fail() { log "FAIL: $*"; exit 1; }
 
 # --- 1. Detect source and refresh the working tree ---
 cd "$APP_DIR"
