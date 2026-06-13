@@ -198,6 +198,14 @@ if [ -f "$TARBALL" ] && [ "$TARBALL" -nt "$APP_DIR/.git/HEAD" ]; then
     ! -name '.env' ! -name 'node_modules' ! -name '.next' ! -name '.git' \
     -exec rm -rf {} +
   tar -xzf "$TARBALL" -C "$APP_DIR"
+  # Tarballs pushed from the macOS dev machine preserve the developer's
+  # local UID/GID (501:games) into file ownership, which leaves the
+  # extracted tree as 501:games on this Linux host. `docker build` and
+  # the container run don't care about host ownership, but ad-hoc
+  # operator SSH work (reading /root/markup-clone/{Dockerfile,prisma/*})
+  # and any host-level tooling that walks the tree do. Reset to
+  # root:root so files match the rest of /root.
+  chown -R root:root "$APP_DIR"
   # Restore executable bit on scripts/ (tar preserves mtime but not +x by default)
   if [ -d "$APP_DIR/scripts" ]; then
     chmod +x "$APP_DIR/scripts/"*.sh 2>/dev/null || true
