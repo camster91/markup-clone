@@ -235,49 +235,58 @@ docker exec "$PG_CONTAINER" sh -c "
 " || true
 
 # --- 4b. Caddy route sync + reload ---
-# Make sure /opt/caddy/Caddyfile has a route for the public hostname.
-# PUBLIC_HOSTNAME env var (default markup.ashbi.ca) controls what gets added.
-CADDYFILE="/opt/caddy/Caddyfile"
+# Make sure Caddy has a route for the public hostname. PUBLIC_HOSTNAME
+# env var (default markup.ashbi.ca) controls what gets added.
+#
+# The Caddyfile at /opt/caddy/Caddyfile is shared across the Ashbi
+# fleet. Other repos (simaqadeer, jw-habits, alinenasseh) have their
+# own deploy.sh that also writes to it. Markup's previous strategy
+# was to write the route in this script, but if any of those other
+# scripts overwrote the file with their own content (which the
+# alinenasseh deploy has been observed to do), the markup route
+# disappeared and https://markup.ashbi.ca went back to a generic
+# Caddy "no SNI" cert error.
+#
+# The defensive pattern: re-add the route on every deploy AND
+# reload Caddy. The route is a single 3-line block; the cost is
+# trivial and the alternative (silently broken public URL) is
+# much worse. We also persist the route to /etc/caddy/Caddyfile
+# so the next time someone wipes /opt/caddy, the markup block is
+# still in the persistent base.
 PUBLIC_HOSTNAME="${PUBLIC_HOSTNAME:-markup.ashbi.ca}"
-if [ -f "$CADDYFILE" ]; then
-  if ! grep -qE "^${PUBLIC_HOSTNAME//./\\.}\s*\{" "$CADDYFILE"; then
-    log "Adding Caddy route for ${PUBLIC_HOSTNAME} -> 127.0.0.1:${HOST_PORT}"
-    cat >> "$CADDYFILE" <<EOF
 
-# ${APP_NAME} (auto-added by deploy.sh)
-${PUBLIC_HOSTNAME} {
-    reverse_proxy 127.0.0.1:${HOST_PORT}
-}
-EOF
-    # New Caddyfile entry is on disk. Caddy was started with
-    # `caddy run --config /opt/caddy/Caddyfile`; reload so it
-    # actually picks the new route up. Without this, the file
-    # change is invisible to the running process and the
-    # dashboard shows "connection refused" until the operator
-    # manually runs `systemctl reload caddy`.
-    if command -v systemctl >/dev/null 2>&1; then
-      log "Reloading caddy to pick up the new route"
-      systemctl reload caddy 2>/dev/null || log "WARN: systemctl reload caddy failed; route is in Caddyfile but not yet active"
-    elif pgrep -f "caddy reload" >/dev/null 2>&1; then
-      log "Reloading caddy via caddy CLI"
-      caddy reload --config "$CADDYFILE" 2>/dev/null || log "WARN: caddy reload failed"
-    fi
-  fi
-else
-  log "WARN: $CADDYFILE not found, creating it"
-  mkdir -p "$(dirname "$CADDYFILE")"
-  touch "$CADDYFILE"
-  # Now re-run the route check (the file is empty, so the route isn't there yet)
-  if ! grep -qE "^${PUBLIC_HOSTNAME//./\\.}\s*\{" "$CADDYFILE"; then
-    log "Adding Caddy route for ${PUBLIC_HOSTNAME} -> 127.0.0.1:${HOST_PORT}"
-    cat >> "$CADDYFILE" <<EOF
+add_markup_route() {
+  local file="$1"
+  [ -z "$file" ] && return 1
+  if ! grep -qE "^${PUBLIC_HOSTNAME//./\\.}\s*\{" "$file" 2>/dev/null; then
+    log "Adding Caddy route for ${PUBLIC_HOSTNAME} -> 127.0.0.1:${HOST_PORT} (in $file)"
+    mkdir -p "$(dirname "$file")"
+    touch "$file"
+    cat >> "$file" <<EOF
 
-# ${APP_NAME} (auto-added by deploy.sh)
+# ${APP_NAME} (auto-added by deploy.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ))
 ${PUBLIC_HOSTNAME} {
     reverse_proxy 127.0.0.1:${HOST_PORT}
 }
 EOF
   fi
+}
+
+# Persist to BOTH the systemd-override file (live read by caddy) and
+# the /etc/caddy base (so a fleet-wide overwrite doesn't lose us).
+for CADDYFILE in /opt/caddy/Caddyfile /etc/caddy/Caddyfile; do
+  add_markup_route "$CADDYFILE"
+done
+
+# Reload Caddy so the new file content is picked up by the running
+# process. systemctl reload caddy is a soft reload: it doesn't
+# interrupt in-flight requests, and it re-reads the Caddyfile.
+if command -v systemctl >/dev/null 2>&1; then
+  log "Reloading caddy to pick up the new route"
+  systemctl reload caddy 2>/dev/null || log "WARN: systemctl reload caddy failed; route is in Caddyfile but not yet active"
+elif pgrep -f "caddy reload" >/dev/null 2>&1; then
+  log "Reloading caddy via caddy CLI"
+  caddy reload --config /opt/caddy/Caddyfile 2>/dev/null || log "WARN: caddy reload failed"
 fi
 
 # --- 4c. Caddy health check ---
