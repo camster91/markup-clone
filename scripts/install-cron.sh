@@ -8,14 +8,21 @@
 #    container, not directly on the host, and the cron is safe to
 #    run while the app is serving.
 #
-# 2. /etc/cron.d/markup-caddy-guard — every-minute guard that
-#    re-adds the markup.ashbi.ca Caddy route if a fleet-wide edit
-#    wipes it from /opt/caddy/Caddyfile or /etc/caddy/Caddyfile.
-#    The Caddyfile at /opt/caddy/Caddyfile is shared across the
-#    Ashbi fleet; other repos (simaqadeer-app, family-planner, etc.)
-#    have their own deploy.sh scripts that also write to it. This
-#    guard keeps the markup route from being silently lost when
-#    one of those deploys overwrites the file.
+# 2. /etc/cron.d/markup-caddy-guard — every-minute guard. The
+#    Caddyfile at /opt/caddy/Caddyfile is shared across the Ashbi
+#    fleet; other repos (simaqadeer-app, family-planner, etc.) have
+#    their own deploy.sh scripts that also write to it.
+#
+#    Under the durable-import design (M1 / t_248e6685), the markup
+#    route lives in /opt/caddy/markup.d/caddyfile and is loaded by
+#    the master Caddyfile via `import /opt/caddy/markup.d/caddyfile`.
+#    The markup.d file is owned by markup-clone and other services
+#    have no reason to touch it. The guard's only remaining job is
+#    to be a BACKSTOP for the import directive in the master
+#    Caddyfile: re-add the import line if a fleet-wide edit wiped
+#    it, restore the markup.d file from the ship-file if it was
+#    deleted, and reload caddy. The primary defense is the import
+#    itself; the cron is belt-and-suspenders.
 #
 # Both files are written idempotently (cat >) so re-running this
 # script is safe. The deploy script also calls this on every
@@ -61,9 +68,12 @@ if [ -f "$GUARD_SCRIPT" ]; then
   GUARD_LOG="/var/log/markup-caddy-guard.log"
   cat > /etc/cron.d/markup-caddy-guard <<EOF
 # /etc/cron.d/markup-caddy-guard
-# Every-minute guard to re-add the markup.ashbi.ca Caddy route
-# if a fleet-wide edit wipes it. Soft-reloads caddy via the admin
-# API when reachable, else via systemctl restart.
+# Every-minute BACKSTOP guard for the durable-import pattern
+# (M1 / t_248e6685). The primary defense is the
+# `import /opt/caddy/markup.d/caddyfile` directive in
+# /opt/caddy/Caddyfile; this cron only fires if a fleet-wide
+# edit strips that line or deletes the owned-by-markup file.
+# See scripts/markup-caddy-guard.sh for the full design.
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 * * * * * root $GUARD_SCRIPT >> $GUARD_LOG 2>&1
@@ -71,7 +81,7 @@ EOF
   chmod 644 /etc/cron.d/markup-caddy-guard
   touch "$GUARD_LOG"
   chmod 644 "$GUARD_LOG"
-  echo "Installed $GUARD_SCRIPT (every-minute guard)"
+  echo "Installed $GUARD_SCRIPT (every-minute guard, backstop role)"
   echo "Next run: top of the next minute. Log: $GUARD_LOG"
 else
   echo "WARN: $GUARD_SCRIPT not found, skipping caddy-guard install (run deploy.sh first)"

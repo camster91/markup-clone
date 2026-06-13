@@ -352,42 +352,65 @@ docker exec "$PG_CONTAINER" sh -c "
 # The Caddyfile at /opt/caddy/Caddyfile is shared across the Ashbi
 # fleet. Other repos (simaqadeer, jw-habits, alinenasseh) have their
 # own deploy.sh that also writes to it. Markup's previous strategy
-# was to write the route in this script, but if any of those other
-# scripts overwrote the file with their own content (which the
-# alinenasseh deploy has been observed to do), the markup route
-# disappeared and https://markup.ashbi.ca went back to a generic
-# Caddy "no SNI" cert error.
+# was to write the route inline, but if any of those other scripts
+# overwrote the file with their own content (which the alinenasseh
+# deploy has been observed to do), the markup route disappeared and
+# https://markup.ashbi.ca went back to a generic Caddy "no SNI" cert
+# error.
 #
-# The defensive pattern: re-add the route on every deploy AND
-# reload Caddy. The route is a single 3-line block; the cost is
-# trivial and the alternative (silently broken public URL) is
-# much worse. We also persist the route to /etc/caddy/Caddyfile
-# so the next time someone wipes /opt/caddy, the markup block is
-# still in the persistent base.
+# The DURABLE pattern (M1 / t_248e6685): markup owns the route in
+# /opt/caddy/markup.d/caddyfile (a separate file other services have
+# no reason to touch), and the master /opt/caddy/Caddyfile imports
+# it:
+#
+#     import /opt/caddy/markup.d/caddyfile
+#
+# Even if another agent's deploy.sh overwrites the master to a
+# 5-route base, the markup.d file is untouched. The next caddy
+# reload picks up both base + import. The only fragile part of
+# this design is the import directive itself in the master file —
+# so this script (and the every-minute markup-caddy-guard cron)
+# defensively re-add it if it's missing. The route block is no
+# longer inlined into the master Caddyfile by this script; it's
+# only in markup.d.
 PUBLIC_HOSTNAME="${PUBLIC_HOSTNAME:-markup.ashbi.ca}"
+MARKUP_D_DIR="/opt/caddy/markup.d"
+MARKUP_D_FILE="${MARKUP_D_DIR}/caddyfile"
+MARKUP_D_SHIP="$APP_DIR/scripts/caddyfile.markup.d"
 
-add_markup_route() {
+# 1. Ensure the owned-by-markup file is present. Ship-file is
+#    /root/markup-clone/scripts/caddyfile.markup.d in the repo.
+if [ -f "$MARKUP_D_SHIP" ]; then
+  if [ ! -f "$MARKUP_D_FILE" ] || ! cmp -s "$MARKUP_D_SHIP" "$MARKUP_D_FILE"; then
+    log "Installing $MARKUP_D_FILE (owned by markup-clone)"
+    mkdir -p "$MARKUP_D_DIR"
+    install -m 0644 "$MARKUP_D_SHIP" "$MARKUP_D_FILE"
+  fi
+else
+  log "WARN: $MARKUP_D_SHIP not found; markup.d/caddyfile not refreshed. (Run deploy.sh from a full repo to seed it.)"
+fi
+
+# 2. Ensure the import directive is present in the master Caddyfile
+#    (the only fragile part of the durable pattern). Re-add if
+#    another agent's deploy.sh wiped it. Don't touch /etc/caddy
+#    here: that file is no longer used by the running caddy (the
+#    systemd unit's override points at /opt/caddy/Caddyfile), and
+#    editing it is a way to accidentally double-route. The
+#    every-minute guard (markup-caddy-guard.sh) handles both files
+#    as a backstop; deploy.sh's primary concern is the live file.
+ensure_import_directive() {
   local file="$1"
-  [ -z "$file" ] && return 1
-  if ! grep -qE "^${PUBLIC_HOSTNAME//./\\.}\s*\{" "$file" 2>/dev/null; then
-    log "Adding Caddy route for ${PUBLIC_HOSTNAME} -> 127.0.0.1:${HOST_PORT} (in $file)"
-    mkdir -p "$(dirname "$file")"
-    touch "$file"
-    cat >> "$file" <<EOF
-
-# ${APP_NAME} (auto-added by deploy.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ))
-${PUBLIC_HOSTNAME} {
-    reverse_proxy 127.0.0.1:${HOST_PORT}
-}
-EOF
+  [ -f "$file" ] || return 0
+  if ! grep -qF 'import /opt/caddy/markup.d/caddyfile' "$file"; then
+    log "Re-adding 'import $MARKUP_D_FILE' to $file (was missing)"
+    {
+      echo ""
+      echo "# ${APP_NAME} (auto-added by deploy.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ))"
+      echo "import ${MARKUP_D_FILE}"
+    } >> "$file"
   fi
 }
-
-# Persist to BOTH the systemd-override file (live read by caddy) and
-# the /etc/caddy base (so a fleet-wide overwrite doesn't lose us).
-for CADDYFILE in /opt/caddy/Caddyfile /etc/caddy/Caddyfile; do
-  add_markup_route "$CADDYFILE"
-done
+ensure_import_directive /opt/caddy/Caddyfile
 
 # Reload Caddy so the new file content is picked up by the running
 # process. We always do a hard `systemctl restart caddy` rather
