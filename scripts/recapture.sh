@@ -27,6 +27,16 @@ if [ -z "$SCREENSHOT_ID" ]; then
   exit 1
 fi
 
+# Defense-in-depth: reject non-UUID inputs before any psql call.
+# The recapture route (requireDashboardOrigin) already passes a valid
+# UUID (it goes through prisma.screenshot.findUnique which rejects
+# non-UUID strings), but a future caller might not. Bail loudly
+# instead of interpolating arbitrary text into the SQL below.
+if ! [[ "$SCREENSHOT_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+  echo "Invalid SCREENSHOT_ID: not a UUID: $SCREENSHOT_ID" >&2
+  exit 6
+fi
+
 # Find the right chromium binary
 CHROME=""
 for c in chromium chromium-browser google-chrome google-chrome-stable; do
