@@ -279,39 +279,32 @@ for CADDYFILE in /opt/caddy/Caddyfile /etc/caddy/Caddyfile; do
 done
 
 # Reload Caddy so the new file content is picked up by the running
-# process. The right way to do this depends on whether Caddy's admin
-# API is enabled in the Caddyfile:
-#   - admin on:  POST /load via curl, or `caddy reload --config ...`
-#   - admin off: the running caddy has no API socket; we have to
-#               systemctl restart caddy (soft-reload isn't an option
-#               when the admin socket is disabled)
+# process. We always do a hard `systemctl restart caddy` rather
+# than try the admin API, because:
 #
-# This host runs caddy with `admin off` in the Caddyfile global
-# block (line 4 of /opt/caddy/Caddyfile), so systemctl restart
-# is the only path. The restart is fast (caddy is a single
-# static binary) and the in-memory on-demand certs are
-# repopulated on the next request via the ask endpoint.
+# 1. The Caddyfile on this host has `admin off` in the global
+#    options block (line 4 of /opt/caddy/Caddyfile). The admin
+#    API socket is only reachable after the file is loaded with
+#    `admin on`. Without it, `caddy reload` fails with "dial
+#    tcp [::1]:2019: connect: connection refused".
+#
+# 2. Even when the admin API is up, the soft-reload path
+#    (POST /load) doesn't reliably bring port 443/80 back up
+#    if Caddy is in a half-broken state. The TLS renewal
+#    context-cancellation during reload can leave the
+#    listeners in a non-listening state until a full
+#    restart. Verified 2026-06-13: deploys that used
+#    `systemctl restart` recovered immediately; deploys
+#    that used POST /load left caddy up but not listening.
+#
+# The restart is fast (caddy is a single static binary)
+# and the in-memory on-demand certs are repopulated on the
+# next request via the ask endpoint.
 if command -v systemctl >/dev/null 2>&1; then
-  # Probe whether the admin API is listening.
-  if curl -sf --max-time 1 http://127.0.0.1:2019/config/ >/dev/null 2>&1; then
-    log "Reloading caddy via admin API (POST /load)"
-    curl -sf -X POST http://127.0.0.1:2019/load -H "Content-Type: application/json" --data @/opt/caddy/Caddyfile.json 2>/dev/null || \
-    curl -sf -X POST http://127.0.0.1:2019/load 2>/dev/null || \
-    log "WARN: admin API reload failed; falling back to systemctl restart caddy"
-    # If the above failed, fall through to restart below.
-    if ! curl -sf --max-time 1 http://127.0.0.1:2019/config/ >/dev/null 2>&1; then
-      log "Restarting caddy (admin API unreachable, no API socket enabled)"
-      systemctl restart caddy 2>/dev/null || log "WARN: systemctl restart caddy failed"
-    fi
-  else
-    log "Restarting caddy (admin API unreachable, no API socket enabled)"
-    systemctl restart caddy 2>/dev/null || log "WARN: systemctl restart caddy failed"
-  fi
-elif pgrep -f "caddy reload" >/dev/null 2>&1; then
-  # No systemctl and no admin API — try the legacy caddy reload
-  # CLI which falls back to a stop+start internally.
-  log "Restarting caddy via caddy CLI (no systemctl available)"
-  caddy reload --config /opt/caddy/Caddyfile 2>/dev/null || log "WARN: caddy reload failed"
+  log "Restarting caddy to pick up the new route"
+  systemctl restart caddy 2>/dev/null || log "WARN: systemctl restart caddy failed; route is in Caddyfile but not yet active"
+else
+  log "WARN: systemctl not available; caddy not reloaded"
 fi
 
 # --- 4c. Caddy health check ---
