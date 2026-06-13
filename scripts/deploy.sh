@@ -279,13 +279,38 @@ for CADDYFILE in /opt/caddy/Caddyfile /etc/caddy/Caddyfile; do
 done
 
 # Reload Caddy so the new file content is picked up by the running
-# process. systemctl reload caddy is a soft reload: it doesn't
-# interrupt in-flight requests, and it re-reads the Caddyfile.
+# process. The right way to do this depends on whether Caddy's admin
+# API is enabled in the Caddyfile:
+#   - admin on:  POST /load via curl, or `caddy reload --config ...`
+#   - admin off: the running caddy has no API socket; we have to
+#               systemctl restart caddy (soft-reload isn't an option
+#               when the admin socket is disabled)
+#
+# This host runs caddy with `admin off` in the Caddyfile global
+# block (line 4 of /opt/caddy/Caddyfile), so systemctl restart
+# is the only path. The restart is fast (caddy is a single
+# static binary) and the in-memory on-demand certs are
+# repopulated on the next request via the ask endpoint.
 if command -v systemctl >/dev/null 2>&1; then
-  log "Reloading caddy to pick up the new route"
-  systemctl reload caddy 2>/dev/null || log "WARN: systemctl reload caddy failed; route is in Caddyfile but not yet active"
+  # Probe whether the admin API is listening.
+  if curl -sf --max-time 1 http://127.0.0.1:2019/config/ >/dev/null 2>&1; then
+    log "Reloading caddy via admin API (POST /load)"
+    curl -sf -X POST http://127.0.0.1:2019/load -H "Content-Type: application/json" --data @/opt/caddy/Caddyfile.json 2>/dev/null || \
+    curl -sf -X POST http://127.0.0.1:2019/load 2>/dev/null || \
+    log "WARN: admin API reload failed; falling back to systemctl restart caddy"
+    # If the above failed, fall through to restart below.
+    if ! curl -sf --max-time 1 http://127.0.0.1:2019/config/ >/dev/null 2>&1; then
+      log "Restarting caddy (admin API unreachable, no API socket enabled)"
+      systemctl restart caddy 2>/dev/null || log "WARN: systemctl restart caddy failed"
+    fi
+  else
+    log "Restarting caddy (admin API unreachable, no API socket enabled)"
+    systemctl restart caddy 2>/dev/null || log "WARN: systemctl restart caddy failed"
+  fi
 elif pgrep -f "caddy reload" >/dev/null 2>&1; then
-  log "Reloading caddy via caddy CLI"
+  # No systemctl and no admin API — try the legacy caddy reload
+  # CLI which falls back to a stop+start internally.
+  log "Restarting caddy via caddy CLI (no systemctl available)"
   caddy reload --config /opt/caddy/Caddyfile 2>/dev/null || log "WARN: caddy reload failed"
 fi
 
