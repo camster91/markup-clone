@@ -189,11 +189,12 @@ docker run -d \
   -v "$SCREENSHOTS_DIR:/data/screenshots" \
   -v "$APP_DIR/scripts:/opt/app-scripts:ro" \
   -p "127.0.0.1:${HOST_PORT}:3000" \
-  --label traefik.enable=true \
-  --label "traefik.http.routers.${APP_NAME}.entrypoints=websecure" \
-  --label "traefik.http.routers.${APP_NAME}.rule=Host(\`markup.ashbi.ca\`)" \
-  --label "traefik.http.routers.${APP_NAME}.tls.certresolver=letsencrypt" \
-  --label "traefik.http.services.${APP_NAME}.loadbalancer.server.port=3000" \
+  # Traefik labels removed in this revision: the public proxy on this
+  # host is Caddy, not Traefik. Caddy reads its config from
+  # /opt/caddy/Caddyfile (mounted by the systemd override) and from
+  # the running admin-API state. The label block below is a no-op on
+  # the current host and just adds noise to `docker inspect`. The
+  # Caddy route is added separately at the end of this script.
   "$APP_NAME:$NEW_TAG" 2>&1 | tee -a "$LOG"
 
 # Attach to the postgres network so it can reach markup-postgres by name
@@ -211,13 +212,13 @@ docker exec "$PG_CONTAINER" sh -c "
   fi
 " || true
 
-# --- 4b. Caddy route sync ---
+# --- 4b. Caddy route sync + reload ---
 # Make sure /opt/caddy/Caddyfile has a route for the public hostname.
 # PUBLIC_HOSTNAME env var (default markup.ashbi.ca) controls what gets added.
 CADDYFILE="/opt/caddy/Caddyfile"
 PUBLIC_HOSTNAME="${PUBLIC_HOSTNAME:-markup.ashbi.ca}"
 if [ -f "$CADDYFILE" ]; then
-  if ! grep -qE "^${PUBLIC_HOSTNAME//./\\.}\s*\\{" "$CADDYFILE"; then
+  if ! grep -qE "^${PUBLIC_HOSTNAME//./\\.}\s*\{" "$CADDYFILE"; then
     log "Adding Caddy route for ${PUBLIC_HOSTNAME} -> 127.0.0.1:${HOST_PORT}"
     cat >> "$CADDYFILE" <<EOF
 
@@ -226,13 +227,26 @@ ${PUBLIC_HOSTNAME} {
     reverse_proxy 127.0.0.1:${HOST_PORT}
 }
 EOF
+    # New Caddyfile entry is on disk. Caddy was started with
+    # `caddy run --config /opt/caddy/Caddyfile`; reload so it
+    # actually picks the new route up. Without this, the file
+    # change is invisible to the running process and the
+    # dashboard shows "connection refused" until the operator
+    # manually runs `systemctl reload caddy`.
+    if command -v systemctl >/dev/null 2>&1; then
+      log "Reloading caddy to pick up the new route"
+      systemctl reload caddy 2>/dev/null || log "WARN: systemctl reload caddy failed; route is in Caddyfile but not yet active"
+    elif pgrep -f "caddy reload" >/dev/null 2>&1; then
+      log "Reloading caddy via caddy CLI"
+      caddy reload --config "$CADDYFILE" 2>/dev/null || log "WARN: caddy reload failed"
+    fi
   fi
 else
   log "WARN: $CADDYFILE not found, creating it"
   mkdir -p "$(dirname "$CADDYFILE")"
   touch "$CADDYFILE"
   # Now re-run the route check (the file is empty, so the route isn't there yet)
-  if ! grep -qE "^${PUBLIC_HOSTNAME//./\\.}\s*\\{" "$CADDYFILE"; then
+  if ! grep -qE "^${PUBLIC_HOSTNAME//./\\.}\s*\{" "$CADDYFILE"; then
     log "Adding Caddy route for ${PUBLIC_HOSTNAME} -> 127.0.0.1:${HOST_PORT}"
     cat >> "$CADDYFILE" <<EOF
 
@@ -266,6 +280,16 @@ for i in $(seq 1 20); do
     log "Health check passed after ${i}s"
     curl -s "http://127.0.0.1:${HOST_PORT}/api/health" | tee -a "$LOG"
     log "DEPLOY OK: $NEW_TAG"
+
+    # Install the daily prune-screenshots cron (idempotent: re-running
+    # just rewrites the same file). Without this, stale screenshots
+    # accumulate forever — a fresh deploy of the app onto an existing
+    # host inherits whatever was on disk from the previous install.
+    if [ -f "$APP_DIR/scripts/install-cron.sh" ]; then
+      log "Installing prune-screenshots cron (daily 03:00 UTC)"
+      bash "$APP_DIR/scripts/install-cron.sh" 2>&1 | tee -a "$LOG"
+    fi
+
     exit 0
   fi
   sleep 1
