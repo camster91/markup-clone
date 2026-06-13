@@ -41,8 +41,20 @@ describe('markup widget', () => {
     // Eval the widget source — the IIFE reads document.currentScript at the top
     // and auto-calls createToggleButton(). We stub captureViewport so JSDOM
     // doesn't crash on the SVG-foreignObject screenshot trick.
+    //
+    // Resolve the widget path relative to THIS test file rather than
+    // hardcoding /Users/biancabienaime/... so the test runs anywhere
+    // the repo is checked out. The previous absolute path silently
+    // passed on the original developer's machine because there happened
+    // to be a byte-identical copy of the file at that exact path.
     const fs = await import('node:fs/promises');
-    let widgetSource = await fs.readFile('/Users/biancabienaime/markup-clone/public/widget.js', 'utf-8');
+    const path = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const widgetPath = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '..', '..', 'public', 'widget.js'
+    );
+    let widgetSource = await fs.readFile(widgetPath, 'utf-8');
     widgetSource = widgetSource.replace(
       'screenshotBlob = await captureViewport();',
       'screenshotBlob = new Blob(["fake"], { type: "image/png" });'
