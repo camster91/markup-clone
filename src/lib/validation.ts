@@ -99,17 +99,45 @@ export function validateProjectDomain(domain: string): ValidationResult<string> 
   if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/i.test(domain)) {
     return { ok: false, error: 'domain must be a valid DNS hostname (no scheme, port, or path)' };
   }
-  // SSRF protection: reject obviously internal/loopback hostnames
   const lower = domain.toLowerCase();
+
+  // SSRF protection: reject obviously internal/loopback hostnames.
   if (lower === 'localhost' || lower.endsWith('.localhost') || lower.endsWith('.local')) {
     return { ok: false, error: 'domain must not be a local/loopback hostname' };
   }
-  // SSRF protection: reject IP addresses (v4 dotted-quad or v6 colon-hex)
-  // The hostname regex above passes for digit-only segments (e.g. "127" "0" "1"),
-  // but a v4 address like "127.0.0.1" is technically valid as a hostname on
-  // some systems. We reject the dotted-quad pattern explicitly.
+  // SSRF protection: reject known cloud-metadata and internal-cluster
+  // hostnames. Chromium on the recapture path will happily connect to
+  // these and render the response, leaking instance credentials or
+  // service tokens. Deny by suffix.
+  if (
+    lower.endsWith('.internal') ||
+    lower.endsWith('.lan') ||
+    lower.endsWith('.intranet') ||
+    lower.endsWith('.corp') ||
+    lower.endsWith('.private') ||
+    lower === 'metadata.google.internal' ||
+    lower.endsWith('.metadata.google.internal') ||
+    lower === 'metadata.azure.com' ||
+    lower.endsWith('.metadata.azure.com') ||
+    lower.endsWith('.svc.cluster.local')
+  ) {
+    return { ok: false, error: 'domain must not be an internal/cluster hostname' };
+  }
+  // SSRF protection: reject IP addresses (v4 dotted-quad, decimal-encoded
+  // v4, or v6 colon-hex). The hostname regex above passes for digit-only
+  // segments (e.g. "127" "0" "1"), but a v4 address like "127.0.0.1" is
+  // technically valid as a hostname on some systems. Also reject the
+  // decimal form (e.g. 2130706433 = 127.0.0.1) and link-local
+  // 169.254.0.0/16 (AWS/GCP IMDS at 169.254.169.254).
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(lower)) {
     return { ok: false, error: 'domain must not be an IP address' };
+  }
+  // Decimal-encoded IPv4: a single label that is a 32-bit unsigned int.
+  if (/^\d+$/.test(lower)) {
+    const n = Number(lower);
+    if (n >= 0 && n <= 0xffffffff) {
+      return { ok: false, error: 'domain must not be a numeric (decimal-encoded) IP address' };
+    }
   }
   // v6 has colons which are not in our allowed character set, so it's already
   // rejected by the shape check. Belt and suspenders for safety.

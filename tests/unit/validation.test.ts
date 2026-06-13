@@ -230,4 +230,39 @@ describe('validateProjectDomain', () => {
   it('rejects a domain longer than 253 chars (DNS limit)', () => {
     expect(validateProjectDomain('a'.repeat(254) + '.com').ok).toBe(false);
   });
+
+  // SSRF bypass regression tests (see src/lib/validation.ts). These are
+  // the hostnames that a Chromium client on the recapture path would
+  // happily connect to and render, leaking instance credentials or
+  // service tokens. They MUST be rejected.
+
+  it('rejects metadata.google.internal (GCE metadata server)', () => {
+    expect(validateProjectDomain('metadata.google.internal').ok).toBe(false);
+  });
+
+  it('rejects a sub-host of metadata.google.internal', () => {
+    expect(validateProjectDomain('compute.metadata.google.internal').ok).toBe(false);
+  });
+
+  it('rejects metadata.azure.com (Azure IMDS)', () => {
+    expect(validateProjectDomain('metadata.azure.com').ok).toBe(false);
+  });
+
+  it('rejects *.lan / *.intranet / *.corp / *.private', () => {
+    for (const d of ['server.lan', 'git.intranet', 'db.corp', 'wiki.private']) {
+      expect(validateProjectDomain(d).ok).toBe(false);
+    }
+  });
+
+  it('rejects *.svc.cluster.local (k8s service DNS)', () => {
+    expect(validateProjectDomain('postgres.svc.cluster.local').ok).toBe(false);
+  });
+
+  it('rejects decimal-encoded IPv4 (2130706433 = 127.0.0.1)', () => {
+    expect(validateProjectDomain('2130706433').ok).toBe(false);
+  });
+
+  it('rejects single-label 0 (whole-network shorthand for 0.0.0.0)', () => {
+    expect(validateProjectDomain('0').ok).toBe(false);
+  });
 });
