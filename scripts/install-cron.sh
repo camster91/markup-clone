@@ -76,12 +76,15 @@ GUARD_SCRIPT="$APP_DIR/scripts/markup-caddy-guard.sh"
 if [ -f "$GUARD_SCRIPT" ]; then
   chmod +x "$GUARD_SCRIPT"
   GUARD_LOG="/var/log/markup-caddy-guard.log"
-  # Write the cron file with a QUOTED heredoc delimiter so backticks
-  # and `import` (a bash keyword in some configurations) in the
-  # comment block don't get treated as command substitution or
-  # invoked. Both heredocs in this script use quoted `<<'EOF'`
-  # to disable parameter and command expansion inside.
-  cat > /etc/cron.d/markup-caddy-guard <<'EOF'
+  # Write the cron file with an UNQUOTED heredoc so the $GUARD_SCRIPT
+  # and $GUARD_LOG variables expand to actual paths. The only token
+  # in the body that COULD be misinterpreted by bash is the literal
+  # word "import" in a comment — but heredocs are not executed, the
+  # body is just a string to bash. So the unquoted heredoc is safe
+  # AND the variables expand. (The previous version used `<<'EOF'`
+  # which suppressed the expansion and left literal $GUARD_SCRIPT
+  # in the cron file, breaking the job silently.)
+  cat > /etc/cron.d/markup-caddy-guard <<EOF
 # /etc/cron.d/markup-caddy-guard
 # Every-minute guard that re-adds the markup.ashbi.ca Caddy
 # route to /opt/caddy/Caddyfile and /etc/caddy/Caddyfile if
