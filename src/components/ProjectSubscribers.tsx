@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useState, useEffect } from 'react';
+import { dashboardHeaders } from '@/lib/client-origin';
 
 type ProjectSubscribersProps = {
   projectId: string;
@@ -19,7 +20,7 @@ export default function ProjectSubscribers({ projectId }: ProjectSubscribersProp
     setError(null);
     try {
       const res = await fetch(`/api/projects/${projectId}/subscribers`, {
-        headers: { 'Origin': 'https://markup.ashbi.ca' },
+        headers: dashboardHeaders(),
       });
       if (res.ok) {
         const data = await res.json();
@@ -50,7 +51,7 @@ export default function ProjectSubscribers({ projectId }: ProjectSubscribersProp
     try {
       const res = await fetch(`/api/projects/${projectId}/subscribers`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Origin': 'https://markup.ashbi.ca' },
+        headers: { 'Content-Type': 'application/json', ...dashboardHeaders() },
         body: JSON.stringify({ email: newEmail.trim() }),
       });
       if (res.ok) {
@@ -72,7 +73,7 @@ export default function ProjectSubscribers({ projectId }: ProjectSubscribersProp
     try {
       const res = await fetch(`/api/projects/${projectId}/subscribers/${encodeURIComponent(email)}`, {
         method: 'DELETE',
-        headers: { 'Origin': 'https://markup.ashbi.ca' },
+        headers: dashboardHeaders(),
       });
       if (res.ok) {
         fetchSubscribers();

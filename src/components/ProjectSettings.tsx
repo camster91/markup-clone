@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import CopyButton from './CopyButton';
+import { dashboardHeaders } from '@/lib/client-origin';
 
 type ProjectSettingsProps = {
   projectId: string;
@@ -32,7 +33,7 @@ export default function ProjectSettings({ projectId, projectName, onProjectUpdat
 
     const res = await fetch(`/api/projects/${projectId}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', 'Origin': 'https://markup.ashbi.ca' },
+      headers: { 'Content-Type': 'application/json', ...dashboardHeaders() },
       body: JSON.stringify({ name: newName }),
     });
     if (res.ok) onProjectUpdated();
@@ -44,7 +45,7 @@ export default function ProjectSettings({ projectId, projectName, onProjectUpdat
 
     const res = await fetch(`/api/projects/${projectId}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', 'Origin': 'https://markup.ashbi.ca' },
+      headers: { 'Content-Type': 'application/json', ...dashboardHeaders() },
       body: JSON.stringify({ regenerateKey: true }),
     });
     if (res.ok) {
@@ -61,7 +62,7 @@ export default function ProjectSettings({ projectId, projectName, onProjectUpdat
 
     const res = await fetch(`/api/projects/${projectId}`, {
       method: 'DELETE',
-      headers: { 'Origin': 'https://markup.ashbi.ca' },
+      headers: dashboardHeaders(),
     });
     if (res.ok) onProjectUpdated();
   };
