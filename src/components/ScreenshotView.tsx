@@ -36,8 +36,11 @@ export default function ScreenshotView({
     setPins(prev => prev.map(p => p.id === pinId ? { ...p, comments: [...p.comments, comment] } : p));
   };
 
-  // Server-side recapture: fire-and-forget spawn on the host, then poll for the
-  // updated width/height in /api/projects. The image src has a cache-buster
+  // Server-side recapture: fire-and-forget spawn on the host, then poll the
+  // focused /api/screenshots/[id]/status endpoint for the new width/height.
+  // The previous /api/projects poll pulled the entire project → page →
+  // screenshot → pin → comment graph on every 1s tick, which was wasteful
+  // for a single-screenshot status check. The image src has a cache-buster
   // so the new PNG renders once the file is replaced on disk.
   const handleRecapture = async () => {
     setRecaptureStatus('starting');
@@ -54,26 +57,36 @@ export default function ScreenshotView({
       }
       setRecaptureStatus('running');
       // Poll for the new screenshot (width/height change in the DB).
-      // Cap at 30 polls × 1s = 30s.
+      // Cap at 30 polls × 1s = 30s. We pass ?since=<lastCapturedAt> so the
+      // endpoint can short-circuit with 304 Not Modified when nothing has
+      // changed yet — saving the bandwidth of the JSON body until the
+      // recapture actually lands. After a recapture capturedAt is bumped, so
+      // the next poll returns 200 with the new dims.
       let updated = false;
+      let lastSince = capturedAt;
       for (let i = 0; i < 30; i++) {
         await new Promise(r => setTimeout(r, 1000));
         try {
-          const r2 = await fetch('/api/projects');
-          if (r2.ok) {
+          const r2 = await fetch(
+            `/api/screenshots/${screenshot.id}/status?since=${encodeURIComponent(lastSince)}`,
+            { cache: 'no-store' }
+          );
+          if (r2.status === 200) {
             const data = await r2.json();
-            const found = (Array.isArray(data) ? data : data.projects || [])
-              .flatMap((p: any) => p.pages.flatMap((pa: any) => pa.screenshots))
-              .find((s: any) => s.id === screenshot.id);
-            if (found && (found.width !== width || found.height !== height)) {
-              setWidth(found.width);
-              setHeight(found.height);
-              setCapturedAt(found.capturedAt);
+            if (data.width !== width || data.height !== height) {
+              setWidth(data.width);
+              setHeight(data.height);
+              setCapturedAt(data.capturedAt);
+              lastSince = data.capturedAt;
               setImageKey(k => k + 1);
               updated = true;
               break;
             }
+            // 200 but unchanged (shouldn't normally happen with since=, but
+            // be defensive) — keep the latest capturedAt in hand.
+            if (data.capturedAt) lastSince = data.capturedAt;
           }
+          // 304: nothing has changed yet, keep polling.
         } catch {
           // keep polling
         }
