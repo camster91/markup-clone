@@ -44,10 +44,21 @@ export default function DashboardProjects() {
   }, [fetchProjects]);
 
   const getTimeSinceUpdate = () => {
-    if (!lastUpdated) return 'Updating...';
+    if (!lastUpdated) return 'Updating…';
     const seconds = Math.floor((Date.now() - lastUpdated) / 1000);
-    if (seconds < 5) return `Updated ${seconds}s ago`;
-    return 'Updating...';
+    // 0-4s: "just now" (smoother than "0s ago" / "1s ago" / "2s ago")
+    if (seconds < 5) return 'Updated just now';
+    // 5-59s: "Ns ago"
+    if (seconds < 60) return `Updated ${seconds}s ago`;
+    // 1-59m: "Nm ago"
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `Updated ${minutes}m ago`;
+    // 1h+: "Nh ago"
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `Updated ${hours}h ago`;
+    // 1d+: "Nd ago"
+    const days = Math.floor(hours / 24);
+    return `Updated ${days}d ago`;
   };
 
   if (projects.length === 0) {
