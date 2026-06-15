@@ -25,6 +25,11 @@ jq_safe() { # write JSON to stdout using python to dodge the missing-jq-toolbox 
   python3 -c 'import json,sys; json.dump(json.loads(sys.stdin.read()), sys.stdout, indent=2, sort_keys=True)' 2>/dev/null || cat
 }
 
+has_markup_route() {
+  local file="$1"
+  [ -f "$file" ] && grep -qE "^markup\\.ashbi\\.ca[[:space:]]*\\{" "$file"
+}
+
 # --- Collect ---
 HOSTNAME=$(hostname)
 OS=$(. /etc/os-release && echo "${NAME} ${VERSION_ID}")
@@ -529,8 +534,8 @@ rm -f /tmp/_build_state.py
   else
     echo "| Container | not present |"
   fi
-  echo "| Caddy route for markup.ashbi.ca | $(if [ -f /opt/caddy/Caddyfile ] && grep -qi "markup.ashbi.ca" /opt/caddy/Caddyfile; then echo "present"; else echo "**MISSING** — see warning above"; fi) |"
-  if [ -f /opt/caddy/Caddyfile ] && ! grep -qi "markup.ashbi.ca" /opt/caddy/Caddyfile; then
+  echo "| Caddy route for markup.ashbi.ca | $(if has_markup_route /opt/caddy/Caddyfile; then echo "present"; else echo "**MISSING** — see warning above"; fi) |"
+  if ! has_markup_route /opt/caddy/Caddyfile; then
     echo "| WARNING | markup.ashbi.ca route is missing from /opt/caddy/Caddyfile — dashboard will be unreachable |"
   fi
   echo "| Public URL | https://markup.ashbi.ca |"
