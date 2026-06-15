@@ -295,6 +295,42 @@ describe('Mailgun request shape', () => {
   });
 });
 
+// ─── DASHBOARD_HOST host/URL interpolation ───────────────────────────────────
+
+describe('DASHBOARD_HOST host interpolation', () => {
+  it('uses DASHBOARD_HOST origin in the dashboard link when set', async () => {
+    const original = process.env.DASHBOARD_HOST;
+    process.env.DASHBOARD_HOST = 'staging.example.com';
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      new Response('', { status: 200 })
+    );
+
+    try {
+      await sendSubscriberEmails({
+        projectName: 'My Project',
+        path: '/pages/home',
+        commentText: 'Great work!',
+        subscriberEmails: ['sub@example.com'],
+      });
+
+      const [, options] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+      const body = parseFormBody(options.body as string);
+      expect(body.html).toContain('href="https://staging.example.com"');
+      expect(body.html).not.toContain('href="https://markup.ashbi.ca"');
+    } finally {
+      // Vitest runs all files in a single fork (see vitest.config.ts:
+      // poolOptions.forks.singleFork = true), so leaking env mutations
+      // here would break the integration tests that run after this file
+      // and rely on the default `markup.ashbi.ca` host.
+      if (original === undefined) {
+        delete process.env.DASHBOARD_HOST;
+      } else {
+        process.env.DASHBOARD_HOST = original;
+      }
+    }
+  });
+});
+
 // ─── Error handling ───────────────────────────────────────────────────────────
 
 describe('error handling', () => {

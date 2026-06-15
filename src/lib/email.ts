@@ -2,6 +2,8 @@
  * Send email notifications to project subscribers via Mailgun HTTP API.
  * Fire-and-forget — errors are logged but never propagate.
  */
+import { parseHost } from '@/lib/origin';
+
 export async function sendSubscriberEmails(params: {
   projectName: string;
   path: string;
@@ -16,6 +18,7 @@ export async function sendSubscriberEmails(params: {
 
   if (!apiKey || !domain || subscriberEmails.length === 0) return;
 
+  const dashboardOrigin = parseHost(process.env.DASHBOARD_HOST).origin;
   const subject = `[${projectName}] New feedback on ${path}`;
   const body = `
 <html>
@@ -25,7 +28,7 @@ export async function sendSubscriberEmails(params: {
   <p><strong>Page:</strong> ${escapeHtml(path)}</p>
   <p><strong>Comment:</strong> ${escapeHtml(commentText)}</p>
   <p>
-    <a href="https://markup.ashbi.ca">View in Dashboard</a>
+    <a href="${dashboardOrigin}">View in Dashboard</a>
   </p>
 </body>
 </html>
