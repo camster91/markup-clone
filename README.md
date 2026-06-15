@@ -1,26 +1,29 @@
-# Visual Feedback Agent (Markup.io Clone)
+# Visual Feedback Tool (Markup.io Clone)
 
-An agentic visual-feedback tool for Next.js applications. Clients drop a single `<script>` tag into their staging site, click anywhere to leave feedback, and an AI Agent generates CSS/React fixes and opens a GitHub Pull Request.
+A client-side visual-feedback tool for staging sites. Clients drop a single `<script>` tag into their staging site, click anywhere to leave a feedback pin, and review/resolve those pins from a dashboard. Screenshot recapture is done server-side via headless Chromium.
 
 This repository is the **deploy shell** for the app that lives next to it: a tarball + bash script combo that builds the Docker image, keeps the Caddy route alive, and manages two cron jobs on the Ashbi fleet VPS.
 
 ## Features
 
 ### Client-Side Widget
-- **Script-tag injection** — zero-config widget that bypasses iframe CORS
-- **Precision targeting** — captures X/Y coordinates and generates XPath DOM selectors
-- **Visual annotation** — overlay feedback markers directly on page elements
-- **Screenshot capture** — automatic screenshots of the annotated area
+- **Script-tag injection** — drop-in `<script src="https://markup.ashbi.ca/widget.js">` with `data-api-key` and `data-project-id`; no iframe, no CORS config
+- **Click-to-pin** — clients click anywhere on the staged page to drop a feedback pin
+- **Precision targeting** — captures X/Y coordinates and a DOM selector so the pin can be re-anchored on later visits
+- **Visual annotation** — overlay feedback marker on the clicked element with a comment box
+- **Screenshot capture** — client uploads a screenshot of the annotated area alongside the pin (`POST /api/pins`)
 
-### AI-Powered Code Fixes
-- **Agentic actions** — "Deploy AI Agent" button queries an LLM to generate code fixes
-- **Context-aware** — analyzes surrounding DOM and existing styles
-- **Framework support** — generates React / Next.js component fixes
+### Dashboard
+- **Projects view** — list, create, rename, regenerate API key, and delete projects
+- **Pin thread** — per-pin comment thread, mark pins as `OPEN` or `RESOLVED`
+- **Recapture** — re-screenshot a page server-side via headless Chromium; the client polls `/api/screenshots/[id]/status` until the new dimensions arrive
+- **Subscribers** — per-project email list; new pins notify subscribers via the Mailgun HTTP API
 
-### GitHub Integration
-- **Automated branching** — creates feature branches automatically
-- **Smart commits** — commits generated fixes with descriptive messages
-- **Pull-request creation** — opens PRs with change summaries for review
+### Server-Side
+- **PostgreSQL + Prisma** — projects, pages, screenshots, pins, comments, subscribers, audit log
+- **Email** — Mailgun HTTP API for subscriber notifications (no-op if `MAILGUN_API_KEY` / `MAILGUN_DOMAIN` are empty)
+- **Screenshot storage** — PNGs on a bind-mounted volume; immutable `Cache-Control` + `ETag` headers on `/api/screenshots/[id]/image`
+- **Audit log** — dashboard writes are recorded in `AuditLog` and surfaced at `/api/audit`
 
 ## Tech Stack
 
@@ -270,24 +273,45 @@ docker exec markup-postgres pg_ctl -D /var/lib/postgresql/data restart -m fast
 Give this snippet to clients to drop in their `<head>`:
 
 ```html
-<script src="https://markup.ashbi.ca/widget.js"></script>
+<script
+  src="https://markup.ashbi.ca/widget.js"
+  data-api-key="<project apiKey>"
+  data-project-id="<project uuid>"></script>
 ```
 
 Once loaded, users can:
 
-1. Click anywhere on the page to add a feedback marker
+1. Click anywhere on the page to drop a feedback pin (X/Y + DOM selector + screenshot)
 2. Enter their feedback in the popup
-3. Click "Deploy AI Agent" to generate a fix
-4. Review the generated Pull Request
+3. Refresh the dashboard to see the new pin, reply in the comment thread, and mark it `OPEN` or `RESOLVED`
+4. Use **Recapture** to re-screenshot a page server-side when the staging layout has changed
 
 ## API endpoints
 
+Routes are gated by `requireProjectKey` (widget) or `requireDashboardOrigin` (dashboard) — see `src/lib/auth.ts`. The actual route handlers live under `src/app/api/`.
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST   | `/api/feedback` | Create new feedback item |
-| GET    | `/api/feedback/:id` | Get feedback details |
-| POST   | `/api/generate-fix` | Trigger AI fix generation |
-| POST   | `/api/pr` | Create GitHub pull request |
+| GET    | `/api/health` | Liveness probe used by `deploy.sh`'s post-deploy health check |
+| GET    | `/api/audit` | Recent `AuditLog` entries (dashboard origin) |
+| GET    | `/api/projects` | List projects with their pages / screenshots / pins / comments (dashboard origin) |
+| POST   | `/api/projects` | Create a project — returns the generated `apiKey` once (dashboard origin) |
+| PATCH  | `/api/projects/:id` | Rename a project and/or regenerate its `apiKey` (dashboard origin) |
+| DELETE | `/api/projects/:id` | Delete a project and its screenshot files (dashboard origin) |
+| GET    | `/api/projects/:id/subscribers` | List subscribers for a project (dashboard origin) |
+| POST   | `/api/projects/:id/subscribers` | Add a subscriber — triggers a welcome email via Mailgun (dashboard origin) |
+| DELETE | `/api/projects/:id/subscribers/:email` | Remove a subscriber (dashboard origin) |
+| POST   | `/api/pins` | Create a pin with screenshot (multipart), notifies subscribers (project key) |
+| PATCH  | `/api/pins/:id` | Update a pin's status (`OPEN` ↔ `RESOLVED`) (dashboard origin) |
+| DELETE | `/api/pins/:id` | Delete a pin and its comments (dashboard origin) |
+| POST   | `/api/pins/:id/comments` | Add a comment to a pin's thread (dashboard origin) |
+| GET    | `/api/screenshots/:id/image` | Stream the screenshot PNG with `Cache-Control` + `ETag` |
+| POST   | `/api/screenshots/:id/recapture` | Spawn `scripts/recapture.sh` to re-screenshot the page server-side (dashboard origin) |
+| GET    | `/api/screenshots/:id/status` | Lightweight `width`/`height`/`capturedAt` poll used during recapture (dashboard origin) |
+
+## Future work
+
+AI-agent integration (generate-fix flow, GitHub PR creation) is on the roadmap but not implemented in this build.
 
 ## License
 
