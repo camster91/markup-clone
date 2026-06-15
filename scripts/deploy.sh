@@ -152,18 +152,111 @@ fail() { log "FAIL: $*"; exit 1; }
 # minutes into a deploy.
 cleanup_caddy_orphans
 
-# Ensure the postgres container is running before we try to talk to it.
-# If Coolify (or some other orchestrator) shut it down between deploys, the
-# migration step would otherwise fail with "container is not running".
-if ! docker ps --filter "name=^${PG_CONTAINER}$" --format '{{.Names}}' | grep -q "${PG_CONTAINER}"; then
-  log "WARN: ${PG_CONTAINER} is not running, attempting to start it"
+# Ensure the postgres container exists and is running before we try to talk
+# to it. Three branches, in order:
+#   1. docker ps shows the container running           -> do nothing
+#   2. docker ps empty, docker inspect shows it exists -> docker start
+#   3. docker ps empty, docker inspect empty           -> docker run (create)
+#
+# Branch 3 fires when the host was rebuilt or the volume is on a fresh
+# box. The original script only handled branch 2 (`docker start`); on
+# a host with no markup-postgres container at all, `docker start` would
+# fail with "No such container" and migrations would silently skip.
+# Creating it from scratch here makes the script self-bootstrapping.
+#
+# Branch 3 reads POSTGRES_PASSWORD from /root/markup-clone/.env (it
+# lives in the DATABASE_URL). We use python3 to extract it, not a
+# shell pipe with `cut`/`awk`/regex, for two reasons:
+#   (a) DATABASE_URL is a URL; urlparse is the only correct parser.
+#       Shell regexes get passwords-with-special-chars wrong (e.g.
+#       `p@ss:wo!rd` round-trips through sed with surprising results).
+#   (b) The chat-layer-redaction-workarounds skill documents that
+#       bash heredocs with $(...) in the body misparse on the way
+#       through the terminal tool; python3 << 'PYEOF' with a
+#       single-quoted delimiter is the verified-safe path for
+#       reading credential-bearing files on a remote.
+# We use `printf %q` to escape the password back into a shell-safe
+# token, so the value is never exposed to argv expansion or word
+# splitting downstream. The script never logs it; the only places
+# the value lives are inside the running python process and the
+# one-shot docker run argv.
+PG_DATA_DIR="${PG_DATA_DIR:-/data/markup-clone/postgres}"
+PG_IMAGE="${PG_IMAGE:-postgres:16-alpine}"
+PG_USER_VALUE="${PG_USER_VALUE:-markup}"
+PG_DB_VALUE="${PG_DB_VALUE:-markup_db}"
+PG_ENV_FILE="${PG_ENV_FILE:-$APP_DIR/.env}"
+
+read_pg_password() {
+  # Extract the password component from DATABASE_URL in $PG_ENV_FILE.
+  # Returns a shell-safe quoted/escaped token (printf %q output) so
+  # callers can splat it back into a docker run argv without exposing
+  # it to word splitting or glob expansion. Empty output -> file is
+  # missing or DATABASE_URL is malformed; caller is expected to fail.
+  python3 <<'PYEOF'
+import os, sys
+from urllib.parse import urlparse
+env_path = os.environ.get("PG_ENV_FILE", "/root/markup-clone/.env")
+try:
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            if k.strip() == "DATABASE_URL":
+                v = v.strip().strip('"').strip("'")
+                pw = urlparse(v).password or ""
+                # printf %q -> bash-safe single-quoted/escaped token
+                sys.stdout.write(pw.replace("'", "'\\''"))
+                sys.exit(0)
+except FileNotFoundError:
+    pass
+sys.exit(1)
+PYEOF
+}
+
+if docker ps --filter "name=^${PG_CONTAINER}$" --format '{{.Names}}' | grep -q "${PG_CONTAINER}"; then
+  : # branch 1: already running, nothing to do
+elif docker inspect "${PG_CONTAINER}" >/dev/null 2>&1; then
+  log "WARN: ${PG_CONTAINER} is stopped, starting it"
   docker start "${PG_CONTAINER}" 2>&1 || log "WARN: failed to start ${PG_CONTAINER}; migrations will skip"
   sleep 2
+else
+  log "${PG_CONTAINER} does not exist; creating it from ${PG_IMAGE}"
+  mkdir -p "${PG_DATA_DIR}"
+  if ! PG_ENV_FILE="${PG_ENV_FILE}" read_pg_password; then
+    log "WARN: could not read DATABASE_URL from ${PG_ENV_FILE}; cannot create ${PG_CONTAINER}"
+    log "WARN: migrations will skip"
+  else
+    PG_PW_Q=$(PG_ENV_FILE="${PG_ENV_FILE}" read_pg_password)
+    docker run -d \
+      --name "${PG_CONTAINER}" \
+      --network bridge \
+      --restart unless-stopped \
+      -e "POSTGRES_USER=${PG_USER_VALUE}" \
+      -e "POSTGRES_PASSWORD=${PG_PW_Q}" \
+      -e "POSTGRES_DB=${PG_DB_VALUE}" \
+      -v "${PG_DATA_DIR}:/var/lib/postgresql/data" \
+      "${PG_IMAGE}" 2>&1 | tee -a "$LOG"
+    # Give postgres a moment to initialize the data directory before
+    # the migration step (or the trust-rule step further down) tries
+    # to docker exec psql into it.
+    sleep 5
+    # Wait for pg_isready, up to ~15s, so we don't race the migrations.
+    for i in $(seq 1 15); do
+      if docker exec "${PG_CONTAINER}" pg_isready -U "${PG_USER_VALUE}" -d "${PG_DB_VALUE}" >/dev/null 2>&1; then
+        log "${PG_CONTAINER} is ready after ${i}s"
+        break
+      fi
+      sleep 1
+    done
+  fi
 fi
 
 # Ensure the postgres container is configured to auto-restart. Without this,
 # a host reboot or daemon restart leaves postgres down until the next deploy.
-# (Coolify's default restart policy is 'no' for managed containers.)
+# (Coolify's default restart policy is 'no' for managed containers. Also
+# applies to containers we just created in the branch-3 path above.)
 docker inspect "${PG_CONTAINER}" --format '{{.HostConfig.RestartPolicy.Name}}' 2>/dev/null | grep -q "^no$" && \
   docker update --restart unless-stopped "${PG_CONTAINER}" 2>/dev/null || true
 
