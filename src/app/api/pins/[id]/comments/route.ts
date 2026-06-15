@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardOrigin } from '@/lib/auth';
+import { consume } from '@/lib/rate-limit';
 
 export async function POST(
   req: Request,
@@ -8,6 +9,21 @@ export async function POST(
 ) {
   const authErr = requireDashboardOrigin(req);
   if (authErr) return authErr;
+
+  // Rate limit AFTER auth, BEFORE the DB write.
+  // 30 tokens / 0.5 per second = 60s sustained per (origin, pinId).
+  // Per (origin, pinId) so a busy reviewer on one pin doesn't starve the
+  // bucket for any other pin they're reviewing at the same time, and so
+  // a runaway client on a single pin is capped at 30/min. Note: rate-limit
+  // state is in-process (see src/lib/rate-limit.ts) — fine for the current
+  // single-instance deploy; will not share buckets across instances if we
+  // ever scale horizontally.
+  const origin = req.headers.get('origin') ?? 'unknown';
+  const { id: pinId } = await params;
+  const rateCheck = consume(`comments:origin:${origin}:${pinId}`, { maxTokens: 30, refillRate: 0.5 });
+  if (!rateCheck.ok) {
+    return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(rateCheck.retryAfterSec) } });
+  }
 
   try {
     const { id } = await params;
