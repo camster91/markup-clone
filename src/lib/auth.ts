@@ -1,9 +1,15 @@
 import { NextResponse } from 'next/server';
 import { prisma } from './prisma';
 import { timingSafeEqual } from 'crypto';
+import { parseHost } from './origin';
 
 function getDashboardHost(): string {
-  return process.env.DASHBOARD_HOST || 'markup.ashbi.ca';
+  // parseHost handles both bare-hostname and full-URL forms of the env
+  // var, and falls back to 'markup.ashbi.ca' when unset. We only need
+  // the bare host here — the allow-list compares against `host` (which
+  // includes the port, from `new URL(origin).host`), so a different
+  // port is correctly rejected even when the underlying hostname matches.
+  return parseHost(process.env.DASHBOARD_HOST).host;
 }
 
 export function isDashboardOrigin(req: Request): boolean {

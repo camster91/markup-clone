@@ -22,11 +22,20 @@
 // `window` access, no runtime fetch. If the env var is absent, the default
 // preserves today's literal so existing single-host deploys behave
 // identically.
+//
+// Both forms are accepted by the parser (see src/lib/origin.ts):
+//   NEXT_PUBLIC_DASHBOARD_HOST=markup.ashbi.ca
+//   NEXT_PUBLIC_DASHBOARD_HOST=https://markup.ashbi.ca
+// Either way, the emitted Origin header is "https://markup.ashbi.ca".
 
-const DEFAULT_DASHBOARD_ORIGIN = 'https://markup.ashbi.ca';
+import { parseHost } from './origin';
 
 export function getDashboardOrigin(): string {
-  return process.env.NEXT_PUBLIC_DASHBOARD_HOST || DEFAULT_DASHBOARD_ORIGIN;
+  // We emit the `origin` (scheme + host[:port]) — that's what fetch's
+  // Origin header needs. `parseHost` defaults to https://markup.ashbi.ca
+  // when the env var is unset, and accepts either a bare hostname or a
+  // full URL as the configured value.
+  return parseHost(process.env.NEXT_PUBLIC_DASHBOARD_HOST).origin;
 }
 
 export function dashboardHeaders(): Record<string, string> {
