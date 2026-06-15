@@ -14,6 +14,12 @@ export default function ScreenshotView({
   const [activePinId, setActivePinId] = useState<string | null>(null);
   const [pins, setPins] = useState<Pin[]>(screenshot.pins);
   const [recaptureStatus, setRecaptureStatus] = useState<'idle' | 'starting' | 'running' | 'done' | 'error'>('idle');
+  // Audit D11: flips on once the recapture poll loop has been running for
+  // 30s. Drives the "Still rendering…" label on the recapture button so the
+  // operator can tell the operation is still in flight during the 90s
+  // timeout. Independent of the recapture status state machine (which is
+  // unchanged: idle → starting → running → done/error).
+  const [stillRendering, setStillRendering] = useState<boolean>(false);
   const [recaptureError, setRecaptureError] = useState<string | null>(null);
   const [width, setWidth] = useState(screenshot.width);
   const [height, setHeight] = useState(screenshot.height);
@@ -23,7 +29,7 @@ export default function ScreenshotView({
 
   // Mounted flag so the recapture poll loop can bail out if the user
   // navigates away (or the parent re-renders this view away) while a
-  // 30-tick × 1s poll is still in flight. Without this, setRecaptureStatus
+  // 90-tick × 1s poll is still in flight. Without this, setRecaptureStatus
   // and setRecaptureError would fire on an unmounted component (React
   // warning + memory leak), and the final `setTimeout(() => setRecaptureStatus('idle'), 3000)`
   // would too. We use a ref rather than a useState because reads are
@@ -61,6 +67,7 @@ export default function ScreenshotView({
   const handleRecapture = async () => {
     setRecaptureStatus('starting');
     setRecaptureError(null);
+    setStillRendering(false);
     try {
       const res = await fetch(`/api/screenshots/${screenshot.id}/recapture`, {
         method: 'POST',
@@ -73,20 +80,34 @@ export default function ScreenshotView({
       }
       setRecaptureStatus('running');
       // Poll for the new screenshot (width/height change in the DB).
-      // Cap at 30 polls × 1s = 30s. We pass ?since=<lastCapturedAt> so the
+      // Cap at 90 polls × 1s = 90s. We pass ?since=<lastCapturedAt> so the
       // endpoint can short-circuit with 304 Not Modified when nothing has
       // changed yet — saving the bandwidth of the JSON body until the
       // recapture actually lands. After a recapture capturedAt is bumped, so
       // the next poll returns 200 with the new dims.
+      //
+      // Audit D11: the bound was raised from 30 → 90s because real-world
+      // recaptures of large pages under the headless Chromium pipeline can
+      // legitimately take 40–60s to land (DNS, page-load wait, network
+      // idle, PNG encode, disk write). At i=30 we flip the button label
+      // from "Capturing…" to "Still rendering…" so the operator knows the
+      // operation is still in flight — the previous silent behavior
+      // looked indistinguishable from a hang.
       let updated = false;
       let lastSince = capturedAt;
-      for (let i = 0; i < 30; i++) {
+      for (let i = 0; i < 90; i++) {
         await new Promise(r => setTimeout(r, 1000));
         // Bail out of the poll loop if the component unmounted during the
         // 1s sleep. Without this, the rest of the loop body would call
         // setRecaptureStatus / setRecaptureError on an unmounted component
         // (React warning + memory leak).
         if (!mountedRef.current) return;
+        // At i=30 (30s in) flip the button label to "Still rendering…" so
+        // the operator knows the operation is still in flight. The poll
+        // itself keeps going up to i=90.
+        if (i === 30 && mountedRef.current) {
+          setStillRendering(true);
+        }
         try {
           const r2 = await fetch(
             `/api/screenshots/${screenshot.id}/status?since=${encodeURIComponent(lastSince)}`,
@@ -114,6 +135,7 @@ export default function ScreenshotView({
       }
       if (!mountedRef.current) return;
       setRecaptureStatus(updated ? 'done' : 'error');
+      setStillRendering(false);
       if (!updated) {
         setRecaptureError('Timed out waiting for the new screenshot');
       } else {
@@ -150,7 +172,7 @@ export default function ScreenshotView({
           >
             {recaptureStatus === 'idle' && 'Recapture'}
             {recaptureStatus === 'starting' && 'Starting…'}
-            {recaptureStatus === 'running' && 'Capturing…'}
+            {recaptureStatus === 'running' && (stillRendering ? 'Still rendering…' : 'Capturing…')}
             {recaptureStatus === 'done' && '✓ Refreshed'}
             {recaptureStatus === 'error' && '✗ Failed'}
           </button>

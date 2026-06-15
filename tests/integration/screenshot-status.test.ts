@@ -11,6 +11,9 @@
 //   recapture poll loop can use this as a "nothing has changed" signal.
 // - 404: a bogus screenshot id returns 404.
 // - 200 on a recaptured screenshot whose capturedAt is newer than `since`.
+// - Poll loop bound (audit D11): exercised in tests/widget/screenshot-view-
+//   recapture.test.tsx so the component-level test runs under jsdom (the
+//   default node env here is fine for the route-handler tests above).
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { _resetBucket } from '../../src/lib/rate-limit';
