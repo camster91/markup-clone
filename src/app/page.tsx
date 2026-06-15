@@ -42,7 +42,7 @@ export default async function Dashboard() {
           {projects[0]?.apiKey ? (
             <div className="bg-white px-4 py-2 rounded-lg shadow-sm border border-gray-200">
               <div className="text-sm text-gray-500 mb-1">Widget snippet (latest project):</div>
-              <WidgetSnippet apiKey={projects[0].apiKey} dashboardHost={`https://${dashboardHost}`} />
+              <WidgetSnippet apiKey={projects[0].apiKey} projectId={projects[0].id} dashboardHost={`https://${dashboardHost}`} />
             </div>
           ) : (
             <div className="bg-white px-4 py-2 rounded-lg shadow-sm border border-gray-200 text-xs text-gray-400">

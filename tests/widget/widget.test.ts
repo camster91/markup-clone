@@ -357,6 +357,58 @@ describe('markup widget', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('reads data-project-id from the script tag and uses it as the form-data projectId (audit A-4)', async () => {
+    // The widget's config reader (public/widget.js line 12) does:
+    //   const PROJECT_ID = scriptEl.getAttribute('data-project-id') || '';
+    // This test exercises that reader end-to-end by loading the widget
+    // with a UUID-shaped data-project-id, then running the full feedback
+    // flow and asserting the SAME UUID flows out in the FormData body.
+    //
+    // A regression that re-introduces a placeholder ('00000000-...') or
+    // a stale fallback (e.g. apiKey-as-projectId) would be caught here.
+    const realProjectId = 'b0a6f8c2-1234-4d5e-8abc-0123456789ab';
+
+    // Set up viewport + a target element so the feedback flow can run
+    // (mirrors the clickSaveInFeedbackMode helper, but with a UUID
+    // projectId and a re-entrant setup).
+    Object.defineProperty(document.documentElement, 'clientWidth', { value: 800, configurable: true });
+    Object.defineProperty(document.documentElement, 'clientHeight', { value: 600, configurable: true });
+    Object.defineProperty(window, 'innerWidth', { value: 800, configurable: true });
+    Object.defineProperty(window, 'innerHeight', { value: 600, configurable: true });
+    document.body.innerHTML = '<div id="t" style="width:50px;height:50px">x</div>';
+
+    await loadWidget({ projectId: realProjectId });
+
+    (document.querySelector('#markup-toggle') as HTMLButtonElement).click();
+    const t = document.getElementById('t')!;
+    t.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 25, clientY: 25 }));
+    await new Promise(r => setTimeout(r, 200));
+
+    const textareas = Array.from(document.querySelectorAll('textarea')) as HTMLTextAreaElement[];
+    const textarea = textareas[textareas.length - 1];
+    expect(textarea).toBeTruthy();
+    textarea.value = 'audit A-4 project id test';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+    const modalBox = textarea.closest('div')!.parentElement!;
+    const saveBtn = Array.from(modalBox.querySelectorAll('button'))
+      .find(b => b.textContent?.includes('Save pin')) as HTMLButtonElement;
+    expect(saveBtn).toBeTruthy();
+    saveBtn.click();
+    await new Promise(r => setTimeout(r, 50));
+
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const fd = init.body as FormData;
+    // The widget MUST have read the data-project-id from the script tag
+    // and shipped it verbatim in the form body. Anything else — empty
+    // string, placeholder UUID, the apiKey — fails this assertion.
+    expect(fd.get('projectId')).toBe(realProjectId);
+    expect(fd.get('projectId')).not.toBe('');
+    expect(fd.get('projectId')).not.toBe('mk_test');
+  });
+
   it('posts to the host derived from the script src — NOT a URL pinned to the projectId (regression for wrong-project-domain)', async () => {
     // The widget computes API_URL from SCRIPT_SRC on line 10:
     //   API_URL = SCRIPT_SRC.replace(/\/widget\.js.*$/, '') + '/api/pins'
