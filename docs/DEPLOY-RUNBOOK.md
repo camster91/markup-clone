@@ -12,9 +12,10 @@ Run through these before kicking off a deploy. Each takes <10s.
 2. **`/etc/caddy/Caddyfile` and `/opt/caddy/markup.d/caddyfile` exist and are readable.** `ssh coolify 'ls -l /etc/caddy/Caddyfile /opt/caddy/markup.d/caddyfile 2>&1'`.
 3. **`.env` on the VPS has the current `POSTGRES_PASSWORD` and `DATABASE_URL`.** `ssh coolify 'grep -E "^(POSTGRES_PASSWORD|DATABASE_URL)=" /root/markup-clone/.env'` — both lines present, no `***` from chat-layer redaction.
 4. **The `markup-net` Docker bridge exists and has a known subnet.** `ssh coolify 'docker network inspect markup-net -f "{{range .IPAM.Config}}{{.Subnet}}{{end}}"'` — must return a CIDR, not empty.
-5. **Local `npm run lint && npx vitest run` are clean.** 0 warnings, 188/188 passing.
-6. **The Caddyfile on the VPS has the `markup.ashbi.ca { reverse_proxy 127.0.0.1:3030 }` site block.** `ssh coolify 'grep -A1 "markup.ashbi.ca" /etc/caddy/Caddyfile'`.
-7. **No uncommitted changes in the repo** that would change deploy behavior. `git status` clean.
+5. **Local `npm run lint && npx vitest run` are clean.** 0 warnings, 212+/212+ passing (the suite has grown with the audit sweep D5/D7/D8 + F3/F4/F5; the exact count is in the last `npx vitest run` output).
+6. **The Caddyfile on the VPS has the `markup.ashbi.ca { reverse_proxy 127.0.0.1:3030 }` site block.** `ssh coolify 'bash /root/markup-clone/scripts/host-state.sh | grep -i "markup route"'` — the `has_markup_route` helper (line 28 of `scripts/host-state.sh`) returns `present` if the block is there, `**MISSING**` if not. The bare `grep -A1 "markup.ashbi.ca" /etc/caddy/Caddyfile` form still works but will false-positive on a stale or commented-out block.
+7. **The new screenshot status endpoint `/api/screenshots/[id]/status` is reachable from the dashboard origin.** `ssh coolify 'curl -sI -H "Origin: https://markup.ashbi.ca" http://127.0.0.1:3030/api/screenshots/00000000-0000-0000-0000-000000000000/status'` — expect a `200` (the zero UUID resolves to a 404 payload but the origin check passes) or a `404` from the route, **never** a `405 Method Not Allowed` or a `Connection refused`. This route is what `ScreenshotView` polls every second during a recapture (commits `bd5c4ac` + `7ce5dba` + `d131d5f`); if it's missing the dashboard's "regenerating screenshot" spinner never resolves.
+8. **No uncommitted changes in the repo** that would change deploy behavior. `git status` clean.
 
 If any item fails, fix it *before* you start — these are the failure modes below.
 

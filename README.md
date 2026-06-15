@@ -33,6 +33,23 @@ This repository is the **deploy shell** for the app that lives next to it: a tar
 - **Container:** Docker, multi-stage build (`Dockerfile`)
 - **CI / local dev:** `docker-compose.yml`
 
+## Recent changes (last 48 hours)
+
+The last 12 commits since `d569b1a`, newest first (audit sweep D5/D7/D8 + F3/F4/F5 + the runbook + recapture/perf fixes):
+
+- `28cd6cb` fix(comments): rate-limit `/api/pins/[id]/comments` (audit D8)
+- `e251ad1` fix(email): use `DASHBOARD_HOST` in subscriber email link (audit D7)
+- `293d9ef` fix(env): unified host/origin parser (audit D5)
+- `ad7bdf5` fix(screenshot-view): abort polling loop on unmount (audit F5)
+- `d131d5f` fix(screenshots): rate-limit `/api/screenshots/[id]/status` (audit F4)
+- `7ce5dba` fix(screenshots): `validateScreenshotId` on recapture + status routes (audit F3)
+- `dd0c175` fix(host-state): tighten markup route matcher with anchored regex
+- `bd5c4ac` perf(recapture): poll `/api/screenshots/[id]/status` instead of full `/api/projects` tree
+- `d5a4e5b` fix(client): use `NEXT_PUBLIC_DASHBOARD_HOST` for fetch `Origin` header (6 callsites)
+- `cc7b8e6` fix(ui): relative time format for dashboard "Updated X ago"
+- `4b56d2a` fix(deploy-runbook): correct the heredoc advice, add new "cron silent fail" failure mode
+- `a29df3a` fix(recapture): reject non-UUID `SCREENSHOT_ID` before any `psql` call
+
 ## Repository layout
 
 ```
@@ -55,7 +72,7 @@ This repository is the **deploy shell** for the app that lives next to it: a tar
 │   ├── app/                  # Next.js App Router
 │   ├── components/           # Widget, Dashboard, Feedback
 │   └── lib/                  # prisma, auth, email, audit, rate-limit, png-dimensions
-├── tests/                    # 186 unit + integration + widget tests
+├── tests/                    # 212+ unit + integration + widget tests
 ├── .env.example              # Documented env-var template
 └── README.md                 # You are here
 ```
@@ -96,7 +113,7 @@ The dev stack uses `docker-compose.yml` and is for local / smoke tests only. The
 ### Running the test suite
 
 ```bash
-npm test            # 186/186 unit + integration + widget tests
+npm test            # 212+/212+ unit + integration + widget tests
 npm run lint        # ESLint, 0 warnings
 ```
 
@@ -187,6 +204,18 @@ The official `postgres` image writes `host all all all scram-sha-256` as the fir
 A bash heredoc that opens with `<<EOF` (unquoted) performs **parameter and command substitution** on every line of its body, including the comment lines. A `# ${VAR} ...` style comment will be evaluated, and if `$VAR` happens to contain an unbalanced `)` or backtick, bash reports a syntax error pointing at the heredoc, not at the comment. Use `<<'EOF'` (quoted) for any heredoc that contains shell metacharacters in comments, and use `<<EOF` only when you want the substitutions.
 
 This bit `scripts/install-cron.sh` — see the inline note on lines 79-83 of that file. The fix is the quoted heredoc delimiter `<<'EOF'` for the caddy-guard cron file body.
+
+### `validateScreenshotId` is required on every route that takes a screenshot id
+
+The `recapture` and `status` route handlers under `src/app/api/screenshots/[id]/` MUST call `validateScreenshotId` before any DB or `psql` call (commit `7ce5dba`, audit F3). Without it, a non-UUID id hits the parameterized query, the postgres driver throws, and the request 500s with a confusing error. `validateScreenshotId` returns a `400` with a clean message — always run it first.
+
+### `ScreenshotView` must abort its polling loop on unmount
+
+`ScreenshotView` polls `/api/screenshots/[id]/status` every second during a recapture. Without an abort signal in the cleanup, navigating away mid-recapture leaves the loop running, leaks in-flight requests, and (worse) can call `setState` on an unmounted component (commit `ad7bdf5`, audit F5). The fix is an `AbortController` whose `signal` is passed to `fetch` and aborted in the `useEffect` cleanup. Any new polling helper in `src/components/` must do the same.
+
+### `recapture.sh` rejects non-UUID `SCREENSHOT_ID` before any `psql` call
+
+`scripts/recapture.sh` now validates `SCREENSHOT_ID` against the UUID regex **before** it ever shells out to `psql` or the API (commit `a29df3a`). A bad id (truncated, typo'd, SQL-smuggled) would previously reach `psql -tAc "UPDATE screenshots ... WHERE id='$ID'"` and either error cryptically or, with the right payload, do something nasty. The early reject logs a clear `ERROR: SCREENSHOT_ID '$ID' is not a valid UUID` and exits 1. Don't bypass it — the input comes from the dashboard, but defense in depth costs nothing here.
 
 ## Deploying secrets to the VPS
 
