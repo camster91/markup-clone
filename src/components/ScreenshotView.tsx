@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import PinThread from './PinThread';
 import type { Pin, FeedbackComment, ScreenshotWithPins } from '@/lib/types';
 
@@ -20,6 +20,22 @@ export default function ScreenshotView({
   const [capturedAt, setCapturedAt] = useState(screenshot.capturedAt);
   const [imageKey, setImageKey] = useState(0); // bump to force img reload
   const imgUrl = `/api/screenshots/${screenshot.id}/image?v=${imageKey}`;
+
+  // Mounted flag so the recapture poll loop can bail out if the user
+  // navigates away (or the parent re-renders this view away) while a
+  // 30-tick × 1s poll is still in flight. Without this, setRecaptureStatus
+  // and setRecaptureError would fire on an unmounted component (React
+  // warning + memory leak), and the final `setTimeout(() => setRecaptureStatus('idle'), 3000)`
+  // would too. We use a ref rather than a useState because reads are
+  // synchronous inside async callbacks and we don't want a re-render when
+  // the flag flips.
+  const mountedRef = useRef<boolean>(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const handlePinStatusChange = async (pinId: string, status: 'OPEN' | 'RESOLVED') => {
     const res = await fetch(`/api/pins/${pinId}`, {
@@ -66,6 +82,11 @@ export default function ScreenshotView({
       let lastSince = capturedAt;
       for (let i = 0; i < 30; i++) {
         await new Promise(r => setTimeout(r, 1000));
+        // Bail out of the poll loop if the component unmounted during the
+        // 1s sleep. Without this, the rest of the loop body would call
+        // setRecaptureStatus / setRecaptureError on an unmounted component
+        // (React warning + memory leak).
+        if (!mountedRef.current) return;
         try {
           const r2 = await fetch(
             `/api/screenshots/${screenshot.id}/status?since=${encodeURIComponent(lastSince)}`,
@@ -91,12 +112,15 @@ export default function ScreenshotView({
           // keep polling
         }
       }
+      if (!mountedRef.current) return;
       setRecaptureStatus(updated ? 'done' : 'error');
       if (!updated) {
         setRecaptureError('Timed out waiting for the new screenshot');
       } else {
         // Auto-clear the "done" indicator after 3 seconds
-        setTimeout(() => setRecaptureStatus('idle'), 3000);
+        setTimeout(() => {
+          if (mountedRef.current) setRecaptureStatus('idle');
+        }, 3000);
       }
     } catch (err) {
       setRecaptureStatus('error');
