@@ -44,7 +44,7 @@ export default function DashboardProjects() {
   }, [fetchProjects]);
 
   const getTimeSinceUpdate = () => {
-    if (!lastUpdated) return 'Updating…';
+    if (lastUpdated === null) return 'Updating…';
     const seconds = Math.floor((Date.now() - lastUpdated) / 1000);
     // 0-4s: "just now" (smoother than "0s ago" / "1s ago" / "2s ago")
     if (seconds < 5) return 'Updated just now';
