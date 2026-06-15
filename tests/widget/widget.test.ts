@@ -474,4 +474,75 @@ describe('markup widget', () => {
     const fd = init.body as FormData;
     expect(fd.get('projectId')).toBe('real-project-id');
   });
+
+  // ---------- Audit A-5: viewport capture so pin coords match image coords ----------
+  //
+  // The widget used to capture the FULL document scrollHeight (4096x3000 in this
+  // test) into the screenshot PNG, but the xPercent/yPercent it sends to the
+  // server are computed against window.innerWidth/innerHeight (1024x768 here).
+  // A click at the *center* of the visible viewport — (512, 384) — would land
+  // at (12.5%, 12.8%) of a 4096x3000 image but at (50%, 50%) of a 1024x768
+  // viewport. The two coordinate spaces disagreed, so the pin marker would
+  // appear in the upper-left of the captured image even though the user
+  // clicked the middle of what they could see.
+  //
+  // The fix: capture only the visible viewport so the screenshot's coordinate
+  // space matches the click coordinate space. This test pins that behavior.
+  it('captures viewport (not scrollHeight) so click coords match screenshot coords (audit A-5)', async () => {
+    // Page is 4096x3000 (typical large marketing site), but the user is looking
+    // at a 1024x768 viewport with their browser scrolled to the top-left.
+    Object.defineProperty(document.documentElement, 'clientWidth', { value: 1024, configurable: true });
+    Object.defineProperty(document.documentElement, 'clientHeight', { value: 768, configurable: true });
+    Object.defineProperty(window, 'innerWidth', { value: 1024, configurable: true });
+    Object.defineProperty(window, 'innerHeight', { value: 768, configurable: true });
+    Object.defineProperty(document.documentElement, 'scrollWidth', { value: 4096, configurable: true });
+    Object.defineProperty(document.documentElement, 'scrollHeight', { value: 3000, configurable: true });
+    Object.defineProperty(document.body, 'scrollWidth', { value: 4096, configurable: true });
+    Object.defineProperty(document.body, 'scrollHeight', { value: 3000, configurable: true });
+    Object.defineProperty(window, 'scrollX', { value: 0, configurable: true });
+    Object.defineProperty(window, 'scrollY', { value: 0, configurable: true });
+    Object.defineProperty(window, 'pageXOffset', { value: 0, configurable: true });
+    Object.defineProperty(window, 'pageYOffset', { value: 0, configurable: true });
+
+    document.body.innerHTML = '<div id="t" style="width:50px;height:50px">x</div>';
+    await loadWidget();
+
+    (document.querySelector('#markup-toggle') as HTMLButtonElement).click();
+    const t = document.getElementById('t')!;
+    // Center of the 1024x768 viewport.
+    t.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 512, clientY: 384 }));
+    await new Promise(r => setTimeout(r, 200));
+
+    const textareas = Array.from(document.querySelectorAll('textarea')) as HTMLTextAreaElement[];
+    const textarea = textareas[textareas.length - 1];
+    expect(textarea).toBeTruthy();
+    textarea.value = 'audit A-5 viewport capture test';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+    const modalBox = textarea.closest('div')!.parentElement!;
+    const saveBtn = Array.from(modalBox.querySelectorAll('button'))
+      .find(b => b.textContent?.includes('Save pin')) as HTMLButtonElement;
+    expect(saveBtn).toBeTruthy();
+    saveBtn.click();
+    await new Promise(r => setTimeout(r, 50));
+
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const fd = init.body as FormData;
+
+    // The bug being fixed: a click at the center of a 1024x768 viewport on
+    // a 4096x3000 page used to produce xPercent: 12.5, yPercent: 12.8
+    // (because the OLD capture code divided clickX/scrollWidth and
+    // clickY/scrollHeight ... no — actually because the OLD xPercent math
+    // was correct but the captured image was 4096x3000, so the pin landed
+    // off-screen visually). With the fix, both the captured image and the
+    // coords use the viewport (1024x768), so a center click = (50, 50).
+    expect(parseFloat(fd.get('xPercent') as string)).toBeCloseTo(50, 5);
+    expect(parseFloat(fd.get('yPercent') as string)).toBeCloseTo(50, 5);
+    // Sanity: NOT the scrollHeight-based percentages that the bug produced
+    // (512/4096*100 = 12.5, 384/3000*100 = 12.8).
+    expect(parseFloat(fd.get('xPercent') as string)).not.toBeCloseTo(12.5, 1);
+    expect(parseFloat(fd.get('yPercent') as string)).not.toBeCloseTo(12.8, 1);
+  });
 });

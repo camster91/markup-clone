@@ -103,13 +103,15 @@
   // Renders the full scrollable page (not just the viewport) into a canvas, then to a PNG blob.
 
   async function captureViewport() {
+    // Capture the viewport (innerWidth x innerHeight) — not the full document
+    // scrollHeight. The xPercent/yPercent we send to the server are computed
+    // against window.innerWidth/innerHeight, so the captured image must live
+    // in the same coordinate space; otherwise pins land off-image on scrollable
+    // pages (audit A-5).
     const w = window.innerWidth;
-    // Use full document scrollHeight so the entire page is captured, not just the viewport
-    const fullH = Math.max(
-      document.documentElement.scrollHeight,
-      document.body.scrollHeight,
-      window.innerHeight
-    );
+    const h = window.innerHeight;
+    const scrollX = window.scrollX || window.pageXOffset || 0;
+    const scrollY = window.scrollY || window.pageYOffset || 0;
     const dpr = window.devicePixelRatio || 1;
 
     // Clone the current document body so we can mutate it without affecting the page
@@ -121,7 +123,11 @@
     clone.querySelectorAll('script, [id^="markup-"]').forEach(n => n.remove());
     clone.querySelectorAll('iframe').forEach(n => n.remove());
 
-    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + fullH + '">' +
+    // Render the full cloned document inside the SVG, then crop to the
+    // visible viewport via viewBox (x=scrollX, y=scrollY, w=innerWidth,
+    // h=innerHeight). This keeps the captured image's coordinate space
+    // aligned with the click coordinate space the user interacts with.
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="' + scrollX + ' ' + scrollY + ' ' + w + ' ' + h + '" preserveAspectRatio="xMinYMin meet">' +
       '<foreignObject x="0" y="0" width="100%" height="100%">' +
       new XMLSerializer().serializeToString(clone) +
       '</foreignObject></svg>';
@@ -139,7 +145,7 @@
 
       const canvas = document.createElement('canvas');
       canvas.width = w * dpr;
-      canvas.height = fullH * dpr;
+      canvas.height = h * dpr;
       const ctx = canvas.getContext('2d');
       ctx.scale(dpr, dpr);
       ctx.drawImage(img, 0, 0);
