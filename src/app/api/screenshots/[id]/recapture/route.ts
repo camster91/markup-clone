@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardOrigin } from '@/lib/auth';
+import { validateScreenshotId } from '@/lib/validation';
 import { spawn } from 'child_process';
 import { consume } from '@/lib/rate-limit';
 import { audit } from '@/lib/audit';
@@ -19,6 +20,8 @@ export async function POST(
   if (authErr) return authErr;
 
   const { id } = await params;
+  const idRes = validateScreenshotId(id);
+  if (!idRes.ok) return NextResponse.json({ error: idRes.error }, { status: 400 });
 
   // Rate limit: split into two buckets so a busy operator who clicks
   // Recapture on many screenshots doesn't share a single bucket and end up

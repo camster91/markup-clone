@@ -100,7 +100,7 @@ afterEach(() => {
 });
 
 function makeReq(headers: Record<string, string> = {}): Request {
-  return new Request('https://markup.ashbi.ca/api/screenshots/ss-1/recapture', {
+  return new Request('https://markup.ashbi.ca/api/screenshots/11111111-1111-1111-1111-111111111111/recapture', {
     method: 'POST',
     headers,
   });
@@ -109,13 +109,13 @@ function makeReq(headers: Record<string, string> = {}): Request {
 describe('POST /api/screenshots/[id]/recapture — rate limit keying', () => {
   it('uses two distinct keys: per-screenshot and per-origin', async () => {
     await POST(makeReq({ origin: 'https://markup.ashbi.ca' }), {
-      params: Promise.resolve({ id: 'ss-1' }),
+      params: Promise.resolve({ id: '11111111-1111-1111-1111-111111111111' }),
     });
     // Two consume() calls per request — one for the per-screenshot bucket,
     // one for the per-origin bucket.
     expect(mocks.consume).toHaveBeenCalledTimes(2);
     const keys = mocks.consume.mock.calls.map((c) => c[0]);
-    expect(keys).toContain('recapture:shot:ss-1');
+    expect(keys).toContain('recapture:shot:11111111-1111-1111-1111-111111111111');
     expect(keys).toContain('recapture:origin:https://markup.ashbi.ca');
   });
 
@@ -129,7 +129,7 @@ describe('POST /api/screenshots/[id]/recapture — rate limit keying', () => {
       return { ok: true, remaining: 5 };
     });
     const res = await POST(makeReq({ origin: 'https://markup.ashbi.ca' }), {
-      params: Promise.resolve({ id: 'ss-1' }),
+      params: Promise.resolve({ id: '11111111-1111-1111-1111-111111111111' }),
     });
     expect(res.status).toBe(429);
     const body = await res.json();
@@ -146,7 +146,7 @@ describe('POST /api/screenshots/[id]/recapture — rate limit keying', () => {
       return { ok: true, remaining: 3 };
     });
     const res = await POST(makeReq({ origin: 'https://markup.ashbi.ca' }), {
-      params: Promise.resolve({ id: 'ss-1' }),
+      params: Promise.resolve({ id: '11111111-1111-1111-1111-111111111111' }),
     });
     expect(res.status).toBe(429);
     const body = await res.json();
@@ -155,25 +155,25 @@ describe('POST /api/screenshots/[id]/recapture — rate limit keying', () => {
   });
 
   it('recapture on a different screenshotId is a separate bucket', async () => {
-    // Burn through 3 tokens on ss-1.
+    // Burn through 3 tokens on the first UUID.
     mocks.consume.mockImplementation((key: string) => {
-      if (key === 'recapture:shot:ss-1') return { ok: false, retryAfterSec: 5 };
+      if (key === 'recapture:shot:11111111-1111-1111-1111-111111111111') return { ok: false, retryAfterSec: 5 };
       return { ok: true, remaining: 5 };
     });
     const r1 = await POST(makeReq({ origin: 'https://markup.ashbi.ca' }), {
-      params: Promise.resolve({ id: 'ss-1' }),
+      params: Promise.resolve({ id: '11111111-1111-1111-1111-111111111111' }),
     });
     expect(r1.status).toBe(429);
 
-    // Reset the mock so ss-2 is allowed.
+    // Reset the mock so the second UUID is allowed.
     mocks.consume.mockImplementation((key: string) => {
-      if (key === 'recapture:shot:ss-2') return { ok: true, remaining: 2 };
+      if (key === 'recapture:shot:22222222-2222-2222-2222-222222222222') return { ok: true, remaining: 2 };
       return { ok: true, remaining: 5 };
     });
     const r2 = await POST(makeReq({ origin: 'https://markup.ashbi.ca' }), {
-      params: Promise.resolve({ id: 'ss-2' }),
+      params: Promise.resolve({ id: '22222222-2222-2222-2222-222222222222' }),
     });
-    // ss-2 should NOT inherit the throttle from ss-1.
+    // The second UUID should NOT inherit the throttle from the first.
     expect(r2.status).not.toBe(429);
   });
 });
@@ -181,13 +181,13 @@ describe('POST /api/screenshots/[id]/recapture — rate limit keying', () => {
 describe('POST /api/screenshots/[id]/recapture — spawn + audit', () => {
   it('spawns bash with the bind-mount script path and the screenshot id', async () => {
     const res = await POST(makeReq({ origin: 'https://markup.ashbi.ca' }), {
-      params: Promise.resolve({ id: 'ss-spawn-1' }),
+      params: Promise.resolve({ id: '33333333-3333-3333-3333-333333333333' }),
     });
     expect(res.status).toBe(200);
     expect(mocks.spawn).toHaveBeenCalledTimes(1);
     const [cmd, args, opts] = mocks.spawn.mock.calls[0];
     expect(cmd).toBe('bash');
-    expect(args).toEqual(['/opt/app-scripts/recapture.sh', 'ss-spawn-1']);
+    expect(args).toEqual(['/opt/app-scripts/recapture.sh', '33333333-3333-3333-3333-333333333333']);
     expect(opts).toMatchObject({ detached: true });
     // stdio must be [ignore, pipe, pipe] so we can capture stderr.
     expect(opts.stdio).toEqual(['ignore', 'pipe', 'pipe']);
@@ -197,13 +197,13 @@ describe('POST /api/screenshots/[id]/recapture — spawn + audit', () => {
     mocks.spawn.mockImplementation(() => makeFakeChild(42, { exitCode: 0 }));
     mocks.audit.mockClear();
     await POST(makeReq({ origin: 'https://markup.ashbi.ca' }), {
-      params: Promise.resolve({ id: 'ss-audit-ok' }),
+      params: Promise.resolve({ id: '44444444-4444-4444-4444-444444444444' }),
     });
     // The exit event fires on setImmediate; wait two ticks.
     await new Promise((r) => setTimeout(r, 20));
     expect(mocks.audit).toHaveBeenCalled();
     const call = mocks.audit.mock.calls.find((c) =>
-      (c[0] as any)?.action === 'screenshot.recapture' && (c[0] as any)?.target === 'ss-audit-ok'
+      (c[0] as any)?.action === 'screenshot.recapture' && (c[0] as any)?.target === '44444444-4444-4444-4444-444444444444'
     );
     expect(call).toBeDefined();
     expect((call![0] as any).metadata).toMatchObject({ status: 'ok', pid: 42 });
@@ -216,12 +216,12 @@ describe('POST /api/screenshots/[id]/recapture — spawn + audit', () => {
     }));
     mocks.audit.mockClear();
     await POST(makeReq({ origin: 'https://markup.ashbi.ca' }), {
-      params: Promise.resolve({ id: 'ss-audit-fail' }),
+      params: Promise.resolve({ id: '55555555-5555-5555-5555-555555555555' }),
     });
     await new Promise((r) => setTimeout(r, 20));
     expect(mocks.audit).toHaveBeenCalled();
     const call = mocks.audit.mock.calls.find((c) =>
-      (c[0] as any)?.action === 'screenshot.recapture' && (c[0] as any)?.target === 'ss-audit-fail'
+      (c[0] as any)?.action === 'screenshot.recapture' && (c[0] as any)?.target === '55555555-5555-5555-5555-555555555555'
     );
     expect(call).toBeDefined();
     expect((call![0] as any).metadata).toMatchObject({
@@ -237,11 +237,11 @@ describe('POST /api/screenshots/[id]/recapture — spawn + audit', () => {
     }));
     mocks.audit.mockClear();
     await POST(makeReq({ origin: 'https://markup.ashbi.ca' }), {
-      params: Promise.resolve({ id: 'ss-spawn-err' }),
+      params: Promise.resolve({ id: '66666666-6666-6666-6666-666666666666' }),
     });
     await new Promise((r) => setTimeout(r, 20));
     const call = mocks.audit.mock.calls.find((c) =>
-      (c[0] as any)?.action === 'screenshot.recapture' && (c[0] as any)?.target === 'ss-spawn-err'
+      (c[0] as any)?.action === 'screenshot.recapture' && (c[0] as any)?.target === '66666666-6666-6666-6666-666666666666'
     );
     expect(call).toBeDefined();
     expect((call![0] as any).metadata).toMatchObject({ status: 'spawn_error' });

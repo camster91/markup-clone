@@ -43,8 +43,8 @@ beforeEach(() => {
 describe('GET /api/screenshots/[id]/status', () => {
   it('returns 401 when called from a non-dashboard origin', async () => {
     const res = await GET(
-      makeReq('https://evil.example.com/api/screenshots/ss-1/status'),
-      { params: Promise.resolve({ id: 'ss-1' }) }
+      makeReq('https://evil.example.com/api/screenshots/11111111-1111-1111-1111-111111111111/status'),
+      { params: Promise.resolve({ id: '11111111-1111-1111-1111-111111111111' }) }
     );
     expect(res.status).toBe(401);
     // We must NOT have hit the DB on an unauth'd request.
@@ -53,10 +53,10 @@ describe('GET /api/screenshots/[id]/status', () => {
 
   it('happy path: returns width, height, and an ISO capturedAt', async () => {
     const res = await GET(
-      makeReq('https://markup.ashbi.ca/api/screenshots/ss-1/status', {
+      makeReq('https://markup.ashbi.ca/api/screenshots/11111111-1111-1111-1111-111111111111/status', {
         origin: 'https://markup.ashbi.ca',
       }),
-      { params: Promise.resolve({ id: 'ss-1' }) }
+      { params: Promise.resolve({ id: '11111111-1111-1111-1111-111111111111' }) }
     );
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -65,7 +65,7 @@ describe('GET /api/screenshots/[id]/status', () => {
     expect(body.capturedAt).toBe(FIXED_CAPTURED_AT.toISOString());
     // The query must select only the columns we actually return.
     expect(mocks.screenshot.findUnique).toHaveBeenCalledWith({
-      where: { id: 'ss-1' },
+      where: { id: '11111111-1111-1111-1111-111111111111' },
       select: { width: true, height: true, capturedAt: true },
     });
   });
@@ -74,10 +74,10 @@ describe('GET /api/screenshots/[id]/status', () => {
     // ?since equal to capturedAt → no change → 304.
     const res = await GET(
       makeReq(
-        `https://markup.ashbi.ca/api/screenshots/ss-1/status?since=${encodeURIComponent(FIXED_CAPTURED_AT.toISOString())}`,
+        `https://markup.ashbi.ca/api/screenshots/11111111-1111-1111-1111-111111111111/status?since=${encodeURIComponent(FIXED_CAPTURED_AT.toISOString())}`,
         { origin: 'https://markup.ashbi.ca' }
       ),
-      { params: Promise.resolve({ id: 'ss-1' }) }
+      { params: Promise.resolve({ id: '11111111-1111-1111-1111-111111111111' }) }
     );
     expect(res.status).toBe(304);
     const text = await res.text();
@@ -92,10 +92,10 @@ describe('GET /api/screenshots/[id]/status', () => {
     const oldSince = '2026-06-14T14:55:00.000Z';
     const res = await GET(
       makeReq(
-        `https://markup.ashbi.ca/api/screenshots/ss-1/status?since=${encodeURIComponent(oldSince)}`,
+        `https://markup.ashbi.ca/api/screenshots/11111111-1111-1111-1111-111111111111/status?since=${encodeURIComponent(oldSince)}`,
         { origin: 'https://markup.ashbi.ca' }
       ),
-      { params: Promise.resolve({ id: 'ss-1' }) }
+      { params: Promise.resolve({ id: '11111111-1111-1111-1111-111111111111' }) }
     );
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -107,10 +107,10 @@ describe('GET /api/screenshots/[id]/status', () => {
   it('returns 404 when the screenshot id does not exist', async () => {
     mocks.screenshot.findUnique.mockResolvedValue(null);
     const res = await GET(
-      makeReq('https://markup.ashbi.ca/api/screenshots/bogus-id/status', {
+      makeReq('https://markup.ashbi.ca/api/screenshots/22222222-2222-2222-2222-222222222222/status', {
         origin: 'https://markup.ashbi.ca',
       }),
-      { params: Promise.resolve({ id: 'bogus-id' }) }
+      { params: Promise.resolve({ id: '22222222-2222-2222-2222-222222222222' }) }
     );
     expect(res.status).toBe(404);
     const body = await res.json();
@@ -121,10 +121,10 @@ describe('GET /api/screenshots/[id]/status', () => {
     // We don't want a bad client-supplied query string to break the recapture
     // poll loop. A malformed since is treated as "no since" → 200.
     const res = await GET(
-      makeReq('https://markup.ashbi.ca/api/screenshots/ss-1/status?since=not-a-date', {
+      makeReq('https://markup.ashbi.ca/api/screenshots/11111111-1111-1111-1111-111111111111/status?since=not-a-date', {
         origin: 'https://markup.ashbi.ca',
       }),
-      { params: Promise.resolve({ id: 'ss-1' }) }
+      { params: Promise.resolve({ id: '11111111-1111-1111-1111-111111111111' }) }
     );
     expect(res.status).toBe(200);
     const body = await res.json();
