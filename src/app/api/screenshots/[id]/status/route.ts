@@ -19,6 +19,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardOrigin } from '@/lib/auth';
 import { validateScreenshotId } from '@/lib/validation';
+import { consume } from '@/lib/rate-limit';
 
 export async function GET(
   req: Request,
@@ -30,6 +31,19 @@ export async function GET(
   const { id } = await params;
   const idRes = validateScreenshotId(id);
   if (!idRes.ok) return NextResponse.json({ error: idRes.error }, { status: 400 });
+
+  // Rate limit AFTER auth + UUID validation, BEFORE the DB query.
+  // 120 tokens / 2.0 per second: ~60s sustained with a 2× safety margin
+  // over the legitimate 30s poll × 2 ScreenshotView instances = 4 polls/min
+  // steady state. Tight enough to catch a runaway client; loose enough to
+  // never throttle the normal recapture polling loop. Note: rate-limit
+  // state is in-process (see src/lib/rate-limit.ts) — fine for the current
+  // single-instance deploy.
+  const origin = req.headers.get('origin') ?? 'unknown';
+  const rateCheck = consume(`status:origin:${origin}`, { maxTokens: 120, refillRate: 2.0 });
+  if (!rateCheck.ok) {
+    return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(rateCheck.retryAfterSec) } });
+  }
 
   const ss = await prisma.screenshot.findUnique({
     where: { id },

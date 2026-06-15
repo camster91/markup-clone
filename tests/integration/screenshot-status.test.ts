@@ -12,7 +12,8 @@
 // - 404: a bogus screenshot id returns 404.
 // - 200 on a recaptured screenshot whose capturedAt is newer than `since`.
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { _resetBucket } from '../../src/lib/rate-limit';
 
 const mocks = vi.hoisted(() => ({
   screenshot: { findUnique: vi.fn() },
@@ -25,6 +26,7 @@ vi.mock('@/lib/prisma', () => ({
 import { GET } from '../../src/app/api/screenshots/[id]/status/route';
 
 const FIXED_CAPTURED_AT = new Date('2026-06-14T15:00:00.000Z');
+const STATUS_ORIGIN_KEY = 'status:origin:https://markup.ashbi.ca';
 
 function makeReq(url: string, headers: Record<string, string> = {}): Request {
   return new Request(url, { method: 'GET', headers });
@@ -129,5 +131,63 @@ describe('GET /api/screenshots/[id]/status', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.width).toBe(1280);
+  });
+});
+
+describe('GET /api/screenshots/[id]/status — rate limit', () => {
+  // The 120/2.0 token bucket per origin must hold for the legitimate
+  // 30s poll × 2 ScreenshotView instances = 4 polls/min steady state, and
+  // must 429 a runaway client on the 121st call inside a one-second
+  // window. Freeze the clock with setSystemTime so the refillRate=2.0
+  // doesn't sneak tokens back in between loop iterations.
+  beforeEach(() => {
+    _resetBucket(STATUS_ORIGIN_KEY);
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    vi.setSystemTime(new Date('2026-06-14T15:00:00.000Z'));
+  });
+
+  afterEach(() => {
+    _resetBucket(STATUS_ORIGIN_KEY);
+    vi.useRealTimers();
+  });
+
+  it('returns 429 on the 121st call from the same origin within a 60s window', async () => {
+    const req = (): Request => makeReq(
+      'https://markup.ashbi.ca/api/screenshots/11111111-1111-1111-1111-111111111111/status',
+      { origin: 'https://markup.ashbi.ca' }
+    );
+    const params = { params: Promise.resolve({ id: '11111111-1111-1111-1111-111111111111' }) };
+
+    // Calls 1-120: full bucket, each call consumes one token → all 200.
+    for (let i = 0; i < 120; i++) {
+      const res = await GET(req(), params);
+      expect(res.status).toBe(200);
+    }
+    // Call 121: bucket is empty → 429. No DB query should run.
+    mocks.screenshot.findUnique.mockClear();
+    const res121 = await GET(req(), params);
+    expect(res121.status).toBe(429);
+    expect(mocks.screenshot.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('the 429 response carries a numeric Retry-After header', async () => {
+    const req = (): Request => makeReq(
+      'https://markup.ashbi.ca/api/screenshots/11111111-1111-1111-1111-111111111111/status',
+      { origin: 'https://markup.ashbi.ca' }
+    );
+    const params = { params: Promise.resolve({ id: '11111111-1111-1111-1111-111111111111' }) };
+
+    // Drain the bucket.
+    for (let i = 0; i < 120; i++) {
+      await GET(req(), params);
+    }
+    // The 121st call must carry Retry-After in seconds (positive integer).
+    const res = await GET(req(), params);
+    expect(res.status).toBe(429);
+    const retryAfter = res.headers.get('Retry-After');
+    expect(retryAfter).not.toBeNull();
+    const seconds = Number(retryAfter);
+    expect(Number.isFinite(seconds)).toBe(true);
+    expect(seconds).toBeGreaterThan(0);
   });
 });
