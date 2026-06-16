@@ -8,17 +8,38 @@ export async function GET(req: Request) {
   const authErr = requireDashboardOrigin(req);
   if (authErr) return authErr;
 
+  // Optional ?since=<ISO> delta polling. When set, only rows whose
+  // updatedAt (or capturedAt, for Screenshot) is strictly after `since`
+  // are returned at every nested level — Project, Page, Screenshot, Pin,
+  // Comment. The dashboard passes `lastSuccessfulPoll - 1000` as `since`
+  // so two rows updated in the same millisecond (e.g. two pins created
+  // by the same request) cannot race past the cursor. When `since` is
+  // missing or unparseable, the route falls back to the legacy
+  // "return the full tree" behaviour.
+  const url = new URL(req.url);
+  const sinceParam = url.searchParams.get('since');
+  const since = sinceParam ? new Date(sinceParam) : null;
+  const filterSince = sinceParam && !Number.isNaN(since!.getTime());
+
   const projects = await prisma.project.findMany({
+    where: filterSince ? { updatedAt: { gt: since! } } : undefined,
     include: {
       pages: {
+        where: filterSince ? { updatedAt: { gt: since! } } : undefined,
         include: {
           screenshots: {
+            // Screenshot has no `updatedAt` field — its lifetime marker
+            // is `capturedAt`. Same semantics: only screenshots captured
+            // after the cursor are part of the delta.
+            where: filterSince ? { capturedAt: { gt: since! } } : undefined,
             orderBy: { capturedAt: 'desc' },
             include: {
               pins: {
+                where: filterSince ? { updatedAt: { gt: since! } } : undefined,
                 orderBy: { createdAt: 'asc' },
                 include: {
                   comments: {
+                    where: filterSince ? { updatedAt: { gt: since! } } : undefined,
                     orderBy: { createdAt: 'asc' },
                   },
                 },

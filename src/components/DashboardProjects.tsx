@@ -12,15 +12,35 @@ export default function DashboardProjects() {
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const mountedRef = useRef(true);
+  // Timestamp (ms since epoch) of the last successful /api/projects
+  // response. The route accepts ?since=<ISO> and returns only rows whose
+  // updatedAt is strictly after the cursor, so the next poll passes
+  // `lastSuccessfulPoll - 1000` (1s overlap) as the cursor. The 1s
+  // overlap is critical: two pins created in the same millisecond would
+  // otherwise race past the cursor and the second one would never come
+  // back. `null` means "no successful poll yet" → first poll goes out
+  // without a cursor and the route returns the full tree.
+  const lastSuccessfulPoll = useRef<number | null>(null);
 
   const fetchProjects = useCallback(async () => {
     try {
-      const res = await fetch('/api/projects');
+      // First poll: no cursor, full tree. Subsequent polls: pass the
+      // last successful poll timestamp minus 1s so we don't miss rows
+      // that were updated in the same millisecond as the previous
+      // response was being serialized.
+      const since = lastSuccessfulPoll.current;
+      const url = since === null
+        ? '/api/projects'
+        : `/api/projects?since=${new Date(since - 1000).toISOString()}`;
+      const res = await fetch(url);
       if (!res.ok) return;
       const data = await res.json();
       if (mountedRef.current) {
         setProjects(data);
         setLastUpdated(Date.now());
+        // Record the cursor AFTER the response has been applied so a
+        // slow request that races a write can't drop the write.
+        lastSuccessfulPoll.current = Date.now();
       }
     } catch {
       // silent retry - keep showing old data
