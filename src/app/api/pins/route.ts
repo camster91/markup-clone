@@ -9,6 +9,7 @@ import {
   LIMITS,
   validatePagePath,
   validatePercent,
+  validatePinText,
   sanitizeText,
 } from '@/lib/validation';
 import { consume } from '@/lib/rate-limit';
@@ -57,9 +58,17 @@ export async function POST(req: Request) {
     const yRes = validatePercent(yPercent, 'yPercent');
     if (!yRes.ok) return NextResponse.json({ error: yRes.error }, { status: 400 });
 
-    const textRes = sanitizeText(textRaw, LIMITS.TEXT_MAX, 'text');
-    if (!textRes.ok) return NextResponse.json({ error: textRes.error }, { status: 400 });
-    const text = textRes.value;
+    // Pin text is optional. An empty/missing form field is allowed (the
+    // user can post a pin with no comment). When the field IS present,
+    // validatePinText enforces the 1-2000 char limit after trimming
+    // and rejects null bytes — the caller's `.trim()` is no longer
+    // needed because the validator does it.
+    let text = '';
+    if (typeof textRaw === 'string' && textRaw.length > 0) {
+      const textRes = validatePinText(textRaw);
+      if (!textRes.ok) return NextResponse.json({ error: textRes.error }, { status: 400 });
+      text = textRes.value;
+    }
 
     const authorRes = sanitizeText(authorNameRaw, LIMITS.AUTHOR_NAME_MAX, 'authorName');
     if (!authorRes.ok) return NextResponse.json({ error: authorRes.error }, { status: 400 });

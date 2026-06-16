@@ -22,6 +22,16 @@ export const LIMITS = {
   // Project lifecycle
   PROJECT_NAME_MAX: 200,
   PROJECT_DOMAIN_MAX: 253, // RFC 1035 max DNS domain length
+
+  // Subscriber emails
+  // RFC 5321 caps email local-part at 64 chars and domain at 255 chars;
+  // 320 is the conservative whole-address cap. The audit log records the
+  // email, so this also caps the line length we write to disk.
+  EMAIL_MAX: 320,
+
+  // Pin text (client feedback). Smaller than the generic TEXT_MAX because
+  // a pin comment is a short reply, not a long-form review.
+  PIN_TEXT_MAX: 2_000,
 } as const;
 
 export type ValidationResult<T> =
@@ -172,4 +182,68 @@ export function validateProjectDomain(domain: string): ValidationResult<string> 
     return { ok: false, error: 'domain must not be an IP address' };
   }
   return { ok: true, value: lower };
+}
+
+// Conservative RFC 5322 subset for the local part. We deliberately reject
+// quoted strings ("foo bar"), comments, IP-literal domains, etc. —
+// subscribers are real email addresses entered by humans, not arbitrary
+// RFC 5322 edge cases. The dot-atom shape below is what the vast majority
+// of real addresses use, and it also rejects leading/trailing dots and
+// consecutive dots (the two most common typos / abuse patterns).
+//
+//   local  ::= dot-atom      // letters/digits/_%+- separated by single dots
+//   domain ::= label(.label)* // DNS labels (letters/digits/-) with a TLD
+//
+// The TLD is required to be ≥2 alpha chars (rejects the "alice@host.1"
+// numeric-TLD case which some lenient validators accept).
+const EMAIL_RE = /^[A-Za-z0-9_%+-]+(?:\.[A-Za-z0-9_%+-]+)*@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,}$/;
+
+/** Validates an email address. Conservative: rejects spaces, quoted
+ *  local parts, IP-literal domains, and any input that doesn't fit the
+ *  common `local@domain.tld` shape. Returns the address unchanged —
+ *  callers that need case-normalization should use `validateSubscriberEmail`. */
+export function validateEmail(value: unknown): ValidationResult<string> {
+  if (typeof value !== 'string') return { ok: false, error: 'email must be a string' };
+  if (value.length === 0) return { ok: false, error: 'email must not be empty' };
+  if (value.length > LIMITS.EMAIL_MAX) {
+    return { ok: false, error: `email must be ≤${LIMITS.EMAIL_MAX} chars` };
+  }
+  if (!EMAIL_RE.test(value)) {
+    return { ok: false, error: 'email must be a valid address (local@domain.tld)' };
+  }
+  return { ok: true, value };
+}
+
+/** Validates a subscriber email address: same as `validateEmail`, but
+ *  case-normalized to lowercase. Subscribers are looked up by email, so
+ *  `Alice@Example.com` and `alice@example.com` must collapse to the same
+ *  row — do the normalization here so the route doesn't have to remember. */
+export function validateSubscriberEmail(value: unknown): ValidationResult<string> {
+  const res = validateEmail(value);
+  if (!res.ok) return res;
+  return { ok: true, value: res.value.toLowerCase() };
+}
+
+/** Validates the free-form text of a pin comment. The widget captures
+ *  whatever the user types, and we store it as-is (the dashboard escapes
+ *  on render). Constraints:
+ *   - 1-2000 chars after trimming leading/trailing whitespace
+ *   - no null bytes (U+0000) — they truncate C strings and have broken
+ *     log aggregators and a few ORMs in the past
+ *
+ *  Other control characters (newlines, tabs) are accepted as-is so users
+ *  can write multi-line feedback. The trim happens here so callers don't
+ *  have to remember to `.trim()` before checking length. */
+export function validatePinText(value: unknown): ValidationResult<string> {
+  if (typeof value !== 'string') return { ok: false, error: 'text must be a string' };
+  // Reject null bytes BEFORE trimming — `trim()` doesn't touch \x00, but
+  // doing it first keeps the intent explicit and the order of error
+  // messages predictable for tests.
+  if (value.includes('\x00')) return { ok: false, error: 'text must not contain null bytes' };
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return { ok: false, error: 'text must not be empty' };
+  if (trimmed.length > LIMITS.PIN_TEXT_MAX) {
+    return { ok: false, error: `text must be ≤${LIMITS.PIN_TEXT_MAX} chars` };
+  }
+  return { ok: true, value: trimmed };
 }

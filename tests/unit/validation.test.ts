@@ -9,6 +9,9 @@ import {
   validateScreenshotId,
   validateProjectName,
   validateProjectDomain,
+  validateEmail,
+  validateSubscriberEmail,
+  validatePinText,
 } from '../../src/lib/validation';
 
 describe('LIMITS', () => {
@@ -297,5 +300,168 @@ describe('validateProjectDomain', () => {
 
   it('rejects single-label 0 (whole-network shorthand for 0.0.0.0)', () => {
     expect(validateProjectDomain('0').ok).toBe(false);
+  });
+});
+
+describe('validateEmail', () => {
+  // Accept cases — the common shape that real subscriber emails follow.
+
+  it('accepts alice@example.com', () => {
+    expect(validateEmail('alice@example.com')).toEqual({ ok: true, value: 'alice@example.com' });
+  });
+
+  it('accepts alice+test@example.com (plus addressing in the local part)', () => {
+    expect(validateEmail('alice+test@example.com')).toEqual({ ok: true, value: 'alice+test@example.com' });
+  });
+
+  it('accepts a.b.c@sub.example.com (dotted local part + subdomain)', () => {
+    expect(validateEmail('a.b.c@sub.example.com')).toEqual({ ok: true, value: 'a.b.c@sub.example.com' });
+  });
+
+  // Reject cases — the obvious-malformed-input set from the task.
+
+  it('rejects "not-an-email" (no @)', () => {
+    const r = validateEmail('not-an-email');
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects "@" (empty local part)', () => {
+    expect(validateEmail('@').ok).toBe(false);
+  });
+
+  it('rejects "alice@" (empty domain)', () => {
+    expect(validateEmail('alice@').ok).toBe(false);
+  });
+
+  it('rejects "alice@.com" (domain starts with a dot)', () => {
+    expect(validateEmail('alice@.com').ok).toBe(false);
+  });
+
+  it('rejects "alice space@example.com" (space in local part — header-injection guard)', () => {
+    expect(validateEmail('alice space@example.com').ok).toBe(false);
+  });
+
+  // Defensive: handle non-string and oversize input the same way the
+  // other validators in this file do.
+
+  it('rejects non-string input', () => {
+    expect(validateEmail(42 as unknown as string).ok).toBe(false);
+    expect(validateEmail(null as unknown as string).ok).toBe(false);
+  });
+
+  it('rejects empty string', () => {
+    expect(validateEmail('').ok).toBe(false);
+  });
+
+  it('rejects emails longer than LIMITS.EMAIL_MAX (320 chars)', () => {
+    // 320 chars exactly should pass (the regex still matches); 321 should fail.
+    const exactly320 = 'a'.repeat(310) + '@example.com'; // 310 + 12 = 322, too long
+    expect(validateEmail(exactly320).ok).toBe(false);
+  });
+
+  it('rejects CR/LF (header injection guard)', () => {
+    // The character set in the regex disallows CR/LF, so any string
+    // containing them is rejected at the shape check.
+    expect(validateEmail('alice\n@example.com').ok).toBe(false);
+    expect(validateEmail('alice\r\n@example.com').ok).toBe(false);
+  });
+
+  it('preserves the input case (validateEmail does NOT lowercase)', () => {
+    // Case-normalization is the subscriber-specific validator's job.
+    // validateEmail is the generic primitive; it returns what it got.
+    expect(validateEmail('Alice@Example.com')).toEqual({ ok: true, value: 'Alice@Example.com' });
+  });
+});
+
+describe('validateSubscriberEmail', () => {
+  it('accepts a normal email and lowercases the result', () => {
+    // The DB unique index treats 'Alice@Example.com' and
+    // 'alice@example.com' as the same row; normalization must happen
+    // at the boundary so the route doesn't have to remember.
+    expect(validateSubscriberEmail('Alice@Example.com')).toEqual({ ok: true, value: 'alice@example.com' });
+  });
+
+  it('accepts plus-addressed emails and lowercases the result', () => {
+    expect(validateSubscriberEmail('Alice+Test@Example.COM')).toEqual({ ok: true, value: 'alice+test@example.com' });
+  });
+
+  it('rejects malformed input the same way validateEmail does (no double-validation drift)', () => {
+    expect(validateSubscriberEmail('not-an-email').ok).toBe(false);
+    expect(validateSubscriberEmail('@').ok).toBe(false);
+    expect(validateSubscriberEmail('alice@').ok).toBe(false);
+    expect(validateSubscriberEmail('alice@.com').ok).toBe(false);
+    expect(validateSubscriberEmail('alice space@example.com').ok).toBe(false);
+  });
+
+  it('rejects non-string input', () => {
+    expect(validateSubscriberEmail(42 as unknown as string).ok).toBe(false);
+  });
+});
+
+describe('validatePinText', () => {
+  // Accept cases.
+
+  it('accepts "Hello"', () => {
+    expect(validatePinText('Hello')).toEqual({ ok: true, value: 'Hello' });
+  });
+
+  it('trims leading/trailing whitespace and returns the trimmed value', () => {
+    // The trim happens inside the validator so the route doesn't
+    // have to remember to .trim() before length-checking.
+    expect(validatePinText('  trimmed  ')).toEqual({ ok: true, value: 'trimmed' });
+  });
+
+  it('accepts a 1-character string (lower bound)', () => {
+    expect(validatePinText('a')).toEqual({ ok: true, value: 'a' });
+  });
+
+  it('accepts a 2000-character string (upper bound)', () => {
+    const text = 'a'.repeat(2000);
+    expect(validatePinText(text)).toEqual({ ok: true, value: text });
+  });
+
+  // Reject cases.
+
+  it('rejects an empty string (after trim)', () => {
+    const r = validatePinText('');
+    expect(r.ok).toBe(false);
+    // The error message mentions "empty" so the dashboard can show
+    // a user-friendly error.
+    if (!r.ok) expect(r.error).toMatch(/empty/);
+  });
+
+  it('rejects a string of only whitespace (trimmed to empty)', () => {
+    expect(validatePinText('     ').ok).toBe(false);
+  });
+
+  it('rejects a 2001-character string (one over the upper bound)', () => {
+    const r = validatePinText('a'.repeat(2001));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/2000/);
+  });
+
+  it('rejects a string containing U+0000 (null byte) — defense-in-depth', () => {
+    // Null bytes truncate C strings and have broken log aggregators
+    // and a few ORMs in the past. The pin-comment text is stored as
+    // a Postgres text column, but a stray null could still trip a
+    // downstream log/email/Markdown tool. Reject at the boundary.
+    const r = validatePinText('with\u0000null');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/null/);
+  });
+
+  it('rejects non-string input', () => {
+    expect(validatePinText(42 as unknown as string).ok).toBe(false);
+    expect(validatePinText(null as unknown as string).ok).toBe(false);
+  });
+
+  it('accepts multi-line text (newlines are NOT stripped, unlike sanitizeText)', () => {
+    // The new validator is intentionally more permissive than
+    // sanitizeText for control chars — only null bytes are rejected.
+    // Newlines/tabs let users write structured feedback.
+    expect(validatePinText('line 1\nline 2\tindented')).toEqual({
+      ok: true,
+      value: 'line 1\nline 2\tindented',
+    });
   });
 });
