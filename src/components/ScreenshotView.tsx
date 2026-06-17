@@ -1,16 +1,25 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import PinThread from './PinThread';
 import type { Pin, FeedbackComment, ScreenshotWithPins } from '@/lib/types';
 import { useRecaptureStatus } from '@/lib/hooks/useRecaptureStatus';
+import { usePresence, colorForUserId, shortLabelForUserId } from '@/lib/hooks/usePresence';
 
 export default function ScreenshotView({
   screenshot,
   pagePath,
+  projectId,
 }: {
   screenshot: ScreenshotWithPins;
   pagePath: string;
+  /**
+   * Project this screenshot belongs to. Used to anchor the per-screenshot
+   * presence heartbeat (collab card). Optional — when omitted (e.g. in
+   * unit tests that only exercise the recapture poll loop), the
+   * presence hook is skipped and the screenshot renders normally.
+   */
+  projectId?: string;
 }) {
   const [activePinId, setActivePinId] = useState<string | null>(null);
   const [pins, setPins] = useState<Pin[]>(screenshot.pins);
@@ -20,9 +29,45 @@ export default function ScreenshotView({
   const [imageKey, setImageKey] = useState(0); // bump to force img reload
   const imgUrl = `/api/screenshots/${screenshot.id}/image?v=${imageKey}`;
 
-  // Stable initial-dims reference so the hook doesn't re-fire on every
-  // parent re-render. capturedAt is a string from the server, so an
-  // object identity comparison is enough.
+  // === Presence (collab card) ============================================
+  // We host a per-screenshot usePresence() call so the reviewer
+  // associated with this ScreenshotView row gets a heartbeat tied to
+  // THIS project + THIS screenshot. The "project-level" presence row
+  // (no screenshotId) from the parent <ProjectCard> is still bumped
+  // by the parent's usePresence — both heartbeats coexist; the one
+  // with a screenshotId just carries the cursor position.
+  //
+  // Two issues to avoid:
+  //   1) Double-bumping the row. Both heartbeats share the
+  //      (userId, projectId) key, so the second upsert is a no-op
+  //      "overwrite with the same values" — fine, and the screenshotId
+  //      on the row will flip between null and the current screenshot
+  //      id, which is what we want (it tells the dashboard "this
+  //      reviewer is currently looking at screenshot X").
+  //   2) Cursor lag. The 5s tick + 1s overlap cursor means the
+  //      cursor position we POST is up to ~5s stale. That's fine for
+  //      a "where is the reviewer roughly looking" indicator, which
+  //      is the explicit design — the cursor is NOT pixel-accurate.
+  //
+  // We pass the cursor ref into the hook via `cursorRef`. The hook
+  // reads `.current` on every tick; the ref is filled by the
+  // onMouseMove handler below.
+  //
+  // The hook needs a projectId. The ScreenshotView doesn't have one
+  // directly (the ScreenshotWithPins type stops at the screenshot).
+  // We add a `screenshot.projectId` lookup via a prop on the parent
+  // chain (page.projectId → screenshot.projectId), but that requires
+  // a type change. For now, the simplest correct fix is to look up
+  // the projectId from the screenshot's page (the parent
+  // <ProjectCard> knows it) and pass it through. To avoid changing
+  // ScreenshotWithPins, we pass the projectId as a SECOND optional
+  // prop. When absent, the ScreenshotView's presence row has an
+  // empty projectId and the route will 400 — better to fail loud
+  // than to silently drop the heartbeat.
+
+  // Stable initial-dims reference so the recapture hook doesn't re-fire
+  // on every parent re-render. capturedAt is a string from the server,
+  // so an object identity comparison is enough.
   const initialDims = useMemo(
     () => ({ width: screenshot.width, height: screenshot.height, capturedAt: screenshot.capturedAt }),
     [screenshot.width, screenshot.height, screenshot.capturedAt]
@@ -39,14 +84,61 @@ export default function ScreenshotView({
     setImageKey((k) => k + 1);
   }, []);
 
-  const { status: recaptureStatus, error: recaptureError, isStale, start } = useRecaptureStatus(
+  const { status: recaptureStatus, error: recaptureError, isStale, start: startRecapture } = useRecaptureStatus(
     screenshot.id,
     { onUpdate: handleRecaptureUpdate, initial: initialDims }
   );
 
   const handleRecapture = useCallback(() => {
-    void start();
-  }, [start]);
+    void startRecapture();
+  }, [startRecapture]);
+
+  // === Mouse tracking → cursorRef for usePresence =======================
+  // The hook reads `cursorRef.current` on every 5s tick. We translate
+  // browser-space event coords into the screenshot's coordinate space
+  // (0-100 percent of width/height). The next tick picks up whatever
+  // is in the ref at that moment — no per-event throttling needed.
+  const cursorRef = useRef<{ x: number | null; y: number | null } | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const el = containerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    const xPct = ((e.clientX - rect.left) / rect.width) * 100;
+    const yPct = ((e.clientY - rect.top) / rect.height) * 100;
+    // Clamp to [0, 100] — the cursor is over the image element but
+    // React's synthetic event may fire on padding/border that
+    // doesn't correspond to a real pixel.
+    const x = Math.max(0, Math.min(100, xPct));
+    const y = Math.max(0, Math.min(100, yPct));
+    cursorRef.current = { x, y };
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    cursorRef.current = { x: null, y: null };
+  }, []);
+
+  // To attach the ScreenshotView to its project for presence, the
+  // parent threads projectId through. The screenshot object itself
+  // doesn't carry projectId (it stops at pageId), so the parent
+  // <ProjectCard> is responsible for passing it in. When projectId
+  // is omitted (e.g. in unit tests), the presence hook is called
+  // with an empty projectId which short-circuits the heartbeat
+  // (see usePresence) — the recapture flow is the primary use case
+  // for ScreenshotView, and presence is the collab-card overlay on
+  // top of it.
+  // The hook's `others` list is what we render as cursor dots. We
+  // intentionally do NOT consume `myUserId` here — the local browser
+  // already shows the native cursor, so rendering a self-dot on top
+  // would be a duplicate. The hook still tracks self for the
+  // (userId, projectId) upsert key on the server.
+  const { others } = usePresence({
+    projectId: projectId ?? '',
+    screenshotId: projectId ? screenshot.id : null,
+    cursorRef,
+  });
 
   const handlePinStatusChange = async (pinId: string, status: 'OPEN' | 'RESOLVED') => {
     const res = await fetch(`/api/pins/${pinId}`, {
@@ -92,7 +184,13 @@ export default function ScreenshotView({
         </div>
       </div>
 
-      <div className="relative" style={{ maxWidth: '100%' }}>
+      <div
+        ref={containerRef}
+        className="relative"
+        style={{ maxWidth: '100%' }}
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
+      >
         {/* eslint-disable-next-line @next/next/no-img-element -- served from /api/screenshots/[id]/image with immutable Cache-Control + ETag; the dynamic recapture cache-buster query string and the disk-backed PNG stream are intentional (not a static asset the optimizer can help with). */}
         <img
           src={imgUrl}
@@ -124,6 +222,28 @@ export default function ScreenshotView({
             </button>
           );
         })}
+
+        {/* Presence cursors rendered on top of the screenshot. Each
+            "other" reviewer with a non-null cursor on this screenshot
+            shows a small dot at `${xPercent}%` / `${yPercent}%`. The
+            container div already has `position: relative`, so absolute
+            positioning inside slots the dot over the image correctly. */}
+        {others
+          .filter((p) => p.screenshotId === screenshot.id && p.cursorX !== null && p.cursorY !== null)
+          .map((p) => (
+            <div
+              key={p.id}
+              data-testid="presence-cursor"
+              className={`absolute pointer-events-none -translate-x-1/2 -translate-y-1/2 w-3 h-3 rounded-full border-2 border-white shadow-md ${colorForUserId(p.userId)}`}
+              style={{
+                left: `${p.cursorX}%`,
+                top: `${p.cursorY}%`,
+                zIndex: 4,
+              }}
+              title={`Reviewer ${shortLabelForUserId(p.userId)}`}
+              aria-label={`Reviewer ${shortLabelForUserId(p.userId)} cursor`}
+            />
+          ))}
 
         {activePinId && (
           <div className="absolute top-2 right-2 w-80 max-w-[calc(100%-1rem)] bg-white rounded-lg shadow-2xl border border-gray-200 z-20 max-h-[80vh] overflow-y-auto">

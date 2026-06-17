@@ -14,6 +14,7 @@ model Project {
   apiKey      String       @unique
   pages       Page[]
   subscribers Subscriber[]
+  presences   Presence[]
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 }
@@ -88,4 +89,23 @@ model AuditLog {
   @@index([createdAt])
   @@index([actor])
   @@index([action])
+}
+
+// Presence tracks a dashboard reviewer's "I'm looking at this project" heartbeat.
+// The `userId` is generated client-side and stored in localStorage — F10 will
+// replace it with a real authenticated User id. One row per (userId, projectId);
+// the row's `lastSeenAt` is bumped on every heartbeat, so a 60s TTL filters out
+// disconnected reviewers from the "online" list.
+model Presence {
+  id          String   @id @default(cuid())
+  userId      String
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  screenshotId String?
+  lastSeenAt  DateTime @default(now())
+  cursorX     Float?
+  cursorY     Float?
+
+  @@unique([userId, projectId])
+  @@index([projectId, lastSeenAt])
 }
