@@ -11,7 +11,9 @@
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
-    "test:smoke": "bash tests/smoke.sh"
+    "test:smoke": "bash tests/smoke.sh",
+    "build:widget": "vite build",
+    "prebuild": "npm run build:widget"
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",

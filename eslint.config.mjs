@@ -10,6 +10,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Widget bundle output (Vite minified) — not source.
+    // ESLint flags every keepNames `s(name, "name")` call as a
+    // no-unused-expression. Adding the rule locally would be
+    // heavier than ignoring the file.
+    "public/widget.js",
   ]),
   {
     rules: {

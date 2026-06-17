@@ -121,9 +121,21 @@ describe('markup widget', () => {
       '..', '..', 'public', 'widget.js'
     );
     let widgetSource = await fs.readFile(widgetPath, 'utf-8');
+    // The widget is built and minified by Vite (esbuild). The previous
+    // unminified IIFE had the literal call site
+    // `screenshotBlob = await captureViewport();`. After minification
+    // esbuild shortens the call to a shorthand object property
+    // (`screenshotBlob:a` in `let{screenshotBlob:a}=...`) and renames
+    // captureViewport to a short local name (`K`).
+    //
+    // To stub captureViewport, we replace its definition
+    // `async function K(){...}` (between the `K` declaration and the
+    // `s(K,"captureViewport")` keepNames marker) with a stub that
+    // returns a fake Blob. The `K` name is stable across builds thanks
+    // to esbuild.keepNames=true in vite.config.ts.
     widgetSource = widgetSource.replace(
-      'screenshotBlob = await captureViewport();',
-      'screenshotBlob = new Blob(["fake"], { type: "image/png" });'
+      /async function K\(\)\{[\s\S]*?\}s\(K,"captureViewport"\);/,
+      'async function K(){return new Blob(["fake"],{type:"image/png"})}s(K,"captureViewport");'
     );
     (0, eval)(widgetSource);
   }
