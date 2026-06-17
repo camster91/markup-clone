@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useMemo, useRef } from 'react';
 import PinThread from './PinThread';
+import HistoryPanel from './HistoryPanel';
 import type { Pin, FeedbackComment, ScreenshotWithPins, FeedbackAnnotation } from '@/lib/types';
 import { useRecaptureStatus } from '@/lib/hooks/useRecaptureStatus';
 import { usePresence, colorForUserId, shortLabelForUserId } from '@/lib/hooks/usePresence';
@@ -46,6 +47,17 @@ export default function ScreenshotView({
   const [height, setHeight] = useState(screenshot.height);
   const [capturedAt, setCapturedAt] = useState(screenshot.capturedAt);
   const [imageKey, setImageKey] = useState(0); // bump to force img reload
+  // === History tab =====================================================
+  // 'latest' (default) renders the screenshot + pins as before.
+  // 'history' renders HistoryPanel — the last 50 ScreenshotVersion
+  // rows as thumbnails. We keep the tabs as local state so flipping
+  // between them is instant (no re-fetch of pins / pins-state stays
+  // alive) but the HistoryPanel is unmounted when not active (its
+  // <img>s and dialog state are torn down). The HistoryPanel watches
+  // `imageKey` as a refresh signal — every successful recapture bumps
+  // imageKey, and the panel re-fetches the version list so the new
+  // capture shows up at the top of the grid.
+  const [tab, setTab] = useState<'latest' | 'history'>('latest');
   const imgUrl = `/api/screenshots/${screenshot.id}/image?v=${imageKey}`;
 
   // === Presence (collab card) ============================================
@@ -274,16 +286,61 @@ export default function ScreenshotView({
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden bg-white">
       <div className="bg-gray-50 px-4 py-2 text-xs text-gray-500 flex items-center justify-between border-b border-gray-200">
-        <div>
-          Captured: {new Date(capturedAt).toLocaleString()} · {width}×{height}px
+        <div className="flex items-center gap-4">
+          {/* Tab switcher. The "Latest" tab is the original
+              ScreenshotView body (image + pins + annotations). The
+              "History" tab mounts <HistoryPanel> in place of the
+              body and tears down the rest. The image-bump
+              cache-buster continues to work in both tabs because
+              imgUrl is computed from the Screenshot id, not the
+              active tab. */}
+          <div role="tablist" aria-label="Screenshot view" className="flex items-center gap-1">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'latest'}
+              data-testid="tab-latest"
+              onClick={() => setTab('latest')}
+              className={`px-2 py-1 rounded text-xs font-medium ${
+                tab === 'latest'
+                  ? 'bg-white text-gray-900 border border-gray-300'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Latest
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'history'}
+              data-testid="tab-history"
+              onClick={() => setTab('history')}
+              className={`px-2 py-1 rounded text-xs font-medium ${
+                tab === 'history'
+                  ? 'bg-white text-gray-900 border border-gray-300'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              History
+            </button>
+          </div>
+          <span>
+            {tab === 'latest'
+              ? <>Captured: {new Date(capturedAt).toLocaleString()} · {width}×{height}px</>
+              : 'Every recapture of this screenshot'}
+          </span>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-gray-400">
-            {pins.length} pin{pins.length === 1 ? '' : 's'}
-          </span>
-          <span className="text-gray-400">
-            {pins.filter(p => p.status === 'RESOLVED').length} resolved
-          </span>
+          {tab === 'latest' && (
+            <>
+              <span className="text-gray-400">
+                {pins.length} pin{pins.length === 1 ? '' : 's'}
+              </span>
+              <span className="text-gray-400">
+                {pins.filter(p => p.status === 'RESOLVED').length} resolved
+              </span>
+            </>
+          )}
           {/* The recapture button shells out to headless Chromium
               and is dashboard-only. Hidden on the public /share/[token]
               view (readOnly) so a share-link viewer can't trigger a
@@ -307,6 +364,8 @@ export default function ScreenshotView({
           )}
         </div>
       </div>
+
+      {tab === 'latest' ? (
 
       <div
         ref={containerRef}
@@ -389,6 +448,19 @@ export default function ScreenshotView({
           </div>
         )}
       </div>
+      ) : (
+        // History tab — mount HistoryPanel. The panel is unmounted
+        // when the user switches back to "Latest" (its fetch state,
+        // dialog state, and <img> nodes are torn down), but the
+        // screenshot's imageKey bump from a fresh recapture will
+        // re-fetch the version list on the next mount.
+        //
+        // We pass `imageKey` as `refreshKey` so a successful
+        // recapture (which bumps imageKey in the recapture-status
+        // hook's onUpdate) causes the panel to re-fetch and show
+        // the new version at the top of the grid.
+        <HistoryPanel screenshotId={screenshot.id} refreshKey={imageKey} />
+      )}
     </div>
   );
 }

@@ -23,6 +23,7 @@ import { prisma } from './prisma';
 export type AuditAction =
   | 'project.create' | 'project.delete' | 'project.update'
   | 'pin.create' | 'pin.delete' | 'screenshot.recapture'
+  | 'screenshot.history.read'
   | 'subscriber.add' | 'subscriber.remove'
   | 'project.share.create' | 'project.share.revoke' | 'share.view'
   | 'comment.mention';

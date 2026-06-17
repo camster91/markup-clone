@@ -116,6 +116,17 @@ export async function POST(
         // the image actually changed. If the recapture produced the
         // exact same dims, the SSE update is a no-op visually but
         // still useful: it tells the hook it can stop polling.
+        //
+        // ScreenshotVersion side effect: the script wrote the new
+        // PNG to a fresh UUID-based path and updated the Screenshot
+        // row's storageKey + width + height + capturedAt. We insert
+        // a matching ScreenshotVersion row that mirrors those
+        // values. The version row is the immutable history entry;
+        // the Screenshot stays the "latest pointer". We do this as
+        // a best-effort write — a version insert failure is logged
+        // but does NOT fail the recapture (the file is on disk and
+        // the Screenshot is up to date; the gap is observable in
+        // the history endpoint and recoverable by a re-recapture).
         prisma.screenshot
           .findUnique({
             where: { id },
@@ -123,21 +134,48 @@ export async function POST(
               width: true,
               height: true,
               capturedAt: true,
+              storageKey: true,
               page: { select: { projectId: true } },
             },
           })
           .then((ss) => {
             if (!ss || !ss.page) return;
-            emit({
-              type: 'recapture-complete',
-              projectId: ss.page.projectId,
-              payload: {
-                screenshotId: id,
-                width: ss.width,
-                height: ss.height,
-                capturedAt: ss.capturedAt.toISOString(),
-              },
-            });
+            // Insert the version row. The Screenshot's storageKey
+            // is the new file's name (the script generated the
+            // UUID and updated the Screenshot in one statement),
+            // so the version's storageKey is the same value.
+            prisma.screenshotVersion
+              .create({
+                data: {
+                  screenshotId: id,
+                  capturedAt: ss.capturedAt,
+                  width: ss.width,
+                  height: ss.height,
+                  storageKey: ss.storageKey,
+                  createdBy: 'system',
+                },
+              })
+              .catch((verr) => {
+                // The recapture already succeeded. A failed
+                // version insert doesn't fail the response — the
+                // file is on disk and the Screenshot is up to
+                // date. We log so the gap is visible in
+                // container logs and an operator can backfill
+                // by re-recapturing.
+                console.error('[recapture] version insert failed for', id, verr);
+              })
+              .finally(() => {
+                emit({
+                  type: 'recapture-complete',
+                  projectId: ss.page!.projectId,
+                  payload: {
+                    screenshotId: id,
+                    width: ss.width,
+                    height: ss.height,
+                    capturedAt: ss.capturedAt.toISOString(),
+                  },
+                });
+              });
           })
           .catch((err) => {
             // The recapture already succeeded (code === 0). A

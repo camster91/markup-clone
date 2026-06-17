@@ -8,13 +8,27 @@
 #   1. Look up the Screenshot row in the DB to find the parent Page
 #   2. Look up the Page -> Project to find the project's domain
 #   3. Build the URL: https://<project.domain><page.path>
-#   4. Run Chromium headless to screenshot that URL
-#   5. Replace the existing PNG at /data/screenshots/<screenshotId>.png
-#   6. Update the Screenshot row's width/height in the DB
+#   4. Generate a fresh UUID for the new version (each recapture is a
+#      new ScreenshotVersion row with its own file on disk — the parent
+#      Screenshot's storageKey is updated to point at the new file but
+#      the old PNGs are kept at their original paths so the history
+#      endpoint can still serve them)
+#   5. Run Chromium headless to screenshot that URL, writing to the
+#      new UUID-based path under $SCREENSHOTS_DIR
+#   6. Update the Screenshot row's storageKey, width, height, and
+#      capturedAt in the DB (it stays the "latest pointer")
+#
+# The recapture route's exit handler reads the updated Screenshot row
+# and inserts a matching ScreenshotVersion row — the recapture API
+# returns the new dims in the response and the version insert is a
+# side effect. Keeping the two writes separate means a version-row
+# failure doesn't roll back the actual recapture; the file is on
+# disk, the Screenshot is up to date, and the missing version row is
+# observable as a gap in the history endpoint.
 #
 # Requires: chromium (or chromium-browser) on PATH, psql (postgres client)
 # OR access to the markup-postgres container via docker exec, write access
-# to /data/screenshots.
+# to /data/screenshots, python3 (for PNG-header dimension extraction).
 
 set -euo pipefail
 
@@ -92,7 +106,14 @@ fi
 
 SCREENSHOTS_DIR="${SCREENSHOTS_DIR:-/data/screenshots}"
 PG_CONTAINER="${PG_CONTAINER:-markup-postgres}"
-OUT_FILE="$SCREENSHOTS_DIR/$SCREENSHOT_ID.png"
+# Each recapture writes the new PNG to a fresh UUID-based path
+# (NOT <screenshotId>.png) so the old file stays on disk and the
+# ScreenshotVersion row's storageKey is unique. The Screenshot's
+# own storageKey is updated to the new UUID so the /image endpoint
+# serves the latest capture; the old PNGs are served only via the
+# /history endpoint, which routes by storageKey per version.
+NEW_VERSION_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
+OUT_FILE="$SCREENSHOTS_DIR/$NEW_VERSION_ID.png"
 
 # Look up the project domain + page path
 read -r DOMAIN PATH_ < <($PSQL -t -A -F'|' \
@@ -124,7 +145,15 @@ if [ ! -s "$OUT_FILE" ]; then
   exit 4
 fi
 
-# Update dimensions in the DB
+# Update dimensions in the DB and bump the storageKey + capturedAt
+# so the Screenshot row points at the new file. The recapture
+# route's exit handler reads the row back and inserts a matching
+# ScreenshotVersion row (the "history" side of the recapture).
+# We also bump capturedAt to NOW() so the /status endpoint's
+# ?since=… check correctly detects the change and the dashboard
+# ScreenshotView's polling loop picks up the new dims on its next
+# tick. The history endpoint orders by capturedAt desc, so the
+# newest version surfaces at the top of the panel.
 W=$(python3 -c "
 import struct
 with open('$OUT_FILE', 'rb') as f:
@@ -139,6 +168,6 @@ with open('$OUT_FILE', 'rb') as f:
 ")
 
 $PSQL -c \
-  "UPDATE \"Screenshot\" SET width = $W, height = $H WHERE id = '$SCREENSHOT_ID'" >/dev/null
+  "UPDATE \"Screenshot\" SET width = $W, height = $H, \"storageKey\" = '$NEW_VERSION_ID.png', \"capturedAt\" = NOW() WHERE id = '$SCREENSHOT_ID'" >/dev/null
 
 echo "OK: $OUT_FILE (${W}x${H})"

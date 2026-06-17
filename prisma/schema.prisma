@@ -55,6 +55,41 @@ model Screenshot {
   height     Int
   capturedAt DateTime @default(now())
   pins       Pin[]
+  // Immutable per-recapture history. Every successful recapture
+  // appends a new ScreenshotVersion row; the Screenshot row is the
+  // "latest pointer" and the ScreenshotVersion rows are the history.
+  // The recapture script writes a new PNG to a UUID-based storageKey
+  // and inserts the matching version row — the Screenshot's own
+  // storageKey is then updated to point at the new file. Old version
+  // rows (and their PNGs) are pruned by scripts/prune-screenshots.sh
+  // at the same 90-day retention as the parent Screenshot.
+  versions   ScreenshotVersion[]
+}
+
+// ScreenshotVersion is the immutable per-recapture record. It carries
+// its own storageKey (a fresh UUID per version, NOT just screenshot.id)
+// so each captured PNG lives at its own path on disk and the
+// ScreenshotVersion row is self-contained. The composite index
+// (screenshotId, capturedAt) backs the /api/screenshots/[id]/history
+// query (last 50 ordered by capturedAt desc) without falling back to
+// a sequential scan even when a screenshot has hundreds of versions.
+//
+// `createdBy` records who triggered the recapture. The current
+// recapture script is a fire-and-forget background child, so the
+// route writes 'system' today; a future in-process recapture that
+// has the operator's userId in hand would write the userId instead
+// so an audit UI could surface "Reviewer X triggered 3 recaptures".
+model ScreenshotVersion {
+  id          String     @id @default(uuid())
+  screenshotId String
+  screenshot   Screenshot @relation(fields: [screenshotId], references: [id], onDelete: Cascade)
+  capturedAt   DateTime   @default(now())
+  width        Int
+  height       Int
+  storageKey   String     @unique
+  createdBy    String
+
+  @@index([screenshotId, capturedAt])
 }
 
 model Pin {
