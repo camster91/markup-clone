@@ -56,6 +56,74 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+// R0.3 closeout (A3): the comment POST route used to only do an `if (!text)`
+// truthy check. That meant text of arbitrary length or with null bytes
+// could reach the DB. Now the route calls validatePinText (the same
+// helper as the pin-create flow), so the comment text gets the same
+// 2000-char cap, trim, and null-byte rejection.
+describe('POST /api/pins/[id]/comments — text validation', () => {
+  it('returns 400 when text is > 2000 chars (one over the cap)', async () => {
+    const res = await POST(
+      new Request(`https://markup.ashbi.ca/api/pins/${PIN_A}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', origin: ORIGIN },
+        body: JSON.stringify({ text: 'a'.repeat(2001) }),
+      }),
+      params(PIN_A)
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/2000/);
+    // The DB must NOT be hit on bad input.
+    expect(mocks.comment.create).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 when text contains a null byte (defense in depth)', async () => {
+    const res = await POST(
+      new Request(`https://markup.ashbi.ca/api/pins/${PIN_A}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', origin: ORIGIN },
+        body: JSON.stringify({ text: 'with\u0000null' }),
+      }),
+      params(PIN_A)
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/null/);
+    expect(mocks.comment.create).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 when text is empty string (after trim → empty)', async () => {
+    // Replaces the old "if (!text)" check with a real length check.
+    // Empty string fails the same way as whitespace-only input.
+    const res = await POST(
+      new Request(`https://markup.ashbi.ca/api/pins/${PIN_A}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', origin: ORIGIN },
+        body: JSON.stringify({ text: '   ' }),
+      }),
+      params(PIN_A)
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/empty/);
+    expect(mocks.comment.create).not.toHaveBeenCalled();
+  });
+
+  it('returns 201 with a valid text (sanity — happy path still works)', async () => {
+    const res = await POST(
+      new Request(`https://markup.ashbi.ca/api/pins/${PIN_A}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', origin: ORIGIN },
+        body: JSON.stringify({ text: 'looks good' }),
+      }),
+      params(PIN_A)
+    );
+    expect(res.status).toBe(201);
+    expect(mocks.comment.create).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('POST /api/pins/[id]/comments — rate limit', () => {
   it('returns 429 on the 31st call from the same origin on the same pin', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: false });

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardOrigin } from '@/lib/auth';
 import { consume } from '@/lib/rate-limit';
+import { validatePinText } from '@/lib/validation';
 
 export async function POST(
   req: Request,
@@ -28,7 +29,16 @@ export async function POST(
   try {
     const { id } = await params;
     const { text, author, authorRole } = await req.json();
-    if (!text) {
+    // Use the same validator as the pin-create flow (R0.3) so the comment
+    // text gets the same length cap, trim, and null-byte rejection. A
+    // missing/empty/whitespace-only text is rejected here (it would
+    // produce a 500 from the prisma NOT NULL constraint otherwise).
+    if (text !== undefined) {
+      const textRes = validatePinText(text);
+      if (!textRes.ok) {
+        return NextResponse.json({ error: textRes.error }, { status: 400 });
+      }
+    } else {
       return NextResponse.json({ error: 'text required' }, { status: 400 });
     }
     const comment = await prisma.comment.create({

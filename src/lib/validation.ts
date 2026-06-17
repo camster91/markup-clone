@@ -90,6 +90,18 @@ export function validateScreenshotId(id: string): ValidationResult<string> {
   return { ok: true, value: id };
 }
 
+/** Validates the Pin ID (a UUID). The Pin model is `@default(uuid())` per
+ *  the Prisma schema, so the same UUID regex as `validateScreenshotId`
+ *  applies. Rejecting early avoids hitting the DB with a parse-error
+ *  path that would otherwise surface as a generic 500. */
+export function validatePinId(id: unknown): ValidationResult<string> {
+  if (typeof id !== 'string') return { ok: false, error: 'pinId must be a string' };
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    return { ok: false, error: 'pinId must be a UUID' };
+  }
+  return { ok: true, value: id };
+}
+
 /** Validates a project name (used in the dashboard lifecycle).
  *
  *  Unicode / bidi-override policy: ACCEPT-AND-RENDER-SAFELY.

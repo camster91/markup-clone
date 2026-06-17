@@ -230,4 +230,38 @@ describe('PATCH /api/projects/[id]', () => {
       expect(apiKeyInLog).toBe('rotated');
     }
   });
+
+  // R0.3 closeout (A1): the inline 3-clause name check was replaced with
+  // validateProjectName. The validator enforces the same length cap (200)
+  // and string type, but ALSO rejects null bytes — the inline check
+  // did not, so a payload like { name: "x\u0000y" } would have hit the
+  // DB and produced a 500. These tests pin the new behavior.
+
+  it('rejects name=null with 400', async () => {
+    const res = await PATCH(reqWithBody('PATCH', { name: null }, { origin: 'https://markup.ashbi.ca' }),
+      { params: Promise.resolve({ id: 'proj-1' }) });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/string/);
+    // The DB must NOT be hit on bad input.
+    expect(mocks.project.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects name with a null byte with 400 (defense in depth)', async () => {
+    const res = await PATCH(reqWithBody('PATCH', { name: 'x\u0000y' }, { origin: 'https://markup.ashbi.ca' }),
+      { params: Promise.resolve({ id: 'proj-1' }) });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/null/);
+    expect(mocks.project.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects name that is 201 chars (one over the cap) with 400', async () => {
+    const res = await PATCH(reqWithBody('PATCH', { name: 'a'.repeat(201) }, { origin: 'https://markup.ashbi.ca' }),
+      { params: Promise.resolve({ id: 'proj-1' }) });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/200/);
+    expect(mocks.project.update).not.toHaveBeenCalled();
+  });
 });

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardOrigin } from '@/lib/auth';
 import { audit } from '@/lib/audit';
+import { validateSubscriberEmail } from '@/lib/validation';
 
 export async function DELETE(
   req: Request,
@@ -12,22 +13,30 @@ export async function DELETE(
 
   try {
     const { id: projectId, email } = await params;
-    // Reject control characters before they reach the DB / audit log.
-    // Same rationale as the POST route: the path segment is decoded by
-    // Next, so CR/LF could otherwise be a header-injection vector if
-    // anything later renders the audit log in an email/Slack context.
-    if (/[\r\n]/.test(email)) {
-      return NextResponse.json({ error: 'email must not contain control characters' }, { status: 400 });
+    // Normalize the email the same way the POST /subscribers route does
+    // (R0.3 wired validateSubscriberEmail there, which lowercases on the
+    // way in). Without this, a dashboard DELETE for `Alice@Example.com`
+    // would not match the row that was stored as `alice@example.com` —
+    // the operator would see { deleted: true, count: 0 } and the
+    // subscriber would keep getting emails. Reject obviously-bad input
+    // with a 400; the lowercased form is what we use in the WHERE
+    // clause and the audit log.
+    const emailRes = validateSubscriberEmail(email);
+    if (!emailRes.ok) {
+      return NextResponse.json({ error: emailRes.error }, { status: 400 });
     }
+    const emailNormalized = emailRes.value;
     // deleteMany is idempotent: it returns { count: 0 } if no row matched.
     // The response shape stays { deleted: true } either way so the client
     // can treat the call as fire-and-forget. Tests verify both paths.
-    const { count } = await prisma.subscriber.deleteMany({ where: { projectId, email } });
+    const { count } = await prisma.subscriber.deleteMany({
+      where: { projectId, email: emailNormalized },
+    });
     audit({
       actor: projectId,
       action: 'subscriber.remove',
       target: projectId,
-      metadata: { email, count },
+      metadata: { email: emailNormalized, requested: email, count },
     });
     return NextResponse.json({ deleted: true, count });
   } catch (error) {

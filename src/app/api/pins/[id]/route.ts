@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { requireDashboardOrigin } from '@/lib/auth';
 import { audit } from '@/lib/audit';
 import { unlink } from 'fs/promises';
+import { validatePinId } from '@/lib/validation';
 
 const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || '/data/screenshots';
 
@@ -15,6 +16,10 @@ export async function PATCH(
 
   try {
     const { id } = await params;
+    const idRes = validatePinId(id);
+    if (!idRes.ok) {
+      return NextResponse.json({ error: idRes.error }, { status: 400 });
+    }
     const { status } = await req.json();
     if (status !== 'OPEN' && status !== 'RESOLVED') {
       return NextResponse.json({ error: 'status must be OPEN or RESOLVED' }, { status: 400 });
@@ -39,6 +44,10 @@ export async function DELETE(
 
   try {
     const { id } = await params;
+    const idRes = validatePinId(id);
+    if (!idRes.ok) {
+      return NextResponse.json({ error: idRes.error }, { status: 400 });
+    }
 
     // Find the pin and its screenshot
     const pin = await prisma.pin.findUnique({

@@ -7,6 +7,7 @@ import {
   validatePercent,
   sanitizeText,
   validateScreenshotId,
+  validatePinId,
   validateProjectName,
   validateProjectDomain,
   validateEmail,
@@ -164,6 +165,50 @@ describe('validateScreenshotId', () => {
 
   it('rejects non-string', () => {
     expect(validateScreenshotId(42 as unknown as string).ok).toBe(false);
+  });
+});
+
+describe('validatePinId', () => {
+  // Pin model is @default(uuid()) per the Prisma schema, so the same
+  // UUID shape as validateScreenshotId applies. The error message uses
+  // "pinId" so the route's 400 response names the offending field.
+
+  it('accepts a valid UUID', () => {
+    const r = validatePinId('9cf4c12d-cdfc-4ec5-a361-446ef3d6ca19');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value).toBe('9cf4c12d-cdfc-4ec5-a361-446ef3d6ca19');
+  });
+
+  it('accepts uppercase hex', () => {
+    expect(validatePinId('9CF4C12D-CDFC-4EC5-A361-446EF3D6CA19').ok).toBe(true);
+  });
+
+  it('rejects a UUID without dashes', () => {
+    const r = validatePinId('9cf4c12dcdfc4ec5a361446ef3d6ca19');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/pinId/);
+  });
+
+  it('rejects path traversal (a common attack)', () => {
+    const r = validatePinId('../../../etc/passwd');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/pinId/);
+  });
+
+  it('rejects a string with too-short segments', () => {
+    expect(validatePinId('9cf4c12d-cdfc-4ec5-a361').ok).toBe(false);
+  });
+
+  it('rejects non-string', () => {
+    // Accept the wider `unknown` type at the runtime boundary so the
+    // route can pass whatever Next decoded from the path segment.
+    expect(validatePinId(42 as unknown as string).ok).toBe(false);
+    expect(validatePinId(null as unknown as string).ok).toBe(false);
+    expect(validatePinId(undefined as unknown as string).ok).toBe(false);
+  });
+
+  it('rejects the empty string', () => {
+    expect(validatePinId('').ok).toBe(false);
   });
 });
 

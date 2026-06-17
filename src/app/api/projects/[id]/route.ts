@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { requireDashboardOrigin, generateApiKey } from '@/lib/auth';
 import { audit } from '@/lib/audit';
 import { unlink } from 'fs/promises';
+import { validateProjectName } from '@/lib/validation';
 
 const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || '/data/screenshots';
 
@@ -74,8 +75,11 @@ export async function PATCH(
 
     // Validate inputs. Reject empty name, non-string, or ridiculously long.
     // Without these, prisma throws an opaque error that the user can't act on.
-    if (name !== undefined && (typeof name !== 'string' || name.length === 0 || name.length > 200)) {
-      return NextResponse.json({ error: 'name must be a non-empty string ≤200 chars' }, { status: 400 });
+    if (name !== undefined) {
+      const nameRes = validateProjectName(name);
+      if (!nameRes.ok) {
+        return NextResponse.json({ error: nameRes.error }, { status: 400 });
+      }
     }
     if (regenerateKey !== undefined && typeof regenerateKey !== 'boolean') {
       return NextResponse.json({ error: 'regenerateKey must be a boolean' }, { status: 400 });
