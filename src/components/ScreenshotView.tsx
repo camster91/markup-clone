@@ -5,6 +5,7 @@ import PinThread from './PinThread';
 import type { Pin, FeedbackComment, ScreenshotWithPins } from '@/lib/types';
 import { useRecaptureStatus } from '@/lib/hooks/useRecaptureStatus';
 import { usePresence, colorForUserId, shortLabelForUserId } from '@/lib/hooks/usePresence';
+import { useLiveEvents } from '@/lib/hooks/useLiveEvents';
 
 export default function ScreenshotView({
   screenshot,
@@ -155,6 +156,52 @@ export default function ScreenshotView({
     setPins(prev => prev.map(p => p.id === pinId ? { ...p, comments: [...p.comments, comment] } : p));
   };
 
+  // === Live updates (SSE) =================================================
+  // The hook subscribes to /api/events?projectId=X&screenshotId=Y on
+  // mount and re-subscribes if either prop changes. We only act on
+  // `new-comment` events whose pinId matches a pin we know about —
+  // the dispatch is additive (the comment is appended to the local
+  // pin state, which is what the active PinThread renders from), so
+  // a duplicate from a slow POST roundtrip and a duplicate from the
+  // SSE event would both show up. The dedupe key is the comment id
+  // (Prisma's UUID); the PinThread is idempotent on id-keyed children.
+  //
+  // We deliberately do NOT replace the existing recapture poll loop
+  // with a `recapture-complete` event listener here — the SSE event
+  // is the "fast path" but the polling fallback (which the rest of
+  // the dashboard depends on) must remain the source of truth. The
+  // useRecaptureStatus hook will pick up the new PNG via either path.
+  useLiveEvents({
+    projectId: projectId ?? null,
+    screenshotId: projectId ? screenshot.id : null,
+    onEvent: (event) => {
+      if (event.type === 'new-comment') {
+        // The payload shape is documented in src/lib/events.ts; the
+        // server picks a safe projection (no apiKey, no full pin row).
+        const payload = event.payload as {
+          pinId: string;
+          comment: FeedbackComment;
+        };
+        // The active pin is the one the reviewer is currently
+        // looking at. If the SSE event is for a different pin (a
+        // collaborator commenting on a sibling pin), we still
+        // optimistically append — the PinThread only opens for
+        // the active pin, but the next time it opens, the
+        // comment will be there. (This also keeps the pin's
+        // comment-count display in sync.)
+        if (payload.pinId && payload.comment && payload.comment.id) {
+          setPins(prev => prev.map(p =>
+            p.id === payload.pinId
+              ? (p.comments.some(c => c.id === payload.comment.id)
+                  ? p // dedupe: comment already in local state
+                  : { ...p, comments: [...p.comments, payload.comment] })
+              : p
+          ));
+        }
+      }
+    },
+  });
+
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden bg-white">
       <div className="bg-gray-50 px-4 py-2 text-xs text-gray-500 flex items-center justify-between border-b border-gray-200">
@@ -253,6 +300,7 @@ export default function ScreenshotView({
               return (
                 <PinThread
                   pin={pin}
+                  projectId={projectId ?? null}
                   onClose={() => setActivePinId(null)}
                   onStatusChange={handlePinStatusChange}
                   onCommentAdded={handleCommentAdded}

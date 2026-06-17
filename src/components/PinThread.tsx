@@ -2,16 +2,27 @@
 
 import { useState } from 'react';
 import type { FeedbackComment } from '@/lib/types';
+import { useLiveEvents } from '@/lib/hooks/useLiveEvents';
 
 type Pin = { id: string; xPercent: number; yPercent: number; status: string; elementXPath?: string | null; elementHTML?: string | null; createdAt: string; comments: FeedbackComment[] };
 
 export default function PinThread({
   pin,
+  projectId,
   onClose,
   onStatusChange,
   onCommentAdded,
 }: {
   pin: Pin;
+  /**
+   * The project this pin belongs to. Used to scope the SSE subscription
+   * so a new-comment event for THIS pin triggers an optimistic append.
+   * Optional — when omitted (e.g. a unit test renders the thread in
+   * isolation), the SSE hook short-circuits and the thread falls back to
+   * the props-driven comment list (the ScreenshotView's own useLiveEvents
+   * call is the primary update path).
+   */
+  projectId?: string | null;
   onClose: () => void;
   onStatusChange: (pinId: string, status: 'OPEN' | 'RESOLVED') => Promise<void>;
   onCommentAdded: (pinId: string, comment: FeedbackComment) => void;
@@ -19,6 +30,41 @@ export default function PinThread({
   const [reply, setReply] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [author, setAuthor] = useState('Reviewer');
+
+  // === Live updates (SSE) =================================================
+  // Subscribe to the project SSE stream and optimistically append any
+  // new-comment event whose pinId matches the pin we're rendering.
+  // The dispatch goes through onCommentAdded (the same callback the
+  // POST handler uses) so the parent ScreenshotView owns the source
+  // of truth for the comment list. The ScreenshotView's own
+  // useLiveEvents also subscribes, so this is "belt and suspenders"
+  // — both layers dedupe on comment id, and a slow SSE event
+  // combined with a slow POST roundtrip can never double-append.
+  //
+  // Note: we filter on `pin.id` here, NOT on the screenshot id,
+  // because the route's emit() carries the pinId, not the
+  // screenshotId, in the payload. Multiple PinThread instances can
+  // be open (one per pin) but only the one whose `pin.id` matches
+  // the event will fire onCommentAdded.
+  useLiveEvents({
+    projectId: projectId ?? null,
+    onEvent: (event) => {
+      if (event.type === 'new-comment') {
+        const payload = event.payload as {
+          pinId: string;
+          comment: FeedbackComment;
+        };
+        if (payload.pinId === pin.id && payload.comment && payload.comment.id) {
+          // Skip if the comment is already in the local list (a
+          // slow POST + slow SSE race). The ScreenshotView's
+          // setPins dedupes the same way, so a duplicate never
+          // reaches the user.
+          if (pin.comments.some(c => c.id === payload.comment.id)) return;
+          onCommentAdded(pin.id, payload.comment);
+        }
+      }
+    },
+  });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

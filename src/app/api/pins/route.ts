@@ -13,6 +13,7 @@ import {
   sanitizeText,
 } from '@/lib/validation';
 import { consume } from '@/lib/rate-limit';
+import { emit } from '@/lib/events';
 
 const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || '/data/screenshots';
 const MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024; // 8MB
@@ -188,6 +189,35 @@ export async function POST(req: Request) {
         })
       )
       .catch((err) => console.error('[email] subscriber lookup error:', err));
+
+    // Live update: broadcast a new-pin event to the SSE channel for
+    // any dashboard open on this project. The payload is a SAFE
+    // projection — no apiKey, no full project row, no raw text blob
+    // that could include XSS payloads the dashboard would then have
+    // to re-render. The dashboard's ScreenshotView hook decides
+    // whether to optimistically insert the pin (it checks the
+    // screenshotId against the currently-viewed screenshot).
+    //
+    // emit() is synchronous and fire-and-forget — a slow or broken
+    // SSE client must not block the response, and emit() catches
+    // subscriber throws internally.
+    emit({
+      type: 'new-pin',
+      projectId: pid,
+      payload: {
+        pin: {
+          id: result.pin.id,
+          screenshotId: result.screenshot.id,
+          xPercent: result.pin.xPercent,
+          yPercent: result.pin.yPercent,
+          status: result.pin.status,
+          authorName: result.pin.authorName,
+          createdAt: result.pin.createdAt instanceof Date
+            ? result.pin.createdAt.toISOString()
+            : String(result.pin.createdAt),
+        },
+      },
+    });
 
     return NextResponse.json({ success: true, data: result }, { status: 201 });
   } catch (error) {

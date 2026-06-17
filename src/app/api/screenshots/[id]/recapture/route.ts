@@ -5,6 +5,7 @@ import { validateScreenshotId } from '@/lib/validation';
 import { spawn } from 'child_process';
 import { consume } from '@/lib/rate-limit';
 import { audit } from '@/lib/audit';
+import { emit } from '@/lib/events';
 
 // RECAPTURE_SCRIPT lets the operator override the script path at
 // runtime (e.g. to mount scripts at a different location in a
@@ -99,6 +100,52 @@ export async function POST(
           target: id,
           metadata: { status: 'ok', pid: child.pid },
         });
+        // Live update: broadcast a recapture-complete event so any
+        // dashboard open on this project can update its
+        // ScreenshotView image without polling for 90s. We emit ONLY
+        // on a successful exit (code 0) — the script's final UPDATE
+        // statement ran successfully, so the Screenshot row's
+        // width/height are already up-to-date in the DB and the new
+        // PNG is on disk. emit() is synchronous + best-effort; a
+        // dead SSE client can't fail the recapture.
+        //
+        // We re-read the screenshot row to get the actual updated
+        // width/height/capturedAt — the route already has a Prisma
+        // connection open, and the dashboard's useRecaptureStatus
+        // hook compares against its initial dims to decide whether
+        // the image actually changed. If the recapture produced the
+        // exact same dims, the SSE update is a no-op visually but
+        // still useful: it tells the hook it can stop polling.
+        prisma.screenshot
+          .findUnique({
+            where: { id },
+            select: {
+              width: true,
+              height: true,
+              capturedAt: true,
+              page: { select: { projectId: true } },
+            },
+          })
+          .then((ss) => {
+            if (!ss || !ss.page) return;
+            emit({
+              type: 'recapture-complete',
+              projectId: ss.page.projectId,
+              payload: {
+                screenshotId: id,
+                width: ss.width,
+                height: ss.height,
+                capturedAt: ss.capturedAt.toISOString(),
+              },
+            });
+          })
+          .catch((err) => {
+            // The recapture already succeeded (code === 0). A
+            // failed follow-up read shouldn't be logged at error
+            // level — it just means the SSE live-update path is
+            // unavailable. The polling fallback still works.
+            console.error('[recapture] follow-up read failed for SSE emit:', err);
+          });
         return;
       }
       const message = stderrTail.trim() || `exit ${code}${signal ? ` (signal ${signal})` : ''}`;
