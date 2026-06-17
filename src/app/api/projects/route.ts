@@ -48,10 +48,29 @@ export async function GET(req: Request) {
           },
         },
       },
+      subscribers: true,
     },
     orderBy: { createdAt: 'desc' },
   });
-  return NextResponse.json(projects);
+  // Project has no `include`-able shareToken — it's a top-level
+  // scalar. select it explicitly so the dashboard's ShareToggle can
+  // see whether a token is active. `shareToken` is dashboard-only
+  // (the route is gated by requireDashboardOrigin) so emitting the
+  // raw token here is fine — only a dashboard user can hit this
+  // endpoint, and they need the token to render the share URL.
+  return NextResponse.json(
+    projects.map((p) => ({
+      id: p.id,
+      name: p.name,
+      domain: p.domain,
+      apiKey: p.apiKey,
+      shareToken: p.shareToken,
+      createdAt: p.createdAt,
+      updatedAt: p.updatedAt,
+      pages: p.pages,
+      subscribers: p.subscribers,
+    }))
+  );
 }
 
 export async function POST(req: Request) {

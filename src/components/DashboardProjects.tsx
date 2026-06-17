@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import CopyButton from './CopyButton';
 import ScreenshotView from './ScreenshotView';
-import ProjectSettings from './ProjectSettings';
+import ProjectSettings, { ShareToggle } from './ProjectSettings';
 import ProjectSubscribers from './ProjectSubscribers';
 import PresenceList from './PresenceList';
 import { usePresence } from '@/lib/hooks/usePresence';
@@ -170,6 +170,25 @@ function ProjectCard({
         <span className="text-gray-500">API Key:</span>
         <code className="bg-white px-2 py-1 rounded border border-gray-200 font-mono">{project.apiKey}</code>
         <CopyButton text={project.apiKey} />
+      </div>
+
+      {/* Public share link toggle. Reads the project's current
+          shareToken from the polled project list; on generate/revoke
+          the toggle pings the parent to refresh so the new token
+          (or its absence) shows up in the next poll. The shareUrl
+          is built from the dashboard's origin so a copied link
+          works on the same host the user is currently on. */}
+      <div className="px-6 pt-3 pb-0">
+        <ShareToggle
+          projectId={project.id}
+          hasShareToken={!!project.shareToken}
+          shareUrl={
+            project.shareToken && typeof window !== 'undefined'
+              ? `${window.location.origin}/share/${project.shareToken}`
+              : null
+          }
+          onChange={onProjectUpdated}
+        />
       </div>
 
       <PresenceList myUserId={myUserId} others={others} />

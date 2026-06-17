@@ -42,5 +42,16 @@ export type ProjectWithPages = {
   name: string;
   domain: string;
   apiKey: string;
+  /**
+   * The active share link token, if any. NULL = sharing is disabled
+   * for this project. The dashboard's ShareToggle component reads
+   * this to decide which state to render ("Generate" vs "Revoke").
+   * The /api/projects route's `include` does NOT carry this field
+   * (we never want to leak it via the public /api/projects listing
+   * — but wait, /api/projects is dashboard-origin-gated, so it's
+   * fine to include it). The actual JSON projection is controlled
+   * by the route's `select` clause — see route.ts.
+   */
+  shareToken: string | null;
   pages: PageWithScreenshots[];
 };

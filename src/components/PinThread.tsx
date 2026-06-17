@@ -9,6 +9,7 @@ type Pin = { id: string; xPercent: number; yPercent: number; status: string; ele
 export default function PinThread({
   pin,
   projectId,
+  readOnly = false,
   onClose,
   onStatusChange,
   onCommentAdded,
@@ -23,6 +24,13 @@ export default function PinThread({
    * call is the primary update path).
    */
   projectId?: string | null;
+  /**
+   * Hide the reply form and the open/resolved toggle. Used by the
+   * public /share/[token] view. Existing comments are still rendered
+   * read-only so a share-link viewer can follow the conversation
+   * history — they just can't add to it.
+   */
+  readOnly?: boolean;
   onClose: () => void;
   onStatusChange: (pinId: string, status: 'OPEN' | 'RESOLVED') => Promise<void>;
   onCommentAdded: (pinId: string, comment: FeedbackComment) => void;
@@ -68,6 +76,10 @@ export default function PinThread({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Defense in depth: the form is hidden when readOnly, but if a
+    // future change re-renders it the post must still no-op so a
+    // share-link viewer can't fake a comment.
+    if (readOnly) return;
     if (!reply.trim() || submitting) return;
     setSubmitting(true);
     const res = await fetch(`/api/pins/${pin.id}/comments`, {
@@ -84,6 +96,7 @@ export default function PinThread({
   };
 
   const toggleStatus = () => {
+    if (readOnly) return;
     const next = pin.status === 'OPEN' ? 'RESOLVED' : 'OPEN';
     onStatusChange(pin.id, next);
   };
@@ -121,6 +134,14 @@ export default function PinThread({
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-2">
+        {/* The reply form is dashboard-only. The /share/[token] view
+            shows the conversation history but does not let a
+            share-link viewer add to it. Hiding the whole form (not
+            just disabling it) is what the task asks for — the
+            "read-only" UX should look read-only, not "muted and
+            half-broken". */}
+        {!readOnly && (
+          <>
         <textarea
           value={reply}
           onChange={e => setReply(e.target.value)}
@@ -157,6 +178,8 @@ export default function PinThread({
             </button>
           </div>
         </div>
+          </>
+        )}
       </form>
     </div>
   );

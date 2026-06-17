@@ -11,6 +11,23 @@ export default function ScreenshotView({
   screenshot,
   pagePath,
   projectId,
+  /**
+   * Render the screenshot read-only. When true:
+   *   - The recapture button is hidden (no headless-Chromium cost
+   *     for someone who only has the share link).
+   *   - The PinThread form is disabled (no new comments).
+   *   - Pin status changes (open/resolved) are blocked.
+   *   - The presence/recapture poll loops and SSE subscription are
+   *     still started, but a viewer without a project-scoped
+   *     identity can't trigger any writes — the network is
+   *     non-empty noise. (Could optimize by short-circuiting the
+   *     hooks, but the gain is small for the v1 share link.)
+   *
+   * Used by /share/[token] (the public view) and any future
+   * embed that doesn't want to expose the dashboard's mutation
+   * surface.
+   */
+  readOnly = false,
 }: {
   screenshot: ScreenshotWithPins;
   pagePath: string;
@@ -21,6 +38,7 @@ export default function ScreenshotView({
    * presence hook is skipped and the screenshot renders normally.
    */
   projectId?: string;
+  readOnly?: boolean;
 }) {
   const [activePinId, setActivePinId] = useState<string | null>(null);
   const [pins, setPins] = useState<Pin[]>(screenshot.pins);
@@ -142,6 +160,11 @@ export default function ScreenshotView({
   });
 
   const handlePinStatusChange = async (pinId: string, status: 'OPEN' | 'RESOLVED') => {
+    // Share-link viewers (readOnly) cannot change pin status — the
+    // PATCH /api/pins/[id] route requires dashboard origin, but we
+    // also short-circuit here so the UI is internally consistent
+    // (no optimistic state update that would silently fail).
+    if (readOnly) return;
     const res = await fetch(`/api/pins/${pinId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -153,6 +176,11 @@ export default function ScreenshotView({
   };
 
   const handleCommentAdded = (pinId: string, comment: FeedbackComment) => {
+    // The PinThread won't call this in readOnly mode (the form is
+    // hidden), but we still no-op here for defense in depth: a
+    // future change that wires the form back in shouldn't be able to
+    // smuggle state mutations through.
+    if (readOnly) return;
     setPins(prev => prev.map(p => p.id === pinId ? { ...p, comments: [...p.comments, comment] } : p));
   };
 
@@ -215,19 +243,27 @@ export default function ScreenshotView({
           <span className="text-gray-400">
             {pins.filter(p => p.status === 'RESOLVED').length} resolved
           </span>
-          <button
-            type="button"
-            onClick={handleRecapture}
-            disabled={recaptureStatus === 'starting' || recaptureStatus === 'running'}
-            className="text-xs px-2 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
-            title={recaptureError || 'Server-side recapture via headless Chromium'}
-          >
-            {recaptureStatus === 'idle' && 'Recapture'}
-            {recaptureStatus === 'starting' && 'Starting…'}
-            {recaptureStatus === 'running' && (isStale ? 'Still rendering…' : 'Capturing…')}
-            {recaptureStatus === 'done' && '✓ Refreshed'}
-            {recaptureStatus === 'error' && '✗ Failed'}
-          </button>
+          {/* The recapture button shells out to headless Chromium
+              and is dashboard-only. Hidden on the public /share/[token]
+              view (readOnly) so a share-link viewer can't trigger a
+              server-side render of arbitrary URLs. The pin-status
+              toggle is also gated — see the PinThread and
+              handlePinStatusChange below. */}
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={handleRecapture}
+              disabled={recaptureStatus === 'starting' || recaptureStatus === 'running'}
+              className="text-xs px-2 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              title={recaptureError || 'Server-side recapture via headless Chromium'}
+            >
+              {recaptureStatus === 'idle' && 'Recapture'}
+              {recaptureStatus === 'starting' && 'Starting…'}
+              {recaptureStatus === 'running' && (isStale ? 'Still rendering…' : 'Capturing…')}
+              {recaptureStatus === 'done' && '✓ Refreshed'}
+              {recaptureStatus === 'error' && '✗ Failed'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -301,6 +337,7 @@ export default function ScreenshotView({
                 <PinThread
                   pin={pin}
                   projectId={projectId ?? null}
+                  readOnly={readOnly}
                   onClose={() => setActivePinId(null)}
                   onStatusChange={handlePinStatusChange}
                   onCommentAdded={handleCommentAdded}

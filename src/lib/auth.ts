@@ -65,3 +65,17 @@ export async function requireProjectKey(req: Request, projectId: string): Promis
 export function generateApiKey(): string {
   return 'mk_' + require('crypto').randomBytes(20).toString('hex');
 }
+
+/**
+ * 32-byte random token, base64url-encoded (no padding).
+ *
+ * Used for the public /share/[token] view. base64url (not standard base64)
+ * keeps the token URL-safe without further escaping. 32 bytes = 256 bits of
+ * entropy, which is the same security level we use for the apiKey
+ * (40 hex chars = 160 bits, so this is actually stronger). The unique
+ * constraint on Project.shareToken backs a uniqueness assumption that holds
+ * with 1 - 2^-256 collision probability per issuance.
+ */
+export function generateShareToken(): string {
+  return require('crypto').randomBytes(32).toString('base64url');
+}

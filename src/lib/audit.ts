@@ -23,7 +23,8 @@ import { prisma } from './prisma';
 export type AuditAction =
   | 'project.create' | 'project.delete' | 'project.update'
   | 'pin.create' | 'pin.delete' | 'screenshot.recapture'
-  | 'subscriber.add' | 'subscriber.remove';
+  | 'subscriber.add' | 'subscriber.remove'
+  | 'project.share.create' | 'project.share.revoke' | 'share.view';
 
 export interface AuditEntry {
   actor: string;
