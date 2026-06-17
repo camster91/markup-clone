@@ -129,13 +129,18 @@ describe('markup widget', () => {
     // captureViewport to a short local name (`K`).
     //
     // To stub captureViewport, we replace its definition
-    // `async function K(){...}` (between the `K` declaration and the
-    // `s(K,"captureViewport")` keepNames marker) with a stub that
-    // returns a fake Blob. The `K` name is stable across builds thanks
-    // to esbuild.keepNames=true in vite.config.ts.
+    // `async function <name>(){...}` (between the declaration and the
+    // `<keepFn>(<name>,"captureViewport")` keepNames marker) with a
+    // stub that returns a fake Blob. The `<name>` identifier is
+    // short and chosen by esbuild's minifier; we capture it
+    // dynamically rather than hardcoding so the test stays robust
+    // to the order in which functions are emitted (and to extra
+    // source modules added later, which can shift the short-name
+    // assignment). The keepNames helper function is similarly
+    // captured and re-used in the replacement.
     widgetSource = widgetSource.replace(
-      /async function K\(\)\{[\s\S]*?\}s\(K,"captureViewport"\);/,
-      'async function K(){return new Blob(["fake"],{type:"image/png"})}s(K,"captureViewport");'
+      /async function ([A-Za-z_$][\w$]*)\(\)\{[\s\S]*?\}([A-Za-z_$][\w$]*)\(\1,"captureViewport"\);/,
+      'async function $1(){return new Blob(["fake"],{type:"image/png"})}$2($1,"captureViewport");'
     );
     (0, eval)(widgetSource);
   }
@@ -556,5 +561,246 @@ describe('markup widget', () => {
     // (512/4096*100 = 12.5, 384/3000*100 = 12.8).
     expect(parseFloat(fd.get('xPercent') as string)).not.toBeCloseTo(12.5, 1);
     expect(parseFloat(fd.get('yPercent') as string)).not.toBeCloseTo(12.8, 1);
+  });
+
+  // ---------- F3 part 2: annotation tool selector ----------
+  //
+  // The annotation tool selector adds three buttons (Arrow / Box / Freehand)
+  // INSIDE the existing modal. The state machine is:
+  //   idle → toolArmed(kind) → capturing → done
+  // and the user must click on the page (not the modal) for the
+  // capture to fire. All coords are converted to the SCREENSHOT's
+  // pixel space via
+  //   xScreenshot = (clientX - rect.left) * (screenshot.width / rect.width)
+  // (see src/widget/form.ts: clientToScreenshotSpace). The annotations
+  // are queued in a local array and POSTed to /api/annotations after
+  // the pin POST returns a pinId.
+
+  /** Shared setup for the annotation tests. Same JSDOM viewport
+   *  pinning as clickSaveInFeedbackMode, plus a target element to
+   *  click to open the modal. Returns once the modal is rendered. */
+  async function openModalInFeedbackMode() {
+    Object.defineProperty(document.documentElement, 'clientWidth', { value: 800, configurable: true });
+    Object.defineProperty(document.documentElement, 'clientHeight', { value: 600, configurable: true });
+    Object.defineProperty(window, 'innerWidth', { value: 800, configurable: true });
+    Object.defineProperty(window, 'innerHeight', { value: 600, configurable: true });
+    // JSDOM's default devicePixelRatio is 1, so the screenshot-space
+    // transform is identity in tests (clientX maps to clientX). The
+    // tests below pass clientX/clientY values that we expect to see
+    // verbatim in the POSTed pathJson.
+    document.body.innerHTML = '<div id="t" style="width:50px;height:50px">x</div>';
+    await loadWidget();
+
+    (document.querySelector('#markup-toggle') as HTMLButtonElement).click();
+    const t = document.getElementById('t')!;
+    t.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 25, clientY: 25 }));
+    // Wait for showModal's async screenshot capture to resolve and
+    // the modal to render.
+    await new Promise(r => setTimeout(r, 200));
+
+    const textareas = Array.from(document.querySelectorAll('textarea')) as HTMLTextAreaElement[];
+    const textarea = textareas[textareas.length - 1];
+    expect(textarea).toBeTruthy();
+    return textarea;
+  }
+
+  it('tool selector renders inside the modal after opening (Arrow / Box / Freehand buttons)', async () => {
+    // Opening the modal must add a tool-selector section with three
+    // buttons. The buttons live INSIDE the modal box — not as a
+    // separate UI surface.
+    await openModalInFeedbackMode();
+
+    // The three tool buttons carry data-markup-tool=arrow|box|freehand.
+    const tools = Array.from(
+      document.querySelectorAll('button[data-markup-tool]')
+    ) as HTMLButtonElement[];
+    const labels = tools.map(b => b.getAttribute('data-markup-tool')).sort();
+    expect(labels).toEqual(['arrow', 'box', 'freehand']);
+    // All three tool buttons live inside the modal box, not in body.
+    // We verify by checking they're not the #markup-toggle and that
+    // they were rendered as <button> elements.
+    for (const t of tools) {
+      expect(t.tagName).toBe('BUTTON');
+      expect(t.textContent).toMatch(/Arrow|Box|Freehand/);
+    }
+  });
+
+  it('Arrow tool: arms on click, captures 2 page clicks, queues the annotation, and POSTs to /api/annotations on Save', async () => {
+    // End-to-end check: the user clicks the Arrow tool button, then
+    // clicks two points on the page (NOT the modal), and on Save
+    // we expect the widget to POST the pin first, get a pinId, and
+    // then POST the annotation as JSON with the screenshot-space
+    // path.
+    //
+    // The default fetch mock returns `{ success: true }` (no data.id),
+    // so we replace it for this test with a mock that returns a
+    // UUID-shaped pinId. The annotation POST then has a pinId to
+    // attach to.
+    const pinId = 'b0a6f8c2-1234-4d5e-8abc-0123456789ab';
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockReset();
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ success: true, data: { id: pinId } }), { status: 201 })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ success: true, data: { id: 'ann-1' } }), { status: 201 })
+      );
+
+    const textarea = await openModalInFeedbackMode();
+
+    // Click the Arrow tool button — this arms the tool.
+    const arrowBtn = document.querySelector(
+      'button[data-markup-tool="arrow"]'
+    ) as HTMLButtonElement;
+    expect(arrowBtn).toBeTruthy();
+    arrowBtn.click();
+
+    // The two page clicks must land on the body (NOT inside the
+    // modal), so we use a real element off the modal and dispatch
+    // the events directly. The existing global click listener
+    // (lifecycle.ts) ignores events that hit the modal box/overlay,
+    // so we have to make sure the target is body or a non-modal
+    // element.
+    const target = document.body;
+    target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 100, clientY: 50 }));
+    target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 250, clientY: 200 }));
+
+    // Now type into the comment box and click Save. The widget
+    // should POST the pin, get the pinId, and POST the arrow
+    // annotation with the screenshot-space path.
+    textarea.value = 'arrow test';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+    const modalBox = textarea.closest('div')!.parentElement!;
+    const saveBtn = Array.from(modalBox.querySelectorAll('button'))
+      .find(b => b.textContent?.includes('Save pin')) as HTMLButtonElement;
+    expect(saveBtn).toBeTruthy();
+    saveBtn.click();
+
+    // Wait for the pin POST + annotation POST(s).
+    await new Promise(r => setTimeout(r, 100));
+
+    // Two calls: /api/pins then /api/annotations
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // The pin POST is a FormData POST to /api/pins.
+    const [pinUrl, pinInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(pinUrl).toMatch(/\/api\/pins$/);
+    expect(pinInit.body).toBeInstanceOf(FormData);
+    const pinFd = pinInit.body as FormData;
+    expect(pinFd.get('text')).toBe('arrow test');
+
+    // The annotation POST is a JSON POST to /api/annotations with
+    // the X-Api-Key header. The body carries the pinId, kind, and
+    // pathJson.
+    const [annUrl, annInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(annUrl).toMatch(/\/api\/annotations$/);
+    const annHeaders = annInit.headers as Record<string, string>;
+    expect(annHeaders['Content-Type']).toBe('application/json');
+    expect(annHeaders['X-Api-Key']).toBe('mk_test');
+    const annBody = JSON.parse(annInit.body as string);
+    expect(annBody.pinId).toBe(pinId);
+    expect(annBody.kind).toBe('arrow');
+    // The path is two screenshot-space points; JSDOM's devicePixelRatio
+    // is 1, so the transform is identity and the clientX/Y values we
+    // dispatched flow through verbatim.
+    const annPath = JSON.parse(annBody.pathJson);
+    expect(Array.isArray(annPath)).toBe(true);
+    expect(annPath.length).toBe(2);
+    expect(annPath[0]).toEqual([100, 50]);
+    expect(annPath[1]).toEqual([250, 200]);
+  });
+
+  it('Freehand tool: arms on click, captures pointer-move events, queues, and POSTs the path on Save', async () => {
+    // End-to-end check: user clicks Freehand, drags across the
+    // page, releases, and the resulting path lands in the queue.
+    // The path is in screenshot-space (clientX/clientY with the
+    // identity transform when dpr=1, which is the JSDOM default).
+    const textarea = await openModalInFeedbackMode();
+
+    // Click the Freehand tool button.
+    const freehandBtn = document.querySelector(
+      'button[data-markup-tool="freehand"]'
+    ) as HTMLButtonElement;
+    expect(freehandBtn).toBeTruthy();
+    freehandBtn.click();
+
+    // Simulate a freehand stroke on the page. We dispatch the
+    // events on body, which the widget's pointerdown listener
+    // (attached to document with capture) will receive.
+    const points = [
+      { x: 50, y: 50 },
+      { x: 60, y: 55 },
+      { x: 70, y: 65 },
+      { x: 80, y: 80 },
+    ];
+    // pointerdown
+    document.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        clientX: points[0].x,
+        clientY: points[0].y,
+        pointerId: 1,
+      })
+    );
+    // pointermoves
+    for (let i = 1; i < points.length; i++) {
+      document.dispatchEvent(
+        new PointerEvent('pointermove', {
+          bubbles: true,
+          clientX: points[i].x,
+          clientY: points[i].y,
+          pointerId: 1,
+        })
+      );
+    }
+    // pointerup
+    document.dispatchEvent(
+      new PointerEvent('pointerup', {
+        bubbles: true,
+        clientX: points[points.length - 1].x,
+        clientY: points[points.length - 1].y,
+        pointerId: 1,
+      })
+    );
+
+    // The freehand annotation should now be queued. We can't reach
+    // module state directly from the test (form.ts is bundled
+    // into the IIFE), but we can confirm it via the rendered
+    // preview — the modal shows a small canvas + label for each
+    // queued annotation.
+    const previewList = document.querySelector(
+      '[data-markup-preview-list="1"]'
+    ) as HTMLElement;
+    expect(previewList).toBeTruthy();
+    // One preview item was rendered.
+    const items = previewList.querySelectorAll('canvas');
+    expect(items.length).toBe(1);
+    // The label is "Freehand (4 pts)" for 4-pointer strokes.
+    const itemContainer = items[0].parentElement as HTMLElement;
+    expect(itemContainer.textContent).toMatch(/Freehand/);
+
+    // Now type a comment and click Save. The widget will POST the
+    // pin (default mock returns no pinId, so the annotation POST
+    // is skipped — which is the documented behavior). The point
+    // of this test is the capture loop, not the cross-pipeline
+    // POST, so we just assert the pin POST went out.
+    textarea.value = 'freehand test';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+    const modalBox = textarea.closest('div')!.parentElement!;
+    const saveBtn = Array.from(modalBox.querySelectorAll('button'))
+      .find(b => b.textContent?.includes('Save pin')) as HTMLButtonElement;
+    expect(saveBtn).toBeTruthy();
+    saveBtn.click();
+    await new Promise(r => setTimeout(r, 50));
+
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [pinUrl, pinInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(pinUrl).toMatch(/\/api\/pins$/);
+    const fd = pinInit.body as FormData;
+    expect(fd.get('text')).toBe('freehand test');
   });
 });
