@@ -158,13 +158,48 @@ export function usePresence(opts: UsePresenceOptions): UsePresenceResult {
   // on an unmounted component (React warning + memory leak).
   const mountedRef = useRef<boolean>(true);
 
-  // Read the userId from localStorage on mount. Defer the first
-  // heartbeat to AFTER we've read it (avoids the "POST with null
-  // userId" race on first render).
+  // Read the userId from session OR localStorage on mount. Defer
+  // the first heartbeat to AFTER we've resolved it (avoids the
+  // "POST with null userId" race on first render).
+  //
+  // Order of precedence:
+  //   1. /api/auth/me — a real session gives a real User.id
+  //      (F10). This is the preferred path; the dashboard's
+  //      LoginForm is the entry point, so most open tabs have
+  //      a valid session by the time usePresence mounts.
+  //   2. localStorage — the legacy F1 client-generated UUID.
+  //      Kept for the (rare) case where the dashboard renders
+  //      before login completes, or for callers that hit
+  //      /api/presence from a non-dashboard origin (the
+  //      presence route is dashboard-gated, so this should
+  //      never happen in practice — but the fallback is here
+  //      as defense in depth).
+  //   3. A fresh UUID — last resort, so the heartbeat can
+  //      still go out on a tab that never logs in. Treated
+  //      as anonymous (no auth → no real identity).
   useEffect(() => {
     mountedRef.current = true;
-    const id = readOrCreateUserId();
-    if (id) setMyUserId(id);
+    let resolved: string | null = null;
+    (async () => {
+      try {
+        const res = await fetch('/api/auth/me', {
+          credentials: 'same-origin',
+          cache: 'no-store',
+        });
+        if (mountedRef.current && res.ok) {
+          const data = await res.json();
+          if (data?.user?.id) {
+            resolved = data.user.id as string;
+          }
+        }
+      } catch {
+        // Network blip → fall through to localStorage.
+      }
+      if (!resolved) {
+        resolved = readOrCreateUserId();
+      }
+      if (resolved && mountedRef.current) setMyUserId(resolved);
+    })();
     return () => {
       mountedRef.current = false;
     };

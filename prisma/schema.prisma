@@ -150,3 +150,38 @@ model Presence {
   @@unique([userId, projectId])
   @@index([projectId, lastSeenAt])
 }
+
+// User is a dashboard identity. Email + password is the login credential.
+// Roles are "operator" (full dashboard access, can create projects) and
+// "reviewer" (read + comment access). The role is a free-form string
+// (not a Prisma enum) so adding a new role doesn't require a migration;
+// the API layer enforces membership in the closed set.
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  // "operator" | "reviewer". Free-form so we can add a new role in a
+  // single edit without a migration; the API + UI enforce the closed set.
+  role         String   @default("reviewer")
+  createdAt    DateTime @default(now())
+  sessions     Session[]
+}
+
+// Session is a server-issued login token. The browser stores the token
+// in an HttpOnly cookie; the row is the server's source of truth. The
+// `token` is a 64-char base64url random string (32 bytes of entropy);
+// the unique index backs a uniqueness guarantee on every issued token
+// (1 - 2^-256 collision probability per issuance). The 7-day expiry
+// matches the cookie's maxAge — a session row is the same lifetime as
+// the cookie that holds it.
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}

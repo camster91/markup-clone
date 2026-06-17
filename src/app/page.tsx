@@ -1,6 +1,7 @@
 import NewProjectForm from '@/components/NewProjectForm';
 import WidgetSnippet from '@/components/WidgetSnippet';
 import DashboardProjects from '@/components/DashboardProjects';
+import AuthGate from '@/components/AuthGate';
 import { prisma } from '@/lib/prisma';
 
 export const dynamic = 'force-dynamic';
@@ -52,6 +53,8 @@ export default async function Dashboard() {
         </header>
 
         <NewProjectForm />
+
+        <AuthGate />
 
         <DashboardProjects />
       </div>

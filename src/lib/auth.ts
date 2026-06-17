@@ -1,7 +1,18 @@
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 import { prisma } from './prisma';
 import { timingSafeEqual } from 'crypto';
 import { parseHost } from './origin';
+
+export const SESSION_COOKIE = 'markup.session';
+// 7 days — matches the Session row's expiresAt (set on issuance).
+// 7d = 7 * 24 * 60 * 60 = 604800s.
+export const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
+// "operator" | "reviewer" — closed set, enforced at the API + UI
+// layer. Stored as a free-form string in the DB so we can add a new
+// role in a single edit without a migration.
+export const ROLES = ['operator', 'reviewer'] as const;
+export type Role = (typeof ROLES)[number];
 
 function getDashboardHost(): string {
   // parseHost handles both bare-hostname and full-URL forms of the env
@@ -78,4 +89,62 @@ export function generateApiKey(): string {
  */
 export function generateShareToken(): string {
   return require('crypto').randomBytes(32).toString('base64url');
+}
+
+/**
+ * Resolve the current user from the session cookie, if any.
+ *
+ * Reads the `markup.session` cookie, looks up the matching Session
+ * row, and returns the associated User. Returns null when:
+ *   - the cookie is missing or unparseable
+ *   - the cookie's token does not match any row (logged out / cleared)
+ *   - the session has expired (expiresAt < now)
+ *
+ * Used by:
+ *   - /api/auth/me (returns the user, or 401)
+ *   - /api/auth/logout (clears the session row)
+ *   - F10+ dashboard routes that need a real user id (presence,
+ *     audit, project ownership, etc.) — they'll stack this on top
+ *     of the existing requireDashboardOrigin gate.
+ *
+ * Not behind requireDashboardOrigin on purpose: the login route
+ * (POST /api/auth/login) needs to set a session for a brand-new
+ * caller who may not yet be on the dashboard origin, and the logout
+ * route is idempotent (clearing a missing session is a no-op).
+ */
+export interface SessionUser {
+  id: string;
+  email: string;
+  role: string;
+}
+
+export async function requireAuth(): Promise<SessionUser | null> {
+  // `cookies()` is async in Next.js 15+; await it. If the read itself
+  // throws (e.g. outside a request scope) we treat the same as "no
+  // session" — the caller decides whether to surface a 401 or fall
+  // back to a dashboard-origin gate.
+  let token: string | undefined;
+  try {
+    const store = await cookies();
+    token = store.get(SESSION_COOKIE)?.value;
+  } catch {
+    return null;
+  }
+  if (!token) return null;
+
+  // Lookup + expiry check in a single query. Prisma's `findUnique` on
+  // a unique column is O(1) on the index, so this is fast on the
+  // hot path. The `include` pulls the user in the same round-trip
+  // (no N+1).
+  const row = await prisma.session.findUnique({
+    where: { token },
+    include: { user: { select: { id: true, email: true, role: true } } },
+  });
+  if (!row) return null;
+  if (row.expiresAt.getTime() <= Date.now()) return null;
+  return {
+    id: row.user.id,
+    email: row.user.email,
+    role: row.user.role,
+  };
 }
