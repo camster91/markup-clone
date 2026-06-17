@@ -101,11 +101,17 @@ export async function POST(req: Request) {
   let cursorX: number | null = null;
   let cursorY: number | null = null;
   if (body.cursorX !== undefined && body.cursorX !== null) {
+    if (typeof body.cursorX !== 'number') {
+      return NextResponse.json({ error: 'cursorX must be a number' }, { status: 400 });
+    }
     const xRes = validatePercent(body.cursorX, 'cursorX');
     if (!xRes.ok) return NextResponse.json({ error: xRes.error }, { status: 400 });
     cursorX = xRes.value;
   }
   if (body.cursorY !== undefined && body.cursorY !== null) {
+    if (typeof body.cursorY !== 'number') {
+      return NextResponse.json({ error: 'cursorY must be a number' }, { status: 400 });
+    }
     const yRes = validatePercent(body.cursorY, 'cursorY');
     if (!yRes.ok) return NextResponse.json({ error: yRes.error }, { status: 400 });
     cursorY = yRes.value;

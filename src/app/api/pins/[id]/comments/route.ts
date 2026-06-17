@@ -61,9 +61,9 @@ export async function POST(
     // comments) so this query has no PII footprint.
     const pinMeta = await prisma.pin.findUnique({
       where: { id },
-      select: { screenshot: { select: { projectId: true } } },
+      select: { screenshot: { select: { page: { select: { projectId: true } } } } },
     });
-    const projectId = pinMeta?.screenshot?.projectId ?? null;
+    const projectId = pinMeta?.screenshot?.page?.projectId ?? null;
 
     // Reopen-on-reply: if the pin was RESOLVED, flip it back to OPEN.
     // This is the reviewer-side signal that more work is needed.
