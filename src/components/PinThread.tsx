@@ -3,8 +3,44 @@
 import { useState } from 'react';
 import type { FeedbackComment } from '@/lib/types';
 import { useLiveEvents } from '@/lib/hooks/useLiveEvents';
+import { MENTION_RE } from '@/lib/mentions';
 
 type Pin = { id: string; xPercent: number; yPercent: number; status: string; elementXPath?: string | null; elementHTML?: string | null; createdAt: string; comments: FeedbackComment[] };
+
+/**
+ * Render a comment string as a list of React nodes, wrapping every
+ * `@<email>` mention in a styled <span>. Pure: takes a string, returns
+ * a node list — no hooks, no side effects, safe to call inline inside
+ * the render. The split is done on a fresh, /g regex copy so the
+ * module-level regex's `lastIndex` is never mutated by the renderer.
+ *
+ * Plain (non-mention) text is rendered as a single text node to avoid
+ * one React child per character, which would balloon the diff tree
+ * for a 2000-char comment.
+ */
+function renderCommentText(text: string): React.ReactNode[] {
+  const re = new RegExp(MENTION_RE.source, 'g');
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let m: RegExpExecArray | null;
+  let key = 0;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > lastIndex) parts.push(text.slice(lastIndex, m.index));
+    parts.push(
+      <span
+        key={`m-${key++}`}
+        className="font-medium text-blue-700 bg-blue-50 rounded px-0.5"
+        title={`Mentioned: ${m[1]}`}
+      >
+        {m[0]}
+      </span>
+    );
+    lastIndex = m.index + m[0].length;
+    if (m.index === re.lastIndex) re.lastIndex++;
+  }
+  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
+  return parts;
+}
 
 export default function PinThread({
   pin,
@@ -128,7 +164,15 @@ export default function PinThread({
               <span className="ml-1">({c.authorRole})</span>
               <span className="ml-2">{new Date(c.createdAt).toLocaleString()}</span>
             </div>
-            <div className="text-gray-800 whitespace-pre-wrap">{c.text}</div>
+            {/* Highlight @mentions. The split uses the same regex as
+                the server-side parseMentions so what the recipient
+                sees in the email body matches what's highlighted in
+                the UI. Splitting on the full match (including the @)
+                keeps the original characters in the output, so screen
+                readers still read "@alice@example.com" as text. */}
+            <div className="text-gray-800 whitespace-pre-wrap">
+              {renderCommentText(c.text)}
+            </div>
           </div>
         ))}
       </div>
