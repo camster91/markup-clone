@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useMemo, useRef } from 'react';
 import PinThread from './PinThread';
-import type { Pin, FeedbackComment, ScreenshotWithPins } from '@/lib/types';
+import type { Pin, FeedbackComment, ScreenshotWithPins, FeedbackAnnotation } from '@/lib/types';
 import { useRecaptureStatus } from '@/lib/hooks/useRecaptureStatus';
 import { usePresence, colorForUserId, shortLabelForUserId } from '@/lib/hooks/usePresence';
 import { useLiveEvents } from '@/lib/hooks/useLiveEvents';
@@ -184,6 +184,47 @@ export default function ScreenshotView({
     setPins(prev => prev.map(p => p.id === pinId ? { ...p, comments: [...p.comments, comment] } : p));
   };
 
+  // === Annotation rendering ==============================================
+  // Annotations are stored in the screenshot's PIXEL space (e.g. an
+  // arrow on a 1920x1080 screenshot has its endpoints in [0,1920] ×
+  // [0,1080]). The <img> is rendered responsively at `w-full h-auto`,
+  // so the rendered size != the natural size. The SVG overlay fixes
+  // that with a viewBox that matches the natural pixel dimensions —
+  // SVG scales its viewBox to the rendered box automatically, so a
+  // shape at (10, 20) lands at (10, 20) image-pixels regardless of
+  // the dashboard's CSS layout.
+  //
+  // The shape is rendered by SvgAnnotation below. We hoist the
+  // parsing (JSON.parse the pathJson) into a useMemo per-pin so the
+  // SVG node list is stable across re-renders that don't change
+  // annotations — important for React's keyed reconciliation.
+  //
+  // We render annotations ONLY for the active pin (when set) plus
+  // all open pins when no pin is selected? No — we render for every
+  // pin, but use a `pointer-events: none` wrapper so the SVG never
+  // intercepts clicks. The pin buttons (rendered separately above
+  // with `z-index: 5/10`) sit on top of the SVG (z-index implicit 0).
+  // The active pin's annotations are emphasized (a thicker stroke)
+  // to mirror the pin's "active" state.
+  const annotationsSvg = (
+    <svg
+      data-testid="annotations-overlay"
+      className="absolute inset-0 w-full h-full pointer-events-none"
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
+      style={{ zIndex: 3 }}
+      aria-hidden="true"
+    >
+      {pins.map((pin) => (
+        <AnnotationGroup
+          key={pin.id}
+          pin={pin}
+          isActive={activePinId === pin.id}
+        />
+      ))}
+    </svg>
+  );
+
   // === Live updates (SSE) =================================================
   // The hook subscribes to /api/events?projectId=X&screenshotId=Y on
   // mount and re-subscribes if either prop changes. We only act on
@@ -281,6 +322,7 @@ export default function ScreenshotView({
           className="block w-full h-auto select-none"
           draggable={false}
         />
+        {annotationsSvg}
         {pins.map((pin, idx) => {
           const isActive = activePinId === pin.id;
           const isResolved = pin.status === 'RESOLVED';
@@ -348,5 +390,121 @@ export default function ScreenshotView({
         )}
       </div>
     </div>
+  );
+}
+
+// === Annotation rendering helpers ============================================
+// Defined at module scope (not inside ScreenshotView) so the component
+// identity is stable across renders — React's reconciler skips re-render
+// for the same component reference when props don't change.
+
+/** Memoized path-array extraction for an annotation. The server now
+ *  returns `path` as a parsed `number[][]` (the projects and share
+ *  routes do the JSON.parse at fetch time). Older code paths (the
+ *  raw prisma row in tests, or the `new-pin` SSE event payload)
+ *  might still pass `pathJson` as a string; we accept both for
+ *  defense in depth. Returns [] for any shape we can't parse so the
+ *  SVG never throws. */
+function useParsedPath(annotation: FeedbackAnnotation & { pathJson?: string }): number[][] {
+  return useMemo(() => {
+    // Preferred: already-parsed path.
+    if (Array.isArray(annotation.path) && annotation.path.length > 0) {
+      return annotation.path;
+    }
+    // Fallback: string-shaped pathJson (older API surface, raw row
+    // shape, or SSE payload).
+    if (typeof annotation.pathJson === 'string') {
+      try {
+        const parsed = JSON.parse(annotation.pathJson);
+        if (Array.isArray(parsed)) return parsed as number[][];
+      } catch {
+        // Fall through to []
+      }
+    }
+    return [];
+  }, [annotation.id, annotation.path, annotation.pathJson]);
+}
+
+/** Render a single annotation as the appropriate SVG element.
+ *  - arrow:    <line x1=… y1=… x2=… y2=… stroke="…"/>
+ *  - box:      <rect x=… y=… width=… height=… stroke="…"/>
+ *  - freehand: <polyline points="x1,y1 x2,y2 …" stroke="…" fill="none"/>
+ *
+ *  All shapes are stroked, never filled — the design intent of
+ *  markup.io's annotation system is overlay marks, not opaque
+ *  shapes. Stroke color is a hot red (#DC2626) to match the active
+ *  pin's bg, and the active pin's strokes are 3px thick while
+ *  inactive pins use 2px so the focused pin's drawing is visually
+ *  distinct from background noise. */
+function SvgAnnotation({
+  annotation,
+  isActive,
+}: {
+  annotation: FeedbackAnnotation;
+  isActive: boolean;
+}) {
+  const points = useParsedPath(annotation);
+  if (points.length < 2) return null;
+  const stroke = '#DC2626';
+  const strokeWidth = isActive ? 3 : 2;
+  const sw = strokeWidth;
+  if (annotation.kind === 'arrow') {
+    const [x1, y1] = points[0];
+    const [x2, y2] = points[points.length - 1];
+    return (
+      <line
+        x1={x1} y1={y1} x2={x2} y2={y2}
+        stroke={stroke} strokeWidth={sw} strokeLinecap="round"
+        data-testid={`annotation-${annotation.kind}-${annotation.id}`}
+      />
+    );
+  }
+  if (annotation.kind === 'box') {
+    const [x1, y1] = points[0];
+    const [x2, y2] = points[points.length - 1];
+    const x = Math.min(x1, x2);
+    const y = Math.min(y1, y2);
+    const w = Math.abs(x2 - x1);
+    const h = Math.abs(y2 - y1);
+    return (
+      <rect
+        x={x} y={y} width={w} height={h}
+        stroke={stroke} strokeWidth={sw} fill="none"
+        data-testid={`annotation-${annotation.kind}-${annotation.id}`}
+      />
+    );
+  }
+  // freehand — polyline of every point. We don't simplify (RDP /
+  // Douglas-Peucker) here: a few hundred points is well under the
+  // SVG renderer's per-element budget, and the simplification would
+  // be a second pass over the same data we just parsed.
+  const pointsAttr = points.map(p => `${p[0]},${p[1]}`).join(' ');
+  return (
+    <polyline
+      points={pointsAttr}
+      stroke={stroke} strokeWidth={sw} fill="none" strokeLinecap="round" strokeLinejoin="round"
+      data-testid={`annotation-${annotation.kind}-${annotation.id}`}
+    />
+  );
+}
+
+/** Group of annotations attached to a single pin. Wrapped in <g> so
+ *  we can apply opacity / display styling to the whole group (e.g.
+ *  fading out non-active pins when one pin is selected, though
+ *  currently we render all annotations fully). */
+function AnnotationGroup({
+  pin,
+  isActive,
+}: {
+  pin: Pin;
+  isActive: boolean;
+}) {
+  if (!pin.annotations || pin.annotations.length === 0) return null;
+  return (
+    <g data-pin-id={pin.id} data-testid={`annotation-group-${pin.id}`}>
+      {pin.annotations.map((a) => (
+        <SvgAnnotation key={a.id} annotation={a} isActive={isActive} />
+      ))}
+    </g>
   );
 }

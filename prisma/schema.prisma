@@ -58,18 +58,54 @@ model Screenshot {
 }
 
 model Pin {
-  id           String    @id @default(uuid())
+  id           String       @id @default(uuid())
   screenshotId String
-  screenshot   Screenshot @relation(fields: [screenshotId], references: [id], onDelete: Cascade)
+  screenshot   Screenshot  @relation(fields: [screenshotId], references: [id], onDelete: Cascade)
   xPercent     Float
   yPercent     Float
   elementXPath String?
   elementHTML  String?
-  authorName   String    @default("Client")
-  status       String    @default("OPEN")
+  authorName   String       @default("Client")
+  status       String       @default("OPEN")
   comments     Comment[]
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  annotations  Annotation[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+}
+
+// Annotation is a free-form drawing (arrow / box / freehand) drawn on top
+// of the screenshot. Coordinates are stored as JSON in `pathJson` so the
+// shape stays opaque to the DB and we can extend it per kind without a
+// schema change.
+//
+// Shape conventions (enforced in the widget, validated in the API):
+//   - arrow:     [[x1, y1], [x2, y2]]                   (start, end)
+//   - box:       [[x1, y1], [x2, y2]]                   (top-left, bottom-right)
+//   - freehand:  [[x1, y1], [x2, y2], ...]              (polyline, ≥ 2 points)
+//
+// All coords are in the screenshot's PIXEL space, NOT the viewport's. The
+// widget converts viewport-px to image-px by scaling clickX/clickY against
+// (screenshot.width / window.innerWidth). The dashboard's ScreenshotView
+// then converts image-px → percentage (×100 / image natural size) and
+// renders the SVG overlay sized to the <img>'s box. This decouples the
+// drawing from the dashboard's CSS layout, so the same annotation renders
+// at the right spot on any container width.
+//
+// Annotations are stored on the Pin (not the Screenshot) so the same
+// screenshot can have multiple pins with completely different drawings
+// overlapping without confusion — and deleting a pin removes its marks.
+model Annotation {
+  id        String   @id @default(uuid())
+  pinId     String
+  pin       Pin      @relation(fields: [pinId], references: [id], onDelete: Cascade)
+  // "arrow" | "box" | "freehand". Free-form string instead of a Prisma enum
+  // so we can add a new kind in a single edit without a migration; the
+  // API layer validates the value against the closed set.
+  kind      String
+  pathJson  String
+  createdAt DateTime @default(now())
+
+  @@index([pinId])
 }
 
 model Comment {

@@ -70,6 +70,14 @@ export default async function PublicSharePage({ params }: PageProps) {
                   comments: {
                     orderBy: { createdAt: 'asc' },
                   },
+                  // Same shape as /api/projects: include the
+                  // annotations (drawn marks) on each pin so the
+                  // shared ScreenshotView renders them too. The
+                  // public view is read-only — clients can't add
+                  // annotations from this page, only view them.
+                  annotations: {
+                    orderBy: { createdAt: 'asc' },
+                  },
                 },
               },
             },
@@ -126,6 +134,14 @@ export default async function PublicSharePage({ params }: PageProps) {
   // string form. Forcing the conversion here keeps the type contract
   // the same — the share page is a server component, so the client
   // components downstream never see the raw Date objects.
+  //
+  // Annotations: parse pathJson into a `number[][]` `path` field
+  // (matching the FeedbackAnnotation type and the
+  // /api/projects/route.ts shape). A malformed pathJson would have
+  // been rejected at write time by the POST /api/annotations
+  // validator, so the JSON.parse here only fails on a hand-crafted
+  // DB row; we fall back to an empty array so the share view's
+  // ScreenshotView doesn't throw on the bad row.
   const serializedProject = {
     ...project,
     pages: project.pages.map((page) => ({
@@ -144,6 +160,23 @@ export default async function PublicSharePage({ params }: PageProps) {
             createdAt: comment.createdAt.toISOString(),
             updatedAt: comment.updatedAt.toISOString(),
           })),
+          annotations: (pin.annotations ?? []).map((annotation) => {
+            let path: number[][] = [];
+            try {
+              const parsed = JSON.parse(annotation.pathJson);
+              if (Array.isArray(parsed)) path = parsed as number[][];
+            } catch {
+              // Fall through with the empty path; the ScreenshotView
+              // renders zero shapes for this pin and the bad row is
+              // visible in the DB.
+            }
+            return {
+              id: annotation.id,
+              kind: annotation.kind as 'arrow' | 'box' | 'freehand',
+              path,
+              createdAt: annotation.createdAt.toISOString(),
+            };
+          }),
         })),
       })),
     })),

@@ -42,6 +42,19 @@ export async function GET(req: Request) {
                     where: filterSince ? { updatedAt: { gt: since! } } : undefined,
                     orderBy: { createdAt: 'asc' },
                   },
+                  // Annotations: drawn arrows / boxes / freehand
+                  // attached to each pin. The ScreenshotView's SVG
+                  // overlay reads these and renders one <line>/<rect>/
+                  // <polyline> per row. The `where` filters on
+                  // createdAt — no Annotation has an `updatedAt` so
+                  // a new annotation always reflects a new pin event
+                  // for delta polling. We parse pathJson into a
+                  // `number[][]` shape on the way out (the server
+                  // stores it as a JSON string for schema flexibility).
+                  annotations: {
+                    ...(filterSince ? { where: { createdAt: { gt: since! } } } : {}),
+                    orderBy: { createdAt: 'asc' },
+                  },
                 },
               },
             },
@@ -58,6 +71,22 @@ export async function GET(req: Request) {
   // (the route is gated by requireDashboardOrigin) so emitting the
   // raw token here is fine — only a dashboard user can hit this
   // endpoint, and they need the token to render the share URL.
+  //
+  // Annotation rows include `pathJson` as a JSON string (the DB
+  // column shape). We parse it client-side at fetch time so the
+  // dashboard sees `path: number[][]` directly — saves every render
+  // from re-parsing, and lines up with the FeedbackAnnotation type
+  // (which declares `path` as a parsed array, not a string).
+  //
+  // A malformed pathJson would have been rejected at write time by
+  // the POST /api/annotations validator, so the JSON.parse here
+  // only fails on a hand-crafted DB row. We fall back to an empty
+  // array so the pin's overlay renders without an exception, and
+  // log once at the route level so a corruption is auditable.
+  //
+  // `pin.annotations` may be undefined in tests that mock the
+  // prisma include with the legacy shape (no annotation field).
+  // Coerce to [] so the response shape is always the same.
   return NextResponse.json(
     projects.map((p) => ({
       id: p.id,
@@ -67,7 +96,34 @@ export async function GET(req: Request) {
       shareToken: p.shareToken,
       createdAt: p.createdAt,
       updatedAt: p.updatedAt,
-      pages: p.pages,
+      pages: p.pages.map((page) => ({
+        ...page,
+        screenshots: page.screenshots.map((screenshot) => ({
+          ...screenshot,
+          pins: screenshot.pins.map((pin) => ({
+            ...pin,
+            annotations: (pin.annotations ?? []).map((a) => {
+              let path: number[][] = [];
+              try {
+                const parsed = JSON.parse(a.pathJson);
+                if (Array.isArray(parsed)) path = parsed as number[][];
+              } catch (err) {
+                // Don't leak the per-request loop noise — log once.
+                // Production data should never reach this branch
+                // (the POST /api/annotations validator rejects
+                // malformed input).
+                console.warn(`[projects] annotation ${a.id} has unparseable pathJson`);
+              }
+              return {
+                id: a.id,
+                kind: a.kind,
+                path,
+                createdAt: a.createdAt,
+              };
+            }),
+          })),
+        })),
+      })),
       subscribers: p.subscribers,
     }))
   );

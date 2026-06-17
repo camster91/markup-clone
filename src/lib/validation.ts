@@ -32,6 +32,11 @@ export const LIMITS = {
   // Pin text (client feedback). Smaller than the generic TEXT_MAX because
   // a pin comment is a short reply, not a long-form review.
   PIN_TEXT_MAX: 2_000,
+
+  // Annotation payloads. The pathJson blob is small (a few hundred
+  // coords at most for a freehand scribble); 16KB is enough headroom
+  // for a 500-point freehand and 1000-point polyline cases.
+  ANNOTATION_PATH_MAX: 16_000,
 } as const;
 
 export type ValidationResult<T> =
@@ -258,4 +263,81 @@ export function validatePinText(value: unknown): ValidationResult<string> {
     return { ok: false, error: `text must be ≤${LIMITS.PIN_TEXT_MAX} chars` };
   }
   return { ok: true, value: trimmed };
+}
+
+/** Closed set of annotation kinds. We keep the value a string at the DB
+ *  level (free-form text column) so adding a new kind doesn't require a
+ *  Prisma migration; the API layer enforces membership in this set. */
+export const ANNOTATION_KINDS = ['arrow', 'box', 'freehand'] as const;
+export type AnnotationKind = (typeof ANNOTATION_KINDS)[number];
+
+/** Validates an annotation `kind`. Closed set, case-sensitive. */
+export function validateAnnotationKind(value: unknown): ValidationResult<AnnotationKind> {
+  if (typeof value !== 'string') return { ok: false, error: 'kind must be a string' };
+  if (!(ANNOTATION_KINDS as readonly string[]).includes(value)) {
+    return { ok: false, error: `kind must be one of: ${ANNOTATION_KINDS.join(', ')}` };
+  }
+  return { ok: true, value: value as AnnotationKind };
+}
+
+/** Validates an annotation path blob. The shape is opaque to the DB (we
+ *  store a JSON string) but it MUST be:
+ *   - a JSON array
+ *   - of at least 2 points (an arrow / box needs 2; a freehand needs ≥2)
+ *   - each point is a [x, y] pair of finite non-negative numbers
+ *   - the serialized form fits in LIMITS.ANNOTATION_PATH_MAX bytes
+ *
+ *  The function returns the canonical re-serialized JSON string so the
+ *  caller stores a normalized form (whitespace removed, key order
+ *  stable). The dashboard re-parses the same string and trusts it; the
+ *  widget also re-parses its own submission, so the round-trip is the
+ *  test surface.
+ *
+ *  Coordinate bounds: the widget converts viewport-px to image-px by
+ *  scaling against (screenshot.width / window.innerWidth). Image natural
+ *  width is bounded by MAX_SCREENSHOT_BYTES * 8 (rough sanity: a
+ *  8MB PNG is at most ~100k pixels wide); we cap individual coords at
+ *  100_000 which covers any reasonable screenshot. The dashboard then
+ *  re-projects to a 0-100 percentage based on the screenshot's natural
+ *  size. */
+export function validateAnnotationPath(
+  raw: unknown
+): ValidationResult<{ json: string; points: number[][] }> {
+  if (typeof raw !== 'string') return { ok: false, error: 'pathJson must be a string' };
+  if (raw.length === 0) return { ok: false, error: 'pathJson must not be empty' };
+  if (raw.length > LIMITS.ANNOTATION_PATH_MAX) {
+    return { ok: false, error: `pathJson must be ≤${LIMITS.ANNOTATION_PATH_MAX} chars` };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false, error: 'pathJson must be valid JSON' };
+  }
+  if (!Array.isArray(parsed)) {
+    return { ok: false, error: 'pathJson must be a JSON array' };
+  }
+  if (parsed.length < 2) {
+    return { ok: false, error: 'pathJson must have at least 2 points' };
+  }
+  const out: number[][] = [];
+  for (let i = 0; i < parsed.length; i++) {
+    const p = parsed[i];
+    if (!Array.isArray(p) || p.length !== 2) {
+      return { ok: false, error: `pathJson[${i}] must be a [x, y] pair` };
+    }
+    const x = Number(p[0]);
+    const y = Number(p[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return { ok: false, error: `pathJson[${i}] coords must be finite numbers` };
+    }
+    if (x < 0 || y < 0) {
+      return { ok: false, error: `pathJson[${i}] coords must be non-negative` };
+    }
+    if (x > 100_000 || y > 100_000) {
+      return { ok: false, error: `pathJson[${i}] coords out of range` };
+    }
+    out.push([x, y]);
+  }
+  return { ok: true, value: { json: JSON.stringify(out), points: out } };
 }

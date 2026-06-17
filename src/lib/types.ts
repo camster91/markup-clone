@@ -10,6 +10,18 @@ export type FeedbackComment = {
   createdAt: string;
 };
 
+/** A drawn annotation attached to a pin. The `path` is the parsed
+ *  [[x,y], ...] array — the server stores it as a JSON string in
+ *  `pathJson` and the ScreenshotView parses it on render. The type
+ *  is `number[][]` (always a list of 2-element arrays) so the
+ *  component code can just `path.map(p => p[0])` without a cast. */
+export type FeedbackAnnotation = {
+  id: string;
+  kind: 'arrow' | 'box' | 'freehand';
+  path: number[][];
+  createdAt: string;
+};
+
 export type Pin = {
   id: string;
   xPercent: number;
@@ -19,6 +31,8 @@ export type Pin = {
   elementHTML?: string | null;
   createdAt: string;
   comments: FeedbackComment[];
+  /** Drawn marks (arrows / boxes / freehand) attached to this pin. */
+  annotations: FeedbackAnnotation[];
 };
 
 export type ScreenshotWithPins = {
