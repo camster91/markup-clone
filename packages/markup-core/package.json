@@ -1,0 +1,42 @@
+{
+  "name": "@markup/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared primitives extracted from the markup-clone app — input validation, host/origin parsing, in-memory rate limiter, dashboard-origin guards, and the Mailgun send helpers. Framework-agnostic; no React or Prisma dep.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./validation": {
+      "types": "./dist/validation.d.ts",
+      "default": "./dist/validation.js"
+    },
+    "./auth": {
+      "types": "./dist/auth.d.ts",
+      "default": "./dist/auth.js"
+    },
+    "./rate-limit": {
+      "types": "./dist/rate-limit.d.ts",
+      "default": "./dist/rate-limit.js"
+    },
+    "./origin": {
+      "types": "./dist/origin.d.ts",
+      "default": "./dist/origin.js"
+    },
+    "./email": {
+      "types": "./dist/email.d.ts",
+      "default": "./dist/email.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "build.sh"
+  ],
+  "scripts": {
+    "build": "./build.sh"
+  }
+}
