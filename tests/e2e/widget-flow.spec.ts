@@ -36,7 +36,7 @@
 // returns. Verifying the captured request is the test's primary
 // assertion.
 
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 
 // Path the widget will POST to. The script-src host (the page's
 // own origin) is what the widget derives the API URL from, so

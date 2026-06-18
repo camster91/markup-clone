@@ -44,7 +44,7 @@
 // for the poll loop bound is the authoritative guard for that
 // transition. The e2e layer covers the user-visible happy path.
 
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 
 // The path the ScreenshotView uses for recapture. We match any
 // host so the intercept works regardless of what port Playwright

@@ -66,8 +66,7 @@ const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024; // 8MB
 // `image` — pasted screenshots (PNG, JPEG, WebP, GIF).
 // `voice` — voice notes (not yet implemented in the UI; reserved).
 // `video` — screen recordings (not yet implemented in the UI; reserved).
-const KINDS = ['image', 'voice', 'video'] as const;
-type Kind = typeof KINDS[number];
+type Kind = 'image' | 'voice' | 'video';
 
 // Map a MIME type to a kind. The route only accepts 'image' this
 // round, but the mapping exists so a future voice/video flow can

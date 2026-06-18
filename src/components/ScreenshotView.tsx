@@ -494,7 +494,7 @@ function useParsedPath(annotation: FeedbackAnnotation & { pathJson?: string }): 
       }
     }
     return [];
-  }, [annotation.id, annotation.path, annotation.pathJson]);
+  }, [annotation.path, annotation.pathJson]);
 }
 
 /** Render a single annotation as the appropriate SVG element.
