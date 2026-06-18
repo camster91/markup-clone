@@ -2,11 +2,20 @@
 
 // DashboardProjects
 //
-// List view for the dashboard home page (/). Polls /api/projects
-// with the existing ?since= delta cursor and renders a COMPACT
-// card per project — name, domain, pin counts, last-updated
-// timestamp, and a clickable link to the per-project detail page
-// at /projects/[id].
+// Presentational list view for the dashboard home page (/).
+// Renders a COMPACT card per project — name, domain, pin counts,
+// last-updated timestamp, and a clickable link to the per-project
+// detail page at /projects/[id].
+//
+// Why presentational (props-driven) now: the dashboard home moved
+// to a React Server Component pattern. The page (an RSC) fetches
+// the project list via prisma.project.findMany and hands the
+// initial tree to <DashboardPoller>. DashboardPoller is the
+// polling island — it owns the useState<projects> + 5s setInterval
+// + document.hidden gating. DashboardProjects just renders whatever
+// it's given. This split keeps the first paint fast (the list is
+// server-rendered into the initial HTML) and concentrates all the
+// polling logic in one place that's easy to test in isolation.
 //
 // Why a compact card here and a full tree at /projects/[id]:
 //   - The dashboard home used to inline the full project tree
@@ -23,13 +32,12 @@
 //     share the same component composition; only the wrapper
 //     changes (list of compact cards vs. single full tree).
 //
-// Polling: unchanged from the pre-split dashboard. The 5s tick
-// against /api/projects, with `lastSuccessfulPoll - 1000` as the
-// cursor, is still the source of truth for the home page's
-// "updated just now / Ns ago" affordance. The detail page runs
-// its own identical poll loop scoped to its own projectId.
+// `lastUpdated` is the timestamp (ms since epoch) of the latest
+// fetched projects. <DashboardPoller> is the one that drives
+// updates — when the poll succeeds, it bumps `lastUpdated` and
+// passes both props down. DashboardProjects uses the value to
+// render the "Updated just now / Ns ago" affordance.
 
-import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import CopyButton from './CopyButton';
 import ProjectSettings, { ShareToggle, IntegrationsSection } from './ProjectSettings';
@@ -38,62 +46,15 @@ import PresenceList from './PresenceList';
 import { usePresence } from '@/lib/hooks/usePresence';
 import type { ProjectWithPages } from '@/lib/types';
 
-export default function DashboardProjects() {
-  const [projects, setProjects] = useState<ProjectWithPages[]>([]);
-  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const mountedRef = useRef(true);
-  // Timestamp (ms since epoch) of the last successful /api/projects
-  // response. The route accepts ?since=<ISO> and returns only rows whose
-  // updatedAt is strictly after the cursor, so the next poll passes
-  // `lastSuccessfulPoll - 1000` (1s overlap) as the cursor. The 1s
-  // overlap is critical: two pins created in the same millisecond would
-  // otherwise race past the cursor and the second one would never come
-  // back. `null` means "no successful poll yet" → first poll goes out
-  // without a cursor and the route returns the full tree.
-  const lastSuccessfulPoll = useRef<number | null>(null);
-
-  const fetchProjects = useCallback(async () => {
-    try {
-      // First poll: no cursor, full tree. Subsequent polls: pass the
-      // last successful poll timestamp minus 1s so we don't miss rows
-      // that were updated in the same millisecond as the previous
-      // response was being serialized.
-      const since = lastSuccessfulPoll.current;
-      const url = since === null
-        ? '/api/projects'
-        : `/api/projects?since=${new Date(since - 1000).toISOString()}`;
-      const res = await fetch(url);
-      if (!res.ok) return;
-      const data = await res.json();
-      if (mountedRef.current) {
-        setProjects(data);
-        setLastUpdated(Date.now());
-        // Record the cursor AFTER the response has been applied so a
-        // slow request that races a write can't drop the write.
-        lastSuccessfulPoll.current = Date.now();
-      }
-    } catch {
-      // silent retry - keep showing old data
-    }
-  }, []);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    fetchProjects();
-
-    intervalRef.current = setInterval(() => {
-      if (!document.hidden) {
-        fetchProjects();
-      }
-    }, 5000);
-
-    return () => {
-      mountedRef.current = false;
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, [fetchProjects]);
-
+export default function DashboardProjects({
+  projects,
+  lastUpdated,
+  onProjectUpdated,
+}: {
+  projects: ProjectWithPages[];
+  lastUpdated: number | null;
+  onProjectUpdated: () => Promise<void> | void;
+}) {
   const getTimeSinceUpdate = () => {
     if (lastUpdated === null) return 'Updating…';
     const seconds = Math.floor((Date.now() - lastUpdated) / 1000);
@@ -131,7 +92,7 @@ export default function DashboardProjects() {
           <ProjectListCard
             key={project.id}
             project={project}
-            onProjectUpdated={fetchProjects}
+            onProjectUpdated={onProjectUpdated}
           />
         ))}
       </div>

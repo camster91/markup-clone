@@ -14,15 +14,19 @@
 //   - The compact card still shows the project name, domain, and
 //     pin counts so the operator can scan the list at a glance.
 //
-// The component is mounted with a mocked /api/projects fetch that
-// returns a single project. The polled payload is then asserted
-// for the expected anchor and supporting copy.
+// The home page is now an RSC. The polling client island is
+// <DashboardPoller>; it seeds useState with the server-rendered
+// `initialData` and renders <DashboardProjects> with the latest
+// data. We mount <DashboardPoller> with `initialData` here so
+// the test doesn't depend on the mock-fetch path — the polling
+// island's render path is exercised by
+// tests/components/DashboardPoller.test.tsx.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 import React from 'react';
-import DashboardProjects from '@/components/DashboardProjects';
+import DashboardPoller from '@/components/DashboardPoller';
 import type { ProjectWithPages } from '@/lib/types';
 
 // Silence the "current testing environment is not configured to
@@ -85,9 +89,11 @@ describe('DashboardProjects list view — split into per-project pages', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     originalFetch = global.fetch;
-    // The component calls fetch('/api/projects') on mount. The
-    // first poll returns the canned projects; subsequent polls
-    // (5s tick) never fire in this test.
+    // The polling island would normally call /api/projects on its
+    // 5s tick. The list-rendering tests pass initialData directly
+    // to <DashboardPoller> and don't depend on the fetch — but
+    // we still stub fetch so the tick (if it fires) doesn't hit
+    // a real network.
     global.fetch = vi.fn(async () =>
       new Response(JSON.stringify(fakeProjects), { status: 200 })
     ) as unknown as typeof fetch;
@@ -106,8 +112,8 @@ describe('DashboardProjects list view — split into per-project pages', () => {
   it('renders each project card as a link to /projects/[id]', async () => {
     root = createRoot(container);
     await act(async () => {
-      root.render(React.createElement(DashboardProjects));
-      // Flush microtasks so the useEffect fetch resolves before
+      root.render(React.createElement(DashboardPoller, { projects: fakeProjects }));
+      // Flush microtasks so the useEffect tick resolves before
       // we read the DOM.
       await new Promise((r) => setTimeout(r, 0));
     });
@@ -136,7 +142,7 @@ describe('DashboardProjects list view — split into per-project pages', () => {
     // list view. Pin the absence.
     root = createRoot(container);
     await act(async () => {
-      root.render(React.createElement(DashboardProjects));
+      root.render(React.createElement(DashboardPoller, { projects: fakeProjects }));
       await new Promise((r) => setTimeout(r, 0));
     });
 
@@ -151,7 +157,7 @@ describe('DashboardProjects list view — split into per-project pages', () => {
   it('shows the project name, domain, and pin counts on the compact card', async () => {
     root = createRoot(container);
     await act(async () => {
-      root.render(React.createElement(DashboardProjects));
+      root.render(React.createElement(DashboardPoller, { projects: fakeProjects }));
       await new Promise((r) => setTimeout(r, 0));
     });
 
