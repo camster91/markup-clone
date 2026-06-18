@@ -1,8 +1,32 @@
+// /api/projects
+//
+// Project list + create. The team layer is ADDITIVE — the GET filter
+// is "projects whose team is one the caller is a member of", and a
+// NULL teamId is treated as "legacy / unscoped" and shown only to
+// callers with zero team memberships (the transitional single-project
+// dashboard behaviour — see lib/teams.ts for the rationale).
+//
+// POST: the body now accepts an optional `teamId`. When supplied, the
+// project is created under that team. The validation step verifies
+// the team exists AND the caller is a member of it; without that
+// check, a dashboard caller could attach a project to any team in
+// the install. When teamId is omitted, the project is created with
+// teamId = NULL (legacy behaviour, kept for back-compat with the
+// single-team install).
+//
+// Auth: every handler is gated by requireDashboardOrigin. We do NOT
+// additionally require an active session — the existing dashboard
+// flows (X-Api-Key on widget calls, cookie session for dashboard
+// calls) cover that. The team-scope filter is a "which projects does
+// this caller see" gate, not an "is this caller allowed to call the
+// API at all" gate.
+
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardOrigin, generateApiKey } from '@/lib/auth';
 import { audit } from '@/lib/audit';
-import { validateProjectDomain, validateProjectName } from '@/lib/validation';
+import { validateProjectDomain, validateProjectName, validateUuidParam } from '@/lib/validation';
+import { getCallerUser, getProjectScopeWhere } from '@/lib/teams';
 
 export async function GET(req: Request) {
   const authErr = requireDashboardOrigin(req);
@@ -21,8 +45,23 @@ export async function GET(req: Request) {
   const since = sinceParam ? new Date(sinceParam) : null;
   const filterSince = sinceParam && !Number.isNaN(since!.getTime());
 
+  // Resolve the caller and their team scope. The where clause is
+  // composed BEFORE the `updatedAt` filter so the two filters AND
+  // together: callers see "projects in my teams" AND "updated since
+  // the cursor" — never one without the other. The pre-existing
+  // tests that mock prisma.project.findMany without our teams helper
+  // will see the new `where` shape; the integration tests updated
+  // alongside this change assert the team-scope filter is applied.
+  const caller = await getCallerUser();
+  const teamScope = await getProjectScopeWhere(caller?.id ?? null);
+
   const projects = await prisma.project.findMany({
-    where: filterSince ? { updatedAt: { gt: since! } } : undefined,
+    where: {
+      AND: [
+        teamScope,
+        ...(filterSince ? [{ updatedAt: { gt: since! } }] : []),
+      ],
+    },
     include: {
       pages: {
         where: filterSince ? { updatedAt: { gt: since! } } : undefined,
@@ -62,6 +101,12 @@ export async function GET(req: Request) {
         },
       },
       subscribers: true,
+      // The team relation is included so the dashboard's
+      // ProjectListCard can render "in <team name>" without a
+      // follow-up lookup. `select` is limited to the columns the
+      // dashboard actually needs (id + name); the rest is a
+      // network-cost-no-no on a list endpoint.
+      team: { select: { id: true, name: true } },
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -94,6 +139,8 @@ export async function GET(req: Request) {
       domain: p.domain,
       apiKey: p.apiKey,
       shareToken: p.shareToken,
+      teamId: p.teamId,
+      team: p.team,
       createdAt: p.createdAt,
       updatedAt: p.updatedAt,
       pages: p.pages.map((page) => ({
@@ -134,7 +181,7 @@ export async function POST(req: Request) {
   if (authErr) return authErr;
 
   try {
-    const { name, domain } = await req.json();
+    const { name, domain, teamId } = await req.json();
     if (!name || !domain) {
       return NextResponse.json({ error: 'name and domain required' }, { status: 400 });
     }
@@ -150,11 +197,44 @@ export async function POST(req: Request) {
     const domainRes = validateProjectDomain(domain);
     if (!domainRes.ok) return NextResponse.json({ error: domainRes.error }, { status: 400 });
 
+    // Optional teamId: when supplied, verify it's a UUID and the
+    // caller is a member of the team. A non-member creating a
+    // project under a team they don't belong to is the
+    // "attach a project to someone else's team" footgun — the
+    // membership check is the gate. When teamId is omitted, the
+    // project is created with teamId = NULL (legacy / unscoped).
+    let teamIdValue: string | null = null;
+    if (teamId !== undefined && teamId !== null) {
+      const tidRes = validateUuidParam(teamId, 'teamId');
+      if (!tidRes.ok) return NextResponse.json({ error: tidRes.error }, { status: 400 });
+      const caller = await getCallerUser();
+      const callerTeamIds = caller
+        ? (
+            await prisma.teamMember.findMany({
+              where: { userId: caller.id, teamId: tidRes.value },
+              select: { teamId: true },
+            })
+          ).map((r) => r.teamId)
+        : [];
+      if (!callerTeamIds.includes(tidRes.value)) {
+        return NextResponse.json(
+          { error: 'You are not a member of the requested team' },
+          { status: 403 }
+        );
+      }
+      teamIdValue = tidRes.value;
+    }
+
     const apiKey = generateApiKey();
     const project = await prisma.project.create({
-      data: { name, domain, apiKey },
+      data: { name, domain, apiKey, teamId: teamIdValue },
     });
-    audit({ actor: project.id, action: 'project.create', target: project.id });
+    audit({
+      actor: project.id,
+      action: 'project.create',
+      target: project.id,
+      metadata: { teamId: teamIdValue },
+    });
     return NextResponse.json(project, { status: 201 });
   } catch (error) {
     console.error('Project create error:', error);

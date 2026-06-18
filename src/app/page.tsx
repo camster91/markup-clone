@@ -2,6 +2,7 @@ import NewProjectForm from '@/components/NewProjectForm';
 import WidgetSnippet from '@/components/WidgetSnippet';
 import DashboardProjects from '@/components/DashboardProjects';
 import AuthGate from '@/components/AuthGate';
+import Link from 'next/link';
 import { prisma } from '@/lib/prisma';
 
 // / (dashboard home)
@@ -46,6 +47,22 @@ export default async function Dashboard() {
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Visual Feedback</h1>
             <p className="text-gray-500 mt-2">Review client feedback pins on captured page screenshots.</p>
+            {/* Workspaces link. Opens /workspaces, the org / team
+                index. The link is rendered above the project list
+                so the dashboard reads as a "project view inside a
+                workspace" rather than a parallel site. The
+                transitional single-project install leaves this
+                link visible to every dashboard caller — there's no
+                "you must be in a team" gate on the link itself,
+                only on the projects it eventually surfaces. */}
+            <nav className="mt-3 flex items-center gap-3 text-sm">
+              <Link
+                href="/workspaces"
+                className="text-blue-600 hover:text-blue-800 hover:underline"
+              >
+                Workspaces →
+              </Link>
+            </nav>
           </div>
           {latest?.apiKey ? (
             <div className="bg-white px-4 py-2 rounded-lg shadow-sm border border-gray-200">

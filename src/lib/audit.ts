@@ -28,7 +28,10 @@ export type AuditAction =
   | 'project.share.create' | 'project.share.revoke' | 'share.view'
   | 'comment.mention'
   | 'integration.create' | 'integration.update' | 'integration.remove'
-  | 'integration.test.send' | 'integration.dispatch';
+  | 'integration.test.send' | 'integration.dispatch'
+  | 'workspace.create' | 'workspace.update' | 'workspace.delete'
+  | 'team.create' | 'team.update' | 'team.delete'
+  | 'team_member.invite' | 'team_member.remove' | 'team_member.update';
 
 export interface AuditEntry {
   actor: string;

@@ -23,8 +23,104 @@ model Project {
   // Outbound webhook integrations (Slack / Discord / generic webhook).
   // Cascade: deleting a project removes every configured integration.
   integrations Integration[]
+  // Optional FK to Team. Nullable because the team layer is ADDITIVE —
+  // every existing project predates the workspace / team split, and a
+  // migration that back-fills teamId for every existing row would
+  // silently reassign the whole install to a single team. The /api/projects
+  // route's GET filter is "projects whose team is one the caller is a
+  // member of"; a NULL teamId is treated as "legacy / unscoped" and
+  // visible only when the caller has no teams at all (the transitional
+  // single-project dashboard behaviour). Set: Restrict (NOT Cascade) on
+  // delete — a Team with active projects must not be silently destroyed.
+  teamId      String?
+  team        Team?        @relation(fields: [teamId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
+}
+
+// Workspace is the top of the multi-tenant hierarchy (org → teams →
+// projects). One Workspace owns one or more Teams; each Team owns zero or
+// more Projects. The Workspace row itself has no User FK — workspace
+// membership is mediated by Team → TeamMember → User, so a single User
+// can belong to multiple teams across multiple workspaces without a
+// separate "workspace member" table.
+//
+// `name` is the org display name (e.g. "Acme Co."). Free-form; the
+// dashboard's <WorkspacesList> surfaces it verbatim. The 200-char cap
+// matches the project's project-name limit (so a workspace rename
+// can't smuggle in a giant string and balloon the dashboard HTML).
+model Workspace {
+  id        String   @id @default(uuid())
+  name      String
+  teams     Team[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Team is a sub-group inside a Workspace. A Team owns Projects; the
+// /api/projects GET filter is "projects whose team is one the caller
+// is a member of". Deleting a Team is `Restrict` (the FK on Project
+// refuses the delete) — the dashboard must first move or delete its
+// projects. This protects against the "delete the team, lose every
+// project" footgun that a Cascade would enable.
+model Team {
+  id          String       @id @default(uuid())
+  // FK to Workspace. Cascade: deleting a workspace removes every
+  // team. The reverse is impossible (a team must have a workspace).
+  workspaceId String
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  name        String
+  members     TeamMember[]
+  projects    Project[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([workspaceId])
+}
+
+// TeamMember is a row that ties a User to a Team with a role. The
+// `userId` FK is NULLABLE on purpose: a member can be "invited by
+// email" before they have a User row (the invite-only sign-up flow is
+// a follow-up feature; this schema reserves the shape). When the
+// invited user signs up, the member row is back-filled with their
+// userId; until then, the row carries just the email + role.
+//
+// `role` is 'owner' | 'reviewer' (free-form string, not a Prisma enum,
+// so we can add a new role in a single edit without a migration; the
+// API + UI enforce the closed set). Owner = full team control (rename,
+// delete, invite, create projects). Reviewer = read + comment + create
+// pins on existing projects.
+//
+// Email is a denormalized copy of the User's email at the time of
+// invite. Storing it on the row means a TeamMember list can be
+// rendered even before the userId is back-filled. Cascade: deleting
+// the User removes their TeamMember rows (so a user leaving the
+// platform doesn't leave ghost memberships behind); deleting the
+// Team removes every member. The reverse (User or Team surviving
+// independently) is the only meaningful direction.
+model TeamMember {
+  id        String   @id @default(uuid())
+  // FK to Team. Cascade: deleting a team removes every member.
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  // FK to User, NULLABLE. The current invite flow inserts a row
+  // with userId=null + the email; a follow-up "claimed invite" flow
+  // back-fills userId. Cascade: deleting the User removes the
+  // member row (so a deleted account doesn't leave stale
+  // memberships).
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  // "owner" | "reviewer". Free-form so a new role can be added in
+  // a single edit without a migration; the API + UI enforce the
+  // closed set.
+  role      String   @default("reviewer")
+  // Denormalized email captured at invite time. Used to render the
+  // team-member list before the userId is back-filled.
+  email     String
+  createdAt DateTime @default(now())
+
+  @@index([teamId])
+  @@index([userId])
 }
 
 // Integration is a per-project outbound notification target. When a new
@@ -293,6 +389,11 @@ model User {
   role         String   @default("reviewer")
   createdAt    DateTime @default(now())
   sessions     Session[]
+  // Back-relation to TeamMember. Optional (a User can exist without any
+  // team memberships — e.g. before they're invited to a team). Cascade
+  // on the TeamMember side removes the rows when the User is deleted;
+  // a User without a team simply has an empty array.
+  teamMembers  TeamMember[]
 }
 
 // Session is a server-issued login token. The browser stores the token

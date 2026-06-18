@@ -27,6 +27,21 @@ const mocks = vi.hoisted(() => ({
   project: {
     findUnique: vi.fn(),
   },
+  // The page calls getCallerUser() to look up the caller's session
+  // before checking team membership. The mock returns null (no
+  // session), which the page treats as "no caller" — projects with
+  // teamId = NULL remain accessible (the legacy / unscoped branch).
+  // Tests that exercise the team-scope gate override the session
+  // mock per-test.
+  session: {
+    findUnique: vi.fn().mockResolvedValue(null),
+  },
+  // Team membership lookup. Default: no membership (every team
+  // membership check returns null). Tests that exercise the
+  // team-scope gate override per-test.
+  teamMember: {
+    findFirst: vi.fn().mockResolvedValue(null),
+  },
 }));
 
 vi.mock('@/lib/prisma', () => ({
@@ -75,11 +90,44 @@ function getCircularReplacer(): (key: string, value: unknown) => unknown {
 beforeEach(() => {
   vi.clearAllMocks();
   notFoundCalls.length = 0;
+  // The page calls project.findUnique TWICE: once for the
+  // { id, teamId } meta (the team-scope gate) and once for the
+  // full tree (the actual render). The second call uses a wide
+  // `include` shape; the first uses a narrow `select`. We
+  // dispatch on the call args: the call with a `select: { id,
+  // teamId }` shape returns the meta row, the call with an
+  // `include` returns the full tree. Tests that want a custom
+  // meta (e.g. teamId = 'team-1') override the implementation.
+  mocks.project.findUnique.mockImplementation(async (args: any) => {
+    if (args && args.select && Object.keys(args.select).sort().join(',') === 'id,teamId') {
+      return { id: args.where.id, teamId: null };
+    }
+    return null;
+  });
+  mocks.session.findUnique.mockResolvedValue(null);
+  mocks.teamMember.findFirst.mockResolvedValue(null);
 });
+
+// Helper: configure the full-tree findUnique to return the given
+// project tree. The page makes two findUnique calls (meta + tree);
+// the meta call is already wired to return a `teamId: null` row by
+// the beforeEach. Tests that need a non-null teamId override the
+// implementation per-test.
+function setFullTree(tree: unknown) {
+  const original = mocks.project.findUnique.getMockImplementation();
+  mocks.project.findUnique.mockImplementation(async (args: any) => {
+    if (args && args.select && Object.keys(args.select).sort().join(',') === 'id,teamId') {
+      return { id: args.where.id, teamId: null };
+    }
+    return tree;
+  });
+  // Preserve a reference so a test can introspect if it wants to
+  void original;
+}
 
 describe('GET /projects/[id] — per-project detail page', () => {
   it('renders the project header / pages / screenshots / pins when the project exists', async () => {
-    mocks.project.findUnique.mockResolvedValue({
+    setFullTree({
       id: 'proj-1',
       name: 'Acme Redesign',
       domain: 'acme.com',
@@ -184,7 +232,7 @@ describe('GET /projects/[id] — per-project detail page', () => {
     // lists, masking the bug behind a misleading "no pages
     // captured yet" message. Pin the include shape so a refactor
     // can't drift silently.
-    mocks.project.findUnique.mockResolvedValue({
+    setFullTree({
       id: 'proj-1',
       name: 'T',
       domain: 't.com',
@@ -220,7 +268,7 @@ describe('GET /projects/[id] — per-project detail page', () => {
   });
 
   it('parses annotation pathJson into a number[][] path on the serialized tree', async () => {
-    mocks.project.findUnique.mockResolvedValue({
+    setFullTree({
       id: 'proj-1',
       name: 'T',
       domain: 't.com',
@@ -292,7 +340,7 @@ describe('GET /projects/[id] — per-project detail page', () => {
     // validator, but the page is the last line of defense: a
     // bad parse must not throw — it must render with an empty
     // path so the ScreenshotView can still show the pin.
-    mocks.project.findUnique.mockResolvedValue({
+    setFullTree({
       id: 'proj-1',
       name: 'T',
       domain: 't.com',

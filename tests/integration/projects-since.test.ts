@@ -20,6 +20,15 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   project: { findMany: vi.fn() },
+  // The route now calls getCallerUser() to scope the result to the
+  // caller's teams. The default mock returns no session, which
+  // collapses to the "no teams" branch — the where clause becomes
+  // { teamId: null } so the test fixtures (which don't have a
+  // teamId column populated) still match. Tests that need a
+  // logged-in caller with team memberships override the session +
+  // teamMember mocks per-test.
+  session: { findUnique: vi.fn().mockResolvedValue(null) },
+  teamMember: { findMany: vi.fn().mockResolvedValue([]) },
 }));
 
 vi.mock('@/lib/prisma', () => ({
@@ -162,10 +171,13 @@ describe('GET /api/projects — ?since= delta polling', () => {
     expect(body[0].id).toBe('proj-1');
     expect(body[0].pages[0].screenshots[0].pins[0].comments[0].text).toBe('hi');
 
-    // The `where` clause on the top-level findMany is undefined when
-    // there's no cursor — legacy behaviour, no server-side filter.
+    // The `where` clause on the top-level findMany is the F9
+    // team-scope filter (security: callers always see only
+    // their own teams). It is an `{ AND: [teamScope] }` object
+    // when there's no cursor (no since filter inside the AND).
     const call = mocks.project.findMany.mock.calls[0][0];
-    expect(call.where).toBeUndefined();
+    expect(call.where.AND).toBeDefined();
+    expect(call.where.AND).toHaveLength(1);
   });
 
   it('with since=<ISO>, sends an updatedAt filter on every nested level', async () => {
@@ -180,7 +192,10 @@ describe('GET /api/projects — ?since= delta polling', () => {
 
     // The top-level where must be { updatedAt: { gt: <Date> } }.
     const call = mocks.project.findMany.mock.calls[0][0];
-    expect(call.where).toEqual({ updatedAt: { gt: new Date(cursor) } });
+    // F9 wraps the where in an AND with the team-scope filter.
+    // The second AND element is the since filter.
+    expect(call.where.AND).toHaveLength(2);
+    expect(call.where.AND[1]).toEqual({ updatedAt: { gt: new Date(cursor) } });
 
     // The nested includes must each carry the same cursor filter so the
     // server prunes the tree at every level — not just the top.
@@ -211,8 +226,12 @@ describe('GET /api/projects — ?since= delta polling', () => {
     mocks.project.findMany.mockResolvedValue(fullTree);
     const res = await GET(getReq('?since=not-a-date'));
     expect(res.status).toBe(200);
+    // F9's team-scope filter is still applied (security: callers
+    // always see only their own teams), but the since filter is
+    // skipped because the cursor is unparseable. The where shape
+    // is { AND: [teamScope] } with no since filter inside.
     const call = mocks.project.findMany.mock.calls[0][0];
-    expect(call.where).toBeUndefined();
+    expect(call.where.AND).toHaveLength(1);
   });
 
   it('returns 401 when called from a non-dashboard origin', async () => {

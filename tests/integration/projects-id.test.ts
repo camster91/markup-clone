@@ -20,6 +20,15 @@ const mocks = vi.hoisted(() => ({
   pin: { delete: vi.fn() },
   subscriber: { findMany: vi.fn(), create: vi.fn(), findUnique: vi.fn(), delete: vi.fn() },
   auditLog: { create: vi.fn().mockResolvedValue({ id: 'audit-log-1' }) },
+  // The route's team-scope gate calls getCallerUser() which reads
+  // the session cookie + looks up the Session row. Default: no
+  // session, so the route treats the caller as anonymous — that
+  // means team-scope gating falls back to "no caller" → 403
+  // whenever the project has teamId != null. Tests that need a
+  // logged-in caller override per-test.
+  session: { findUnique: vi.fn().mockResolvedValue(null) },
+  // Team membership lookup. Default: no membership.
+  teamMember: { findFirst: vi.fn().mockResolvedValue(null) },
 }));
 
 vi.mock('@/lib/prisma', () => ({
@@ -66,6 +75,14 @@ function reqWithBody(method: string, body: unknown, headers: Record<string, stri
   });
 }
 
+// Default project-mock that makes the team-scope gate pass for
+// the legacy / unscoped branch (teamId = null). Tests that need
+// a different shape override mocks.project.findUnique per-test.
+function setUnscopedProject() {
+  mocks.project.findUnique.mockResolvedValue({
+    id: 'proj-1', name: 'Test', domain: 'example.com', teamId: null,
+  });
+}
 
 
 describe('DELETE /api/projects/[id]', () => {
@@ -89,8 +106,13 @@ describe('DELETE /api/projects/[id]', () => {
   });
 
   it('cascades: deletes screenshots from disk and the project row', async () => {
-    // Verify the project exists. The route calls findUnique separately.
-    mocks.project.findUnique.mockResolvedValue({ id: 'proj-1' });
+    // The route calls findUnique for the access check (with
+    // `select: { id, name, domain, teamId }`) and again for the
+    // post-delete metadata. teamId = null is the "legacy /
+    // unscoped" branch — the access check passes without a
+    // session lookup, and the test stays focused on the delete
+    // cascade.
+    setUnscopedProject();
     // The route queries prisma.screenshot.findMany (NOT the project's `screenshots`
     // field — that's for a different include path). The mock must be on the
     // Screenshot model, not on the Project model.
@@ -117,11 +139,32 @@ describe('DELETE /api/projects/[id]', () => {
       expect.objectContaining({ where: { page: { projectId: 'proj-1' } } })
     );
   });
+
+  it('returns 403 when the project is in a team the caller is not a member of', async () => {
+    // Team-scope gate: a project with teamId != null is only
+    // accessible to a caller who is a member of that team. The
+    // mock returns a non-null teamId and no session — the gate
+    // falls through to "no caller" and returns 403 (not 404; the
+    // API surface distinguishes missing from forbidden, unlike
+    // the page surface).
+    mocks.project.findUnique.mockResolvedValue({
+      id: 'proj-1', name: 'T', domain: 't.com', teamId: 'team-1',
+    });
+    const res = await DELETE(req('DELETE', { origin: 'https://markup.ashbi.ca' }),
+      { params: Promise.resolve({ id: 'proj-1' }) });
+    expect(res.status).toBe(403);
+    expect(mocks.project.delete).not.toHaveBeenCalled();
+  });
 });
 
 describe('PATCH /api/projects/[id]', () => {
   beforeEach(() => {
+    mocks.project.findUnique.mockReset();
     mocks.project.update.mockReset();
+    // Default: project exists in the legacy / unscoped branch so
+    // the access check passes. Tests that want to exercise the
+    // team-scope gate override the findUnique mock.
+    setUnscopedProject();
   });
 
   it('returns 401 when called from a non-dashboard origin', async () => {
@@ -283,6 +326,19 @@ describe('PATCH /api/projects/[id]', () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toMatch(/200/);
+    expect(mocks.project.update).not.toHaveBeenCalled();
+  });
+
+  it('returns 403 when the project is in a team the caller is not a member of', async () => {
+    // Team-scope gate for PATCH: a project with teamId != null
+    // is only accessible to a member of that team. The mock
+    // returns a non-null teamId and no session → 403.
+    mocks.project.findUnique.mockResolvedValue({
+      id: 'proj-1', name: 'T', domain: 't.com', teamId: 'team-1',
+    });
+    const res = await PATCH(reqWithBody('PATCH', { name: 'New' }, { origin: 'https://markup.ashbi.ca' }),
+      { params: Promise.resolve({ id: 'proj-1' }) });
+    expect(res.status).toBe(403);
     expect(mocks.project.update).not.toHaveBeenCalled();
   });
 });

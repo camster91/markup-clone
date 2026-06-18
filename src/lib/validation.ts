@@ -37,6 +37,13 @@ export const LIMITS = {
   // coords at most for a freehand scribble); 16KB is enough headroom
   // for a 500-point freehand and 1000-point polyline cases.
   ANNOTATION_PATH_MAX: 16_000,
+
+  // Team / workspace display names. Same cap as PROJECT_NAME_MAX so
+  // a workspace rename can't smuggle in a giant string and balloon
+  // the dashboard HTML.
+  WORKSPACE_NAME_MAX: 200,
+  TEAM_NAME_MAX: 200,
+  TEAM_MEMBER_EMAIL_MAX: 320,
 } as const;
 
 export type ValidationResult<T> =
@@ -278,6 +285,71 @@ export function validateAnnotationKind(value: unknown): ValidationResult<Annotat
     return { ok: false, error: `kind must be one of: ${ANNOTATION_KINDS.join(', ')}` };
   }
   return { ok: true, value: value as AnnotationKind };
+}
+
+// Closed set of TeamMember.role. Free-form string at the DB level
+// (so we can add a new role in a single edit without a migration);
+// the API + UI enforce membership in this set.
+export const TEAM_ROLES = ['owner', 'reviewer'] as const;
+export type TeamRole = (typeof TEAM_ROLES)[number];
+
+export function validateTeamRole(value: unknown): ValidationResult<TeamRole> {
+  if (typeof value !== 'string') return { ok: false, error: 'role must be a string' };
+  if (!(TEAM_ROLES as readonly string[]).includes(value)) {
+    return { ok: false, error: `role must be one of: ${TEAM_ROLES.join(', ')}` };
+  }
+  return { ok: true, value: value as TeamRole };
+}
+
+/** Validates a workspace / team display name. Same shape as the
+ *  project-name validator (1-200 chars, no null bytes). The closed
+ *  set is "any printable string" — we don't reject bidi / zero-width
+ *  for the same i18n reasons documented on validateProjectName. */
+export function validateWorkspaceName(value: unknown): ValidationResult<string> {
+  if (typeof value !== 'string') return { ok: false, error: 'name must be a string' };
+  if (value.length === 0) return { ok: false, error: 'name must not be empty' };
+  if (value.length > LIMITS.WORKSPACE_NAME_MAX) {
+    return { ok: false, error: `name must be ≤${LIMITS.WORKSPACE_NAME_MAX} chars` };
+  }
+  if (value.includes('\x00')) return { ok: false, error: 'name must not contain null bytes' };
+  return { ok: true, value };
+}
+
+/** Validates a team name. Identical shape to the workspace validator;
+ *  separate symbol so the error message reads naturally at the call
+ *  site ("team name must be a string", not "workspace name must be
+ *  a string"). */
+export function validateTeamName(value: unknown): ValidationResult<string> {
+  if (typeof value !== 'string') return { ok: false, error: 'name must be a string' };
+  if (value.length === 0) return { ok: false, error: 'name must not be empty' };
+  if (value.length > LIMITS.TEAM_NAME_MAX) {
+    return { ok: false, error: `name must be ≤${LIMITS.TEAM_NAME_MAX} chars` };
+  }
+  if (value.includes('\x00')) return { ok: false, error: 'name must not contain null bytes' };
+  return { ok: true, value };
+}
+
+/** Validates a TeamMember email at invite time. Same shape as the
+ *  subscriber-email validator (case-normalised to lowercase) — the
+ *  invite flow stores the lowercased form on the row so the same
+ *  email always resolves to the same row. */
+export function validateTeamMemberEmail(value: unknown): ValidationResult<string> {
+  const res = validateEmail(value);
+  if (!res.ok) return res;
+  return { ok: true, value: res.value.toLowerCase() };
+}
+
+/** Validates the workspaceId / teamId URL param. Same UUID regex as
+ *  validateScreenshotId / validatePinId — Prisma's @default(uuid())
+ *  is the source of truth, so every project / workspace / team id
+ *  is a UUID. Rejecting early avoids hitting the DB with a
+ *  parse-error path that would otherwise surface as a 500. */
+export function validateUuidParam(value: unknown, fieldName: string): ValidationResult<string> {
+  if (typeof value !== 'string') return { ok: false, error: `${fieldName} must be a string` };
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) {
+    return { ok: false, error: `${fieldName} must be a UUID` };
+  }
+  return { ok: true, value };
 }
 
 /** Validates an annotation path blob. The shape is opaque to the DB (we

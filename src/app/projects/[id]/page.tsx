@@ -29,19 +29,29 @@
 // public read-only escape hatch — it carries its own token
 // auth and renders the same data with readOnly=true.
 //
-// 404: if the project is missing (or deleted between the user's
-// last poll and this navigation), call Next.js's notFound()
-// helper. The route's not-found.tsx renders the 404 page and
-// the response carries a 404 status. We deliberately do NOT
-// distinguish "bad id" from "deleted" from "no permission" —
-// all three look like 404 to the user, which is the right
-// shape for a dashboard-internal route.
+// Team-scope gate: a project with teamId != NULL is only visible
+// to a caller who is a member of that team. We check that on the
+// server before fetching the tree, and we render a 404 (NOT a
+// 403) for both "project not found" and "project not in your
+// teams" — leaking the distinction would let a probing caller
+// enumerate project ids. Legacy / unscoped projects (teamId IS
+// NULL) remain visible to every dashboard caller, matching the
+// transitional single-project dashboard behaviour.
+//
+// 404: if the project is missing, deleted, or in a team the
+// caller doesn't belong to, call Next.js's notFound() helper.
+// The route's not-found.tsx renders the 404 page and the response
+// carries a 404 status. We deliberately do NOT distinguish "bad
+// id" from "deleted" from "no permission" — all three look like
+// 404 to the user, which is the right shape for a
+// dashboard-internal route.
 
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { prisma } from '@/lib/prisma';
 import ProjectDetail from '@/components/ProjectDetail';
 import type { ProjectWithPages } from '@/lib/types';
+import { getCallerUser } from '@/lib/teams';
 
 // force-dynamic: a project detail page is a live view. Caching
 // the HTML for 60s would mean a deleted project still renders
@@ -56,6 +66,34 @@ type PageProps = {
 
 export default async function ProjectDetailPage({ params }: PageProps) {
   const { id } = await params;
+
+  // Team-scope gate. Read the project's teamId first; if the
+  // project has a team, verify the caller is a member before
+  // loading the full tree. Two-step on purpose: the second query
+  // (membership) only fires when teamId != null, and the
+  // 404-on-deny semantics match the existing notFound() branch
+  // (so a probing caller can't distinguish "missing" from
+  // "forbidden").
+  const projectMeta = await prisma.project.findUnique({
+    where: { id },
+    select: { id: true, teamId: true },
+  });
+  if (!projectMeta) {
+    notFound();
+  }
+  if (projectMeta.teamId !== null) {
+    const caller = await getCallerUser();
+    if (!caller) {
+      notFound();
+    }
+    const membership = await prisma.teamMember.findFirst({
+      where: { userId: caller.id, teamId: projectMeta.teamId },
+      select: { id: true },
+    });
+    if (!membership) {
+      notFound();
+    }
+  }
 
   const project = await prisma.project.findUnique({
     where: { id },
