@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import CopyButton from './CopyButton';
 import ScreenshotView from './ScreenshotView';
-import ProjectSettings, { ShareToggle } from './ProjectSettings';
+import ProjectSettings, { ShareToggle, IntegrationsSection } from './ProjectSettings';
 import ProjectSubscribers from './ProjectSubscribers';
 import PresenceList from './PresenceList';
 import { usePresence } from '@/lib/hooks/usePresence';
@@ -194,6 +194,20 @@ function ProjectCard({
       <PresenceList myUserId={myUserId} others={others} />
 
       <ProjectSubscribers projectId={project.id} />
+
+      {/* Outbound integrations (Slack / Discord / generic
+          webhook). Rendered just below the subscribers block
+          so the two "external notification" surfaces are
+          grouped — the operator configures email + webhook
+          for the same project, and grouping them makes the
+          mental model obvious. Like the subscribers block,
+          the section owns its own state; the dashboard does
+          not need to thread integration data through the
+          project list (which would couple two unrelated
+          concerns and force a poll on every integration
+          change). The IntegrationsSection component fetches
+          its own list on mount. */}
+      <IntegrationsSection projectId={project.id} />
 
       <div className="p-6 space-y-6">
         {project.pages.length === 0 ? (

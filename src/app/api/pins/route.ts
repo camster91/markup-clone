@@ -5,6 +5,8 @@ import { writeFile, mkdir, rename } from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
 import { sendSubscriberEmails } from '@/lib/email';
+import { dispatch } from '@/lib/integrations/dispatcher';
+import type { PinPayload } from '@/lib/integrations/types';
 import {
   LIMITS,
   validatePagePath,
@@ -190,6 +192,34 @@ export async function POST(req: Request) {
       )
       .catch((err) => console.error('[email] subscriber lookup error:', err));
 
+    // Fire-and-forget integration dispatch. After a new pin is
+    // committed, look up every integration configured for the
+    // project and fan the pin payload out to each adapter
+    // (Slack / Discord / generic webhook). The dispatch is
+    // strictly non-blocking: we don't await the dispatch
+    // chain, and the inner dispatcher's errors are caught
+    // per-integration so a failing webhook can never take
+    // down the others. The outcome of each call is recorded
+    // on its Integration row (lastSuccessAt / lastError /
+    // lastErrorAt) so the dashboard's ProjectSettings UI can
+    // show "last success at X" or "last error: Y" per
+    // integration. The pin POST itself never bubbles an
+    // integration error to the client.
+    void dispatchIntegrationsForPin({
+      projectId: pid,
+      projectName: project.name,
+      domain: project.domain,
+      pinId: result.pin.id,
+      screenshotId: result.screenshot.id,
+      xPercent: result.pin.xPercent,
+      yPercent: result.pin.yPercent,
+      pinStatus: result.pin.status,
+      authorName: result.pin.authorName,
+      pinCreatedAt: result.pin.createdAt,
+      path: path_,
+      commentText: text,
+    });
+
     // Live update: broadcast a new-pin event to the SSE channel for
     // any dashboard open on this project. The payload is a SAFE
     // projection — no apiKey, no full project row, no raw text blob
@@ -235,4 +265,160 @@ function readPngDimensions(buf: Buffer): { width: number; height: number } {
   const width = buf.readUInt32BE(16);
   const height = buf.readUInt32BE(20);
   return { width, height };
+}
+
+// `dispatchIntegrationsForPin` is the fire-and-forget bridge
+// between the pin route and the integration adapter layer.
+//
+// Lifecycle:
+//   1. The pin route commits the new Pin + Screenshot, then
+//      `void` calls this function — the response returns to
+//      the widget immediately, without awaiting the dispatch.
+//   2. This function queries every integration row for the
+//      project, builds a safe `PinPayload` projection, and
+//      fires the adapter for each. We `Promise.all` the
+//      per-integration work, but we do NOT await the whole
+//      chain from the route — see the `void` above.
+//   3. Each integration's outcome is recorded on its own
+//      row (lastSuccessAt OR lastError + lastErrorAt) so a
+//      failure on one integration never poisons the others.
+//   4. Any uncaught error in the dispatch loop is logged
+//      but never thrown — the promise resolves to a
+//      no-op so the fire-and-forget pattern stays clean.
+//
+// The function is intentionally NOT exported from this
+// file — it's a private helper for the pin route.
+async function dispatchIntegrationsForPin(args: {
+  projectId: string;
+  projectName: string;
+  domain: string;
+  pinId: string;
+  screenshotId: string;
+  xPercent: number;
+  yPercent: number;
+  pinStatus: string;
+  authorName: string;
+  // The DB returns a Date for createdAt; the SSE payload
+  // serialises it to an ISO string. We accept either so
+  // the caller doesn't need to re-shape the value.
+  pinCreatedAt: Date | string;
+  path: string;
+  commentText: string;
+}): Promise<void> {
+  try {
+    const integrations = await prisma.integration.findMany({
+      where: { projectId: args.projectId },
+      select: { id: true, kind: true, configJson: true },
+    });
+    if (integrations.length === 0) return;
+
+    // Coerce createdAt to an ISO string once so the per-adapter
+    // payload is consistent. The Date branch covers the live
+    // route; the string branch keeps the helper testable from
+    // a hand-built call.
+    const createdAtIso =
+      args.pinCreatedAt instanceof Date
+        ? args.pinCreatedAt.toISOString()
+        : String(args.pinCreatedAt);
+
+    const payload: PinPayload = {
+      pin: {
+        id: args.pinId,
+        screenshotId: args.screenshotId,
+        xPercent: args.xPercent,
+        yPercent: args.yPercent,
+        status: args.pinStatus,
+        authorName: args.authorName,
+        createdAt: createdAtIso,
+      },
+      project: {
+        id: args.projectId,
+        name: args.projectName,
+        domain: args.domain,
+      },
+      path: args.path,
+      commentText: args.commentText,
+    };
+
+    // Per-integration dispatch. We Promise.all so the
+    // independent adapter calls overlap (an operator can
+    // have Slack + Discord + a custom webhook all on the
+    // same project). Each inner step catches its own
+    // errors — see the .then/.catch below.
+    await Promise.all(
+      integrations.map(async (integration) => {
+        // Parse the stored configJson. A malformed value
+        // would have slipped past the POST /integrations
+        // validator; we treat it as a "config invalid"
+        // error on the row and skip the dispatch rather
+        // than fire a half-configured request.
+        let config: unknown;
+        try {
+          config = JSON.parse(integration.configJson);
+        } catch (e) {
+          console.error(
+            `[integrations] configJson parse error for ${integration.id}:`,
+            e
+          );
+          await prisma.integration.update({
+            where: { id: integration.id },
+            data: {
+              lastError: 'Stored config is not valid JSON',
+              lastErrorAt: new Date(),
+            },
+          });
+          return;
+        }
+
+        // kind is a free-form string in the DB; the
+        // dispatcher only knows the closed set. A row with
+        // a typo'd kind is the caller's bug, not ours —
+        // log + record the error on the row.
+        if (
+          integration.kind !== 'slack' &&
+          integration.kind !== 'discord' &&
+          integration.kind !== 'webhook'
+        ) {
+          console.error(
+            `[integrations] unknown kind "${integration.kind}" for ${integration.id}`
+          );
+          await prisma.integration.update({
+            where: { id: integration.id },
+            data: {
+              lastError: `Unknown integration kind: ${integration.kind}`,
+              lastErrorAt: new Date(),
+            },
+          });
+          return;
+        }
+
+        const result = await dispatch(
+          integration.kind,
+          config,
+          payload
+        );
+        if (result.ok) {
+          await prisma.integration.update({
+            where: { id: integration.id },
+            data: {
+              lastSuccessAt: new Date(),
+              lastError: null,
+              lastErrorAt: null,
+            },
+          });
+        } else {
+          await prisma.integration.update({
+            where: { id: integration.id },
+            data: { lastError: result.error, lastErrorAt: new Date() },
+          });
+        }
+      })
+    );
+  } catch (err) {
+    // Defensive net — the inner steps should already have
+    // caught everything, but a DB outage in the findMany
+    // would bubble up here. Log and swallow; the pin POST
+    // is long since returned to the client.
+    console.error('[integrations] dispatch loop error:', err);
+  }
 }

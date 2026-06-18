@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import CopyButton from './CopyButton';
 import { dashboardHeaders } from '@/lib/client-origin';
 
@@ -320,5 +320,402 @@ export function ShareToggle({
         <p className="mt-2 text-xs text-red-600">{error}</p>
       )}
     </div>
+  );
+}
+
+/**
+ * IntegrationsSection — dashboard control for the per-project
+ * outbound notification integrations (Slack, Discord, generic
+ * webhook).
+ *
+ * Renders an inline card with three sub-sections:
+ *   - Add new: a kind picker (slack / discord / webhook) plus
+ *     a kind-specific config form (webhookUrl for Slack +
+ *     Discord, url + optional headers for the generic
+ *     webhook).
+ *   - List: every existing integration with a "test" button
+ *     (fires the /test route) and a "remove" button. Each
+ *     row also shows the most recent dispatch outcome —
+ *     "last success at X" or "last error: Y" — so the
+ *     operator can see at a glance which integrations are
+ *     healthy.
+ *   - Empty state: a hint + add form.
+ *
+ * The component owns its own state — `busy` is set during the
+ * network roundtrip so the buttons disable and the user can't
+ * double-click. The list is re-fetched after every mutation
+ * (add / remove / test) so the lastSuccessAt / lastError
+ * timestamps stay in sync.
+ *
+ * The Slack / Discord URL field is `type=password` so the
+ * dashboard doesn't leak a webhook URL into a screen-share or
+ * a browser history (the URL is the credential — anyone with
+ * the URL can post to the channel). The form submits via the
+ * dashboard's normal fetch origin (see `dashboardHeaders()`).
+ */
+export function IntegrationsSection({ projectId }: { projectId: string }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [rows, setRows] = useState<IntegrationRow[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  // Add-form state
+  const [adding, setAdding] = useState(false);
+  const [newKind, setNewKind] = useState<'slack' | 'discord' | 'webhook'>('slack');
+  const [newUrl, setNewUrl] = useState('');
+  const [newHeaders, setNewHeaders] = useState('');
+  // Per-row test result, keyed by integration id. Cleared
+  // when the user starts a new test.
+  const [testing, setTesting] = useState<string | null>(null);
+
+  const fetchRows = useCallback(async () => {
+    setError(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/integrations`, {
+        headers: dashboardHeaders(),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Load failed (${res.status})`);
+      }
+      const data: IntegrationRow[] = await res.json();
+      setRows(data);
+      setLoaded(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load integrations');
+    }
+  }, [projectId]);
+
+  // Load on mount. Single-shot — re-fetches happen via the
+  // mutation handlers (handleAdd / handleRemove / handleTest).
+  useEffect(() => {
+    fetchRows();
+  }, [fetchRows]);
+
+  const handleAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUrl.trim()) return;
+    setAdding(true);
+    setError(null);
+    try {
+      // Build the per-kind config object. The route validates
+      // the shape; we just assemble it from the form fields.
+      // For `webhook`, the operator can supply a JSON blob of
+      // headers ({"X-Auth": "secret"}). Anything non-empty
+      // gets parsed; a parse failure is treated as a form
+      // validation error rather than a server roundtrip.
+      let config: Record<string, unknown> = {};
+      if (newKind === 'slack' || newKind === 'discord') {
+        config = { webhookUrl: newUrl.trim() };
+      } else {
+        config = { url: newUrl.trim() };
+        if (newHeaders.trim()) {
+          try {
+            const parsed = JSON.parse(newHeaders.trim());
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              config.headers = parsed;
+            } else {
+              throw new Error('headers must be a JSON object');
+            }
+          } catch (parseErr) {
+            throw new Error(
+              parseErr instanceof Error
+                ? `Invalid headers JSON: ${parseErr.message}`
+                : 'Invalid headers JSON'
+            );
+          }
+        }
+      }
+      const res = await fetch(`/api/projects/${projectId}/integrations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...dashboardHeaders() },
+        body: JSON.stringify({ kind: newKind, config }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Add failed (${res.status})`);
+      }
+      // Reset the form. We keep `newKind` so the operator
+      // can quickly add a second integration of the same kind.
+      setNewUrl('');
+      setNewHeaders('');
+      await fetchRows();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to add integration');
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const handleRemove = async (id: string) => {
+    if (!window.confirm('Remove this integration? New pins will no longer be sent to it.')) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/integrations/${id}`, {
+        method: 'DELETE',
+        headers: dashboardHeaders(),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Remove failed (${res.status})`);
+      }
+      await fetchRows();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to remove integration');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleTest = async (id: string) => {
+    setTesting(id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/integrations/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...dashboardHeaders() },
+        body: JSON.stringify({ integrationId: id }),
+      });
+      // The test route returns 200 with {ok,lastError?} even
+      // on a 5xx from the receiver — the dashboard's "ok"/
+      // "error" badge is driven by the JSON body's `ok` field,
+      // not the HTTP status.
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.error || `Test failed (${res.status})`);
+      }
+      await fetchRows();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to test integration');
+    } finally {
+      setTesting(null);
+    }
+  };
+
+  return (
+    <div className="mt-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <span className="text-sm font-medium text-gray-700">Outbound integrations</span>
+        <span className="text-xs px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">
+          {rows.length} configured
+        </span>
+      </div>
+
+      <p className="text-xs text-gray-500 mb-3">
+        When a new pin is created, every integration below receives a
+        notification. Dispatch is fire-and-forget — a slow or failing
+        webhook never delays the pin POST.
+      </p>
+
+      {/* Existing integrations list. Each row shows the
+          kind + a one-line summary (the URL is masked as
+          •••••• so a screen-share doesn't leak the
+          credential), the last dispatch outcome, and the
+          test/remove buttons. */}
+      {loaded && rows.length > 0 && (
+        <ul className="space-y-2 mb-3">
+          {rows.map((row) => {
+            const url = urlForRow(row);
+            const status = integrationStatusBadge(row);
+            return (
+              <li
+                key={row.id}
+                data-testid={`integration-row-${row.id}`}
+                className="bg-white border border-gray-200 rounded px-3 py-2"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <span className="inline-block text-xs font-semibold uppercase tracking-wide text-gray-500 flex-shrink-0">
+                      {row.kind}
+                    </span>
+                    {url && (
+                      <code
+                        data-testid={`integration-url-${row.id}`}
+                        className="text-xs font-mono text-gray-400 truncate"
+                        title={url}
+                      >
+                        {maskUrl(url)}
+                      </code>
+                    )}
+                    {status}
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleTest(row.id)}
+                      disabled={testing === row.id || busy}
+                      className="text-xs px-2 py-0.5 rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {testing === row.id ? 'Testing…' : 'Test'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRemove(row.id)}
+                      disabled={busy}
+                      className="text-xs px-2 py-0.5 rounded border border-red-300 bg-white text-red-700 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+                {/* Status text — last success or last error.
+                    One line, fixed height, so adding a new
+                    row doesn't push the list down. */}
+                <p className="mt-1 text-xs text-gray-500 truncate">
+                  {row.lastError ? (
+                    <span data-testid={`integration-error-${row.id}`} className="text-red-600">
+                      Last error: {row.lastError}
+                    </span>
+                  ) : row.lastSuccessAt ? (
+                    <span className="text-green-700">
+                      Last success:{' '}
+                      {new Date(row.lastSuccessAt).toLocaleString()}
+                    </span>
+                  ) : (
+                    <span className="text-gray-400 italic">
+                      Never tested
+                    </span>
+                  )}
+                </p>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {/* Add new integration. The kind picker swaps the
+          label/placeholder on the URL field so an operator
+          adding a Discord webhook doesn't have to wonder
+          which URL is which. The `headers` textarea only
+          appears for the generic webhook kind. */}
+      <form onSubmit={handleAdd} className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="text-xs text-gray-600">Kind:</label>
+          <select
+            value={newKind}
+            onChange={(e) => setNewKind(e.target.value as 'slack' | 'discord' | 'webhook')}
+            className="text-xs border border-gray-200 rounded px-2 py-1 bg-white"
+            data-testid="integration-kind"
+          >
+            <option value="slack">Slack</option>
+            <option value="discord">Discord</option>
+            <option value="webhook">Webhook</option>
+          </select>
+          <input
+            type="password"
+            value={newUrl}
+            onChange={(e) => setNewUrl(e.target.value)}
+            placeholder={
+              newKind === 'webhook'
+                ? 'https://example.com/your-webhook'
+                : `${newKind} webhook URL`
+            }
+            className="flex-1 min-w-0 text-xs px-2 py-1 border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400 font-mono"
+            data-testid="integration-url-input"
+          />
+        </div>
+        {newKind === 'webhook' && (
+          <input
+            type="text"
+            value={newHeaders}
+            onChange={(e) => setNewHeaders(e.target.value)}
+            placeholder='Optional headers: {"X-Auth": "secret"}'
+            className="w-full text-xs px-2 py-1 border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400 font-mono"
+            data-testid="integration-headers-input"
+          />
+        )}
+        <div className="flex justify-end">
+          <button
+            type="submit"
+            disabled={adding || !newUrl.trim()}
+            className="text-xs px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {adding ? 'Adding…' : 'Add integration'}
+          </button>
+        </div>
+      </form>
+
+      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+// ----- IntegrationsSection helpers ----------------------------------
+//
+// The `IntegrationRow` shape mirrors the Prisma `Integration`
+// model. We keep a local type rather than importing the
+// Prisma-generated type so the dashboard doesn't pull the
+// full client into a 200KB+ chunk just to read five fields.
+type IntegrationRow = {
+  id: string;
+  projectId: string;
+  kind: string;
+  configJson: string;
+  lastSuccessAt: string | null;
+  lastError: string | null;
+  lastErrorAt: string | null;
+  createdAt: string;
+};
+
+/** Pull the destination URL out of a row's configJson. The
+ *  shape is kind-specific; this helper centralises the
+ *  branching. Returns null when the config doesn't parse —
+ *  the row still renders the kind label, just without a URL. */
+function urlForRow(row: IntegrationRow): string | null {
+  try {
+    const config = JSON.parse(row.configJson);
+    if (config && typeof config === 'object') {
+      if (typeof config.webhookUrl === 'string') return config.webhookUrl;
+      if (typeof config.url === 'string') return config.url;
+    }
+  } catch {
+    // Config is malformed — the row was probably created
+    // before a schema change. The Test button will surface
+    // the real error from the receiver; here we just
+    // suppress the URL display.
+  }
+  return null;
+}
+
+/** Mask a URL for display: keep the scheme + host, mask the
+ *  path/query. Operators can hover the title attribute to see
+ *  the full URL. The point is to keep a screen-share from
+ *  leaking the credential in a passing glance. */
+function maskUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}/••••••`;
+  } catch {
+    return '••••••';
+  }
+}
+
+/** Pick the small status badge (green/red/gray dot) shown
+ *  next to the kind label. The full status text is below the
+ *  row. */
+function integrationStatusBadge(row: IntegrationRow) {
+  if (row.lastError) {
+    return (
+      <span
+        title={row.lastError}
+        className="inline-block w-2 h-2 rounded-full bg-red-500 flex-shrink-0"
+        aria-label="Error"
+      />
+    );
+  }
+  if (row.lastSuccessAt) {
+    return (
+      <span
+        title={`Last success at ${row.lastSuccessAt}`}
+        className="inline-block w-2 h-2 rounded-full bg-green-500 flex-shrink-0"
+        aria-label="OK"
+      />
+    );
+  }
+  return (
+    <span
+      className="inline-block w-2 h-2 rounded-full bg-gray-300 flex-shrink-0"
+      aria-label="Never tested"
+    />
   );
 }

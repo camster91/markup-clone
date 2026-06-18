@@ -25,6 +25,12 @@ const mocks = vi.hoisted(() => ({
   screenshot: { create: vi.fn() },
   pin: { create: vi.fn() },
   subscriber: { findMany: vi.fn() },
+  // The pin route's fire-and-forget integration dispatch
+  // (added in F8) reads from integration.findMany and writes
+  // to integration.update. The default mock resolves to an
+  // empty list so the dispatch is a no-op unless a test
+  // explicitly drives it.
+  integration: { findMany: vi.fn().mockResolvedValue([]), update: vi.fn() },
   auditLog: { create: vi.fn().mockResolvedValue({ id: 'audit-log-1' }) },
   // Capture the transaction callback so we can drive it from the test.
   $transaction: vi.fn(),

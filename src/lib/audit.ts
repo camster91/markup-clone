@@ -26,7 +26,9 @@ export type AuditAction =
   | 'screenshot.history.read'
   | 'subscriber.add' | 'subscriber.remove'
   | 'project.share.create' | 'project.share.revoke' | 'share.view'
-  | 'comment.mention';
+  | 'comment.mention'
+  | 'integration.create' | 'integration.update' | 'integration.remove'
+  | 'integration.test.send' | 'integration.dispatch';
 
 export interface AuditEntry {
   actor: string;

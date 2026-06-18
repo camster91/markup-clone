@@ -20,8 +20,53 @@ model Project {
   pages       Page[]
   subscribers Subscriber[]
   presences   Presence[]
+  // Outbound webhook integrations (Slack / Discord / generic webhook).
+  // Cascade: deleting a project removes every configured integration.
+  integrations Integration[]
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
+}
+
+// Integration is a per-project outbound notification target. When a new
+// pin is created, the POST /api/pins route looks up the project's
+// integrations and fans the pin payload out to each adapter (Slack,
+// Discord, or generic webhook). The dispatch is fire-and-forget — the
+// pin POST does not block on these calls.
+//
+// `kind` is a free-form string ('slack' | 'discord' | 'webhook') instead
+// of a Prisma enum so we can add a new kind in a single edit without a
+// migration; the API layer validates against the closed set.
+//
+// `configJson` is a stringified JSON blob. The shape is kind-specific:
+//   - slack:    { webhookUrl: string }
+//   - discord:  { webhookUrl: string }
+//   - webhook:  { url: string, headers?: Record<string, string> }
+// The route parses + validates the shape per kind, then re-serialises
+// before insert. Storing it as a string (vs. a Prisma `Json` column)
+// keeps the contract simple — the dashboard receives the same string
+// back and can display it verbatim or hand it to JSON.parse.
+//
+// `lastSuccessAt` / `lastError` / `lastErrorAt` track the most recent
+// dispatch outcome. The /api/projects/[id]/integrations/test route
+// updates these on every test ping, and the pin route updates them
+// after every fan-out. The dashboard's ProjectSettings UI surfaces
+// "last success at X" or "last error: Y" so an operator can see at a
+// glance which integrations are healthy.
+model Integration {
+  id            String    @id @default(uuid())
+  projectId     String
+  project       Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  // "slack" | "discord" | "webhook". Free-form so we can add a new
+  // kind in a single edit without a migration; the API + adapters
+  // enforce the closed set.
+  kind          String
+  configJson    String
+  lastSuccessAt DateTime?
+  lastError     String?
+  lastErrorAt   DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([projectId])
 }
 
 model Subscriber {
