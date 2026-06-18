@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",
-    "@markup/core": "workspace:*",
+    "@markup/core": "file:./packages/markup-core",
     "@prisma/client": "^6.6.0",
     "dotenv": "^16.4.5",
     "next": "16.2.2",
