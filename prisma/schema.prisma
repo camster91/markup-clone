@@ -144,14 +144,62 @@ model Annotation {
 }
 
 model Comment {
+  id          String       @id @default(uuid())
+  pinId       String
+  pin         Pin          @relation(fields: [pinId], references: [id], onDelete: Cascade)
+  author      String       @default("Client")
+  authorRole  String       @default("client")
+  text        String
+  attachments Attachment[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+// Attachment is a file (image, voice, video) attached to a Comment. The
+// first surface is screenshots pasted from the dashboard reviewer's
+// clipboard, but the schema reserves `kind` ('image' | 'voice' |
+// 'video') so a follow-up feature can add voice notes / video replies
+// without a schema migration. The API layer (POST /api/attachments)
+// currently rejects anything that isn't 'image'.
+//
+// storageKey is the on-disk filename under ATTACHMENTS_DIR (a
+// bind-mount at /data/attachments in production, the same path style
+// the screenshot route uses). It's a UUID + extension so two writes
+// can't collide and so a path-traversal probe in the GET route is
+// confined to single-segment filenames.
+//
+// Cascade: deleting the parent Comment removes its attachments. The
+// Comment → Pin → Screenshot → Page chain keeps the rest of the
+// cascade clean (a deleted project removes every page, every
+// screenshot, every pin, every comment, and every attachment).
+model Attachment {
   id         String   @id @default(uuid())
-  pinId      String
-  pin        Pin      @relation(fields: [pinId], references: [id], onDelete: Cascade)
-  author     String   @default("Client")
-  authorRole String   @default("client")
-  text       String
+  // FK to Comment. Nullable so an upload can land in the DB
+  // BEFORE its parent comment is created — the dashboard's
+  // paste handler POSTs the attachment, gets back an id, then
+  // POSTs the comment with the matching attachmentIds in the
+  // same batch. The Comment.create route uses
+  // `connect: [{ id }]` to bind orphan attachments to the new
+  // comment. Cascade: deleting a Comment removes its
+  // attachments (the rows that have a non-null commentId).
+  // Orphan rows (commentId IS NULL) are not cascade-deleted
+  // by a Comment deletion; a separate prune job could
+  // garbage-collect them, but in practice the dashboard
+  // uploads-then-creates atomically so orphans shouldn't
+  // accumulate.
+  commentId  String?
+  comment    Comment? @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  // "image" | "voice" | "video". Free-form string instead of a
+  // Prisma enum so we can add a new kind in a single edit without
+  // a migration; the API layer validates the value against the
+  // closed set before insert.
+  kind       String
+  storageKey String   @unique
+  mimeType   String
+  size       Int
   createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+
+  @@index([commentId])
 }
 
 model AuditLog {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import type { FeedbackComment } from '@/lib/types';
 import { useLiveEvents } from '@/lib/hooks/useLiveEvents';
 import { MENTION_RE } from '@/lib/mentions';
@@ -42,6 +42,13 @@ function renderCommentText(text: string): React.ReactNode[] {
   return parts;
 }
 
+// Hard cap on a single paste / drop. Matches the server-side
+// MAX_ATTACHMENT_BYTES (8MB) so the user gets a client-side
+// warning before the roundtrip. The server is the source of
+// truth — this cap exists to avoid spending a network roundtrip
+// on a payload that will be rejected anyway.
+const MAX_PASTE_BYTES = 8 * 1024 * 1024;
+
 export default function PinThread({
   pin,
   projectId,
@@ -74,6 +81,47 @@ export default function PinThread({
   const [reply, setReply] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [author, setAuthor] = useState('Reviewer');
+  // === Attachments (paste-then-submit) ===================================
+  // pendingAttachments holds the attachmentIds returned by
+  // /api/attachments for images the user pasted (or dropped)
+  // into the textarea. The ids are stored locally and sent
+  // with the comment on submit — the actual file bytes are
+  // already in /data/attachments at that point.
+  //
+  // uploadsInFlight tracks the count of currently-uploading
+  // pastes. The Reply button is disabled while uploads are
+  // pending so the user can't submit a comment without the
+  // attachment rows. uploadErrors surfaces the most recent
+  // paste failure to the user (rate-limited, too large, etc.).
+  const [pendingAttachments, setPendingAttachments] = useState<{ id: string; url: string; mimeType: string; size: number }[]>([]);
+  const [uploadsInFlight, setUploadsInFlight] = useState(0);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  // Pending-paste preview URLs (ObjectURLs). We need to keep
+  // these alive while the paste preview is on screen, and
+  // revoke them when the comment is submitted / cancelled.
+  // The map is keyed by attachmentId so multiple pastes can
+  // coexist with their own previews.
+  const pendingPreviewsRef = useRef<Map<string, string>>(new Map());
+
+  // Revoke any pending ObjectURLs on unmount. A user who
+  // closes the PinThread mid-paste (e.g. navigates away) would
+  // otherwise leak the blob references until the page
+  // garbage-collects them. useEffect's cleanup runs on
+  // unmount AND when the component re-runs (e.g. dev Strict
+  // Mode's double-invoke), so the previews stay tidy.
+  useEffect(() => {
+    // Capture the current ref value so the cleanup function
+    // uses the value at effect time, not whatever the ref is
+    // when React tears the effect down (the lint rule is
+    // warning us about the right thing here).
+    const current = pendingPreviewsRef.current;
+    return () => {
+      for (const previewUrl of current.values()) {
+        URL.revokeObjectURL(previewUrl);
+      }
+      current.clear();
+    };
+  }, []);
 
   // === Live updates (SSE) =================================================
   // Subscribe to the project SSE stream and optimistically append any
@@ -110,23 +158,164 @@ export default function PinThread({
     },
   });
 
+  // === Paste handler =====================================================
+  // Intercept paste events on the textarea. If the clipboard
+  // contains an image (the dominant case: Cmd+V a screenshot
+  // from a screenshot tool), POST it to /api/attachments and
+  // store the returned id in `pendingAttachments`. The image
+  // shows up inline in the preview row above the textarea; the
+  // id rides along on the next submit.
+  //
+  // We DON'T swallow the default paste behaviour for non-image
+  // pastes (e.g. plain text) — the textarea still receives the
+  // pasted text normally. The handler returns early without
+  // calling `e.preventDefault()` so the textarea state stays
+  // consistent.
+  const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (readOnly) return;
+    const items = e.clipboardData?.items;
+    if (!items || items.length === 0) return;
+    // Find the first image item. clipboardData.items is a
+    // DataTransferItemList; we iterate and pick the first kind
+    // === 'file' with a type starting with 'image/'. The
+    // browser's clipboard reader (navigator.clipboard.read)
+    // would also work, but it requires a Permissions-Policy
+    // allowlist and only ships the bytes as Blob — using
+    // clipboardData is the same UX with fewer prereqs.
+    let imageFile: File | null = null;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.kind === 'file' && it.type.startsWith('image/')) {
+        const f = it.getAsFile();
+        if (f) {
+          imageFile = f;
+          break;
+        }
+      }
+    }
+    if (!imageFile) return;
+    // We DO have an image. Stop the textarea from receiving
+    // the paste (which would be a no-op anyway, since the
+    // clipboard is binary), and upload.
+    e.preventDefault();
+    await uploadPastedImage(imageFile);
+  };
+
+  // Upload a pasted image to /api/attachments. The route
+  // returns { success, data: { id, url, kind, size } } on
+  // success. On failure, the route's error message is shown
+  // inline so the user can retry. The 8MB cap is mirrored
+  // here so we don't waste a roundtrip on a payload that
+  // would be rejected.
+  const uploadPastedImage = async (file: File) => {
+    setUploadError(null);
+    if (file.size > MAX_PASTE_BYTES) {
+      setUploadError(`Image is too large (${(file.size / 1024 / 1024).toFixed(1)}MB > 8MB limit).`);
+      return;
+    }
+    if (file.size === 0) {
+      setUploadError('Pasted image is empty.');
+      return;
+    }
+    setUploadsInFlight((n) => n + 1);
+    try {
+      const fd = new FormData();
+      fd.append('file', file, file.name || 'pasted.png');
+      const res = await fetch('/api/attachments', {
+        method: 'POST',
+        body: fd,
+      });
+      if (!res.ok) {
+        // Surface the server's error message verbatim — the
+        // route returns specific text like "file too large" or
+        // "unsupported file type" that helps the user fix the
+        // paste. Fall back to a generic message if the body
+        // isn't JSON.
+        let msg = `Upload failed (${res.status})`;
+        try {
+          const body = await res.json();
+          if (body?.error) msg = body.error;
+        } catch { /* leave msg as the generic */ }
+        setUploadError(msg);
+        return;
+      }
+      const data = await res.json();
+      const att = data.data;
+      // Build a local ObjectURL for the preview. The preview
+      // is shown above the textarea so the user sees the
+      // pasted image even before submit. The URL is revoked
+      // on submit / unmount (pendingPreviewsRef).
+      const previewUrl = URL.createObjectURL(file);
+      pendingPreviewsRef.current.set(att.id, previewUrl);
+      setPendingAttachments((prev) => [
+        ...prev,
+        { id: att.id, url: att.url, mimeType: file.type, size: file.size },
+      ]);
+    } catch (err) {
+      // Network error, abort, etc. — don't leave the user
+      // staring at a silent failure.
+      setUploadError(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploadsInFlight((n) => n - 1);
+    }
+  };
+
+  // Remove a pending attachment (e.g. user changed their mind
+  // before submitting). The Attachment row is left in place
+  // for now — the route's "orphan" semantics mean a row with
+  // commentId=null just doesn't render in the comment thread.
+  // A future prune job could garbage-collect orphans, but in
+  // practice the dashboard's paste-then-submit flow uploads
+  // and submits in the same user gesture, so orphans
+  // shouldn't accumulate. (The on-disk file is also not
+  // deleted — same reasoning.)
+  const removePendingAttachment = (id: string) => {
+    const previewUrl = pendingPreviewsRef.current.get(id);
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      pendingPreviewsRef.current.delete(id);
+    }
+    setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     // Defense in depth: the form is hidden when readOnly, but if a
     // future change re-renders it the post must still no-op so a
     // share-link viewer can't fake a comment.
     if (readOnly) return;
-    if (!reply.trim() || submitting) return;
+    // Must have EITHER text OR pending attachments. We loosened
+    // this from "must have text" so paste-only replies work.
+    if (!reply.trim() && pendingAttachments.length === 0) return;
+    if (submitting || uploadsInFlight > 0) return;
     setSubmitting(true);
     const res = await fetch(`/api/pins/${pin.id}/comments`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: reply, author, authorRole: 'reviewer' }),
+      body: JSON.stringify({
+        text: reply,
+        author,
+        authorRole: 'reviewer',
+        // The comment-create route's `connect: [{ id }]` binds
+        // these orphan attachments to the new comment. After
+        // the response, we revoke the preview ObjectURLs and
+        // clear the local state so the next reply starts clean.
+        attachmentIds: pendingAttachments.map((a) => a.id),
+      }),
     });
     if (res.ok) {
       const data = await res.json();
       onCommentAdded(pin.id, data.data);
       setReply('');
+      // Free the preview ObjectURLs. The server has the bytes
+      // on disk now; the <img> in the new comment will fetch
+      // them from /api/attachments/[id] (dashboard origin
+      // authenticated), so the local blob is no longer needed.
+      for (const [, previewUrl] of pendingPreviewsRef.current.entries()) {
+        URL.revokeObjectURL(previewUrl);
+      }
+      pendingPreviewsRef.current.clear();
+      setPendingAttachments([]);
     }
     setSubmitting(false);
   };
@@ -173,6 +362,51 @@ export default function PinThread({
             <div className="text-gray-800 whitespace-pre-wrap">
               {renderCommentText(c.text)}
             </div>
+            {/* Inline attachments. The server-side Comment response
+                carries `attachments: FeedbackAttachment[]` (see
+                src/lib/types.ts). Each attachment has a relative
+                `url` the dashboard fetches from /api/attachments/[id]
+                — the GET route accepts the request from the
+                dashboard origin without a `?share=` token. We
+                only render <img> tags for the 'image' kind in
+                this round; voice / video are reserved for the
+                future and would use <audio> / <video> elements.
+                The `max-h-64` keeps a giant screenshot from
+                breaking the comment bubble's layout. The
+                `loading="lazy"` defers off-screen images so a
+                long thread of attachments doesn't block the
+                initial paint. */}
+            {c.attachments && c.attachments.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {c.attachments.map((a) => {
+                  if (a.kind === 'image') {
+                    return (
+                      // eslint-disable-next-line @next/next/no-img-element -- served from /api/attachments/[id] with the row's mimeType; the disk-backed stream and the dashboard's same-origin auth are intentional (not a static asset the optimizer can help with).
+                      <img
+                        key={a.id}
+                        src={a.url}
+                        alt={a.mimeType}
+                        loading="lazy"
+                        className="max-h-64 max-w-full rounded border border-gray-200"
+                      />
+                    );
+                  }
+                  // Voice / video reserved for a future surface.
+                  // Render a labelled placeholder so the kind is
+                  // visible to a reader even before the player
+                  // lands. The mimeType is shown so the user
+                  // knows what the file is.
+                  return (
+                    <div
+                      key={a.id}
+                      className="text-xs text-gray-500 border border-dashed border-gray-300 rounded px-2 py-1"
+                    >
+                      {a.kind} attachment ({a.mimeType})
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -186,10 +420,59 @@ export default function PinThread({
             half-broken". */}
         {!readOnly && (
           <>
+        {/* Pending attachment previews. Each entry is a row of
+            [thumbnail × remove]. The thumbnail uses the local
+            ObjectURL (from URL.createObjectURL on the File) so
+            the user sees what they pasted instantly, even
+            before the upload roundtrip. The × button removes
+            the pending attachment — the server's Attachment
+            row stays in place (orphan), and the on-disk file
+            is not deleted. A future prune job could clean up
+            orphans; in practice, the upload-then-submit flow
+            binds them in the same user gesture. */}
+        {pendingAttachments.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {pendingAttachments.map((a) => {
+              const previewUrl = pendingPreviewsRef.current.get(a.id);
+              return (
+                <div
+                  key={a.id}
+                  className="relative inline-block"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element -- local ObjectURL, not a static asset the optimizer can resolve. */}
+                  <img
+                    src={previewUrl ?? a.url}
+                    alt="pasted attachment"
+                    className="max-h-20 max-w-[120px] rounded border border-gray-300"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removePendingAttachment(a.id)}
+                    aria-label="Remove attachment"
+                    className="absolute -top-1.5 -right-1.5 bg-gray-800 text-white rounded-full w-5 h-5 text-xs leading-none flex items-center justify-center hover:bg-red-600"
+                  >
+                    ×
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {/* Upload error — the paste produced a server-side
+            failure (too large, unsupported kind, 5xx). The
+            message is verbatim from the route's body so the
+            user can act on it. We clear it on the next paste
+            or on submit. */}
+        {uploadError && (
+          <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
+            {uploadError}
+          </div>
+        )}
         <textarea
           value={reply}
           onChange={e => setReply(e.target.value)}
-          placeholder="Reply..."
+          onPaste={handlePaste}
+          placeholder="Reply... (paste a screenshot to attach an image)"
           className="w-full border border-gray-300 rounded p-2 text-sm resize-none"
           rows={2}
         />
@@ -215,10 +498,16 @@ export default function PinThread({
             </button>
             <button
               type="submit"
-              disabled={submitting || !reply.trim()}
+              // The Reply button is enabled when EITHER the
+              // textarea has text OR there's a pending
+              // attachment (a paste-only reply is valid).
+              // The button is also disabled while uploads are
+              // in flight so the user can't submit a comment
+              // before the attachment rows exist.
+              disabled={submitting || uploadsInFlight > 0 || (!reply.trim() && pendingAttachments.length === 0)}
               className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 disabled:opacity-50"
             >
-              {submitting ? 'Sending...' : 'Reply'}
+              {submitting ? 'Sending...' : uploadsInFlight > 0 ? 'Uploading...' : 'Reply'}
             </button>
           </div>
         </div>

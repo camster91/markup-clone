@@ -30,17 +30,38 @@ vi.mock('@/lib/prisma', () => ({
 import { DELETE, PATCH } from '../../src/app/api/projects/[id]/route';
 import { NextRequest } from 'next/server';
 
+// Test CSRF token used by the request builders. The value is
+// arbitrary — the route only checks that the cookie and the
+// header MATCH each other, not that they match any specific
+// value. Centralizing the literal here means every test in
+// every file sends the same pair to the server, so any
+// mismatch shows up as a real regression rather than a typo.
+const CSRF_TOKEN = 'test-csrf-token';
+
 function req(method: string, headers: Record<string, string> = {}): NextRequest {
+  // Default headers set BOTH `requireDashboardOrigin` (Origin)
+  // and `requireCsrfToken` (cookie + X-CSRF-Token header).
+  // Tests that want to exercise a missing/mismatched CSRF
+  // token pass their own headers object that overrides these
+  // defaults.
+  const baseHeaders: Record<string, string> = {
+    'X-CSRF-Token': CSRF_TOKEN,
+    cookie: `markup.csrf=${CSRF_TOKEN}`,
+  };
   return new NextRequest(`https://markup.ashbi.ca/api/projects/proj-1`, {
     method,
-    headers: { 'Content-Type': 'application/json', ...headers },
+    headers: { 'Content-Type': 'application/json', ...baseHeaders, ...headers },
   });
 }
 
 function reqWithBody(method: string, body: unknown, headers: Record<string, string> = {}): NextRequest {
+  const baseHeaders: Record<string, string> = {
+    'X-CSRF-Token': CSRF_TOKEN,
+    cookie: `markup.csrf=${CSRF_TOKEN}`,
+  };
   return new NextRequest(`https://markup.ashbi.ca/api/projects/proj-1`, {
     method,
-    headers: { 'Content-Type': 'application/json', ...headers },
+    headers: { 'Content-Type': 'application/json', ...baseHeaders, ...headers },
     body: JSON.stringify(body),
   });
 }

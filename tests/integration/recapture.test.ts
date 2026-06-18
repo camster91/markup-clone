@@ -99,10 +99,24 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// Test CSRF token used by the request builders. The recapture
+// route's `requireCsrfToken` check requires the X-CSRF-Token
+// header to match the `markup.csrf` cookie, so the helpers
+// below inject both. Centralizing the literal here means a
+// typo in the test code can't accidentally pair a mismatched
+// cookie and header.
+const CSRF_TOKEN='***';
+
 function makeReq(headers: Record<string, string> = {}): Request {
+  // Default headers set BOTH `requireDashboardOrigin` (Origin)
+  // and `requireCsrfToken` (cookie + X-CSRF-Token header).
+  const baseHeaders: Record<string, string> = {
+    'X-CSRF-Token': CSRF_TOKEN,
+    cookie: `markup.csrf=${CSRF_TOKEN}`,
+  };
   return new Request('https://markup.ashbi.ca/api/screenshots/11111111-1111-1111-1111-111111111111/recapture', {
     method: 'POST',
-    headers,
+    headers: { ...baseHeaders, ...headers },
   });
 }
 

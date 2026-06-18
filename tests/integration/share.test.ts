@@ -82,10 +82,22 @@ import { NextRequest } from 'next/server';
 
 const ORIGIN = 'https://markup.ashbi.ca';
 
+// Test CSRF token used by the request builders. The share
+// route's `requireCsrfToken` check requires the X-CSRF-Token
+// header to match the `markup.csrf` cookie, so the helpers
+// below inject both.
+const CSRF_TOKEN='***';
+
 function req(method: string, headers: Record<string, string> = {}): NextRequest {
+  // Default headers set BOTH `requireDashboardOrigin` (Origin)
+  // and `requireCsrfToken` (cookie + X-CSRF-Token header).
+  const baseHeaders: Record<string, string> = {
+    'X-CSRF-Token': CSRF_TOKEN,
+    cookie: `markup.csrf=${CSRF_TOKEN}`,
+  };
   return new NextRequest(`https://markup.ashbi.ca/api/projects/proj-1/share`, {
     method,
-    headers: { 'Content-Type': 'application/json', ...headers },
+    headers: { 'Content-Type': 'application/json', ...baseHeaders, ...headers },
   });
 }
 

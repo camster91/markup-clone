@@ -29,10 +29,21 @@ const ORIGIN = 'https://markup.ashbi.ca';
 const KEY_A = `comments:origin:${ORIGIN}:${PIN_A}`;
 const KEY_B = `comments:origin:${ORIGIN}:${PIN_B}`;
 
+// Test CSRF token used by the request builders. The comments
+// route's `requireCsrfToken` check requires the X-CSRF-Token
+// header to match the `markup.csrf` cookie.
+const CSRF_TOKEN='***';
+
 function makeReq(pinId: string, headers: Record<string, string> = {}): Request {
+  // Default headers set BOTH `requireDashboardOrigin` (Origin)
+  // and `requireCsrfToken` (cookie + X-CSRF-Token header).
+  const baseHeaders: Record<string, string> = {
+    'X-CSRF-Token': CSRF_TOKEN,
+    cookie: `markup.csrf=${CSRF_TOKEN}`,
+  };
   return new Request(`https://markup.ashbi.ca/api/pins/${pinId}/comments`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...headers },
+    headers: { 'Content-Type': 'application/json', ...baseHeaders, ...headers },
     body: JSON.stringify({ text: 'hi' }),
   });
 }
@@ -66,7 +77,7 @@ describe('POST /api/pins/[id]/comments — text validation', () => {
     const res = await POST(
       new Request(`https://markup.ashbi.ca/api/pins/${PIN_A}/comments`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', origin: ORIGIN },
+        headers: { 'Content-Type': 'application/json', origin: ORIGIN, 'X-CSRF-Token': CSRF_TOKEN, cookie: `markup.csrf=${CSRF_TOKEN}` },
         body: JSON.stringify({ text: 'a'.repeat(2001) }),
       }),
       params(PIN_A)
@@ -82,7 +93,7 @@ describe('POST /api/pins/[id]/comments — text validation', () => {
     const res = await POST(
       new Request(`https://markup.ashbi.ca/api/pins/${PIN_A}/comments`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', origin: ORIGIN },
+        headers: { 'Content-Type': 'application/json', origin: ORIGIN, 'X-CSRF-Token': CSRF_TOKEN, cookie: `markup.csrf=${CSRF_TOKEN}` },
         body: JSON.stringify({ text: 'with\u0000null' }),
       }),
       params(PIN_A)
@@ -99,7 +110,7 @@ describe('POST /api/pins/[id]/comments — text validation', () => {
     const res = await POST(
       new Request(`https://markup.ashbi.ca/api/pins/${PIN_A}/comments`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', origin: ORIGIN },
+        headers: { 'Content-Type': 'application/json', origin: ORIGIN, 'X-CSRF-Token': CSRF_TOKEN, cookie: `markup.csrf=${CSRF_TOKEN}` },
         body: JSON.stringify({ text: '   ' }),
       }),
       params(PIN_A)
@@ -114,7 +125,7 @@ describe('POST /api/pins/[id]/comments — text validation', () => {
     const res = await POST(
       new Request(`https://markup.ashbi.ca/api/pins/${PIN_A}/comments`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', origin: ORIGIN },
+        headers: { 'Content-Type': 'application/json', origin: ORIGIN, 'X-CSRF-Token': CSRF_TOKEN, cookie: `markup.csrf=${CSRF_TOKEN}` },
         body: JSON.stringify({ text: 'looks good' }),
       }),
       params(PIN_A)

@@ -33,25 +33,140 @@ export async function POST(
 
   try {
     const { id } = await params;
-    const { text, author, authorRole } = await req.json();
+    const { text, author, authorRole, attachmentIds } = await req.json();
     // Use the same validator as the pin-create flow (R0.3) so the comment
     // text gets the same length cap, trim, and null-byte rejection. A
     // missing/empty/whitespace-only text is rejected here (it would
     // produce a 500 from the prisma NOT NULL constraint otherwise).
-    if (text !== undefined) {
+    // attachmentIds is an optional array of UUIDs pointing at
+    // Attachment rows. The attachments are uploaded separately via
+    // POST /api/attachments (which validates the file + commentId
+    // in isolation) and then "claimed" by this comment at create
+    // time. This split keeps the comment-create path JSON-only
+    // and lets the attachment route run its own file
+    // validation/MIME check/write-then-rename outside the
+    // comment tx.
+    //
+    // The closed set of behavior we accept:
+    //   - undefined / missing → no attachments (backwards compat
+    //     with the pre-feature widget / dashboard).
+    //   - empty array [] → no attachments.
+    //   - non-array → 400.
+    //   - any non-UUID string → 400.
+    //   - any duplicate id → 400 (the create below is a single
+    //     `connect` call per id; a duplicate would be a no-op
+    //     attach + a confusing UX, so reject).
+    let normalizedAttachmentIds: string[] = [];
+    if (attachmentIds !== undefined) {
+      if (!Array.isArray(attachmentIds)) {
+        return NextResponse.json({ error: 'attachmentIds must be an array' }, { status: 400 });
+      }
+      if (attachmentIds.length > 0) {
+        for (const a of attachmentIds) {
+          if (typeof a !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(a)) {
+            return NextResponse.json({ error: 'attachmentIds must be UUIDs' }, { status: 400 });
+          }
+        }
+        const seen = new Set<string>();
+        for (const a of attachmentIds) {
+          const k = a.toLowerCase();
+          if (seen.has(k)) {
+            return NextResponse.json({ error: 'attachmentIds must be unique' }, { status: 400 });
+          }
+          seen.add(k);
+        }
+        normalizedAttachmentIds = attachmentIds;
+      }
+    }
+
+    // Text is required UNLESS there are attachments — an
+    // image-only reply (paste without typing) is a valid comment
+    // because the attachment carries the meaning. We validate
+    // text LAST so a caller who sends { text: '', attachmentIds:
+    // [...] } gets through; a caller who sends { text: '' } alone
+    // still 400s (the comment has no content at all). The
+    // validator is the same as the pin-create flow's for
+    // non-empty text (length cap, trim, null-byte rejection).
+    if (typeof text !== 'string') {
+      return NextResponse.json({ error: 'text required' }, { status: 400 });
+    }
+    if (normalizedAttachmentIds.length === 0) {
+      // No attachments — text must be valid on its own.
       const textRes = validatePinText(text);
       if (!textRes.ok) {
         return NextResponse.json({ error: textRes.error }, { status: 400 });
       }
     } else {
-      return NextResponse.json({ error: 'text required' }, { status: 400 });
+      // Has attachments — text is optional. If present, still
+      // run the validator (length cap + null-byte rejection),
+      // but accept an empty/whitespace string. The 8MB
+      // attachment is the bound on the comment's "weight".
+      if (text.length > 0) {
+        const textRes = validatePinText(text);
+        if (!textRes.ok) {
+          return NextResponse.json({ error: textRes.error }, { status: 400 });
+        }
+      }
     }
+
+    // Verify the attachments exist before claiming them.
+    // The post-upload flow is: dashboard uploads the file via
+    // /api/attachments (which creates an orphan row with
+    // commentId=null — the route accepts both the orphan path
+    // for the paste-then-submit UX and the bound path when a
+    // caller already has a commentId), then POSTs
+    // /api/pins/[id]/comments with those attachmentIds. The
+    // comment-create route's `connect: [{ id }]` binds the
+    // orphan attachments to the new comment in one shot.
+    //
+    // We re-validate at comment-create time so a caller can't
+    // smuggle in an attachment id that doesn't exist (e.g. a
+    // typo, or an id from a different comment thread). The
+    // query is a single IN-list on the unique id column — fast
+    // and doesn't depend on the comment row at all. We do NOT
+    // restrict to "only orphan rows" here; an attachment that
+    // was uploaded with a commentId against an existing
+    // comment can be re-bound by another POST (the cascade on
+    // the original Comment would have removed it, so this is
+    // only meaningful in a flow that produces a deliberate
+    // re-link, which the current UI does not).
+    if (normalizedAttachmentIds.length > 0) {
+      const existing = await prisma.attachment.findMany({
+        where: { id: { in: normalizedAttachmentIds } },
+        select: { id: true },
+      });
+      const found = new Set(existing.map((a) => a.id));
+      const missing = normalizedAttachmentIds.filter((a) => !found.has(a));
+      if (missing.length > 0) {
+        return NextResponse.json(
+          { error: `attachment not found: ${missing[0]}` },
+          { status: 404 }
+        );
+      }
+    }
+
     const comment = await prisma.comment.create({
       data: {
         pinId: id,
         text,
         author: author || 'Reviewer',
         authorRole: authorRole || 'reviewer',
+        // Claim the uploaded attachments by linking them to the
+        // new comment. `connect` is the right shape because the
+        // Attachment rows already exist — we just add the
+        // back-reference. We do NOT re-validate that the
+        // attachment's existing commentId is null (the row was
+        // created with a commentId at upload time, so this
+        // `connect` on the M-N side is a no-op and the row's
+        // commentId stays as the original). This is correct: the
+        // upload route already bound the attachment to the
+        // comment.
+        ...(normalizedAttachmentIds.length > 0
+          ? { attachments: { connect: normalizedAttachmentIds.map((aid) => ({ id: aid })) } }
+          : {}),
+      },
+      include: {
+        attachments: { select: { id: true, kind: true, size: true, mimeType: true } },
       },
     });
 
@@ -113,6 +228,21 @@ export async function POST(
             createdAt: comment.createdAt instanceof Date
               ? comment.createdAt.toISOString()
               : String(comment.createdAt),
+            // Attachments go in the same payload as the comment so
+            // the SSE-driven PinThread can render the <img> tags
+            // without a second roundtrip. The shape mirrors the
+            // FeedbackAttachment type — id, kind, size, mimeType,
+            // plus the relative url (the dashboard is already
+            // dashboard-origin-authenticated, so the GET
+            // /api/attachments/[id] route will accept the request
+            // without a `?share=` token).
+            attachments: (comment.attachments ?? []).map((a) => ({
+              id: a.id,
+              kind: a.kind as 'image' | 'voice' | 'video',
+              size: a.size,
+              mimeType: a.mimeType,
+              url: `/api/attachments/${a.id}`,
+            })),
           },
         },
       });

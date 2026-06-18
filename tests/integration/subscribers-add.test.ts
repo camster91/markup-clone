@@ -21,10 +21,26 @@ vi.mock('@/lib/audit', () => ({
 import { POST } from '../../src/app/api/projects/[id]/subscribers/route';
 import { NextRequest } from 'next/server';
 
+// Test CSRF token used by the request builders. The route's
+// `requireCsrfToken` check (see `src/lib/csrf.ts`) requires the
+// X-CSRF-Token header to match the `markup.csrf` cookie, so the
+// request builders below inject both. Centralizing the literal
+// means a typo in the test code can't accidentally pair a
+// mismatched cookie and header.
+const CSRF_TOKEN='***';
+
 function req(body: unknown, origin = 'https://markup.ashbi.ca'): NextRequest {
   return new NextRequest('https://markup.ashbi.ca/api/projects/proj-1/subscribers', {
     method: 'POST',
-    headers: { 'Origin': origin, 'Content-Type': 'application/json' },
+    // CSRF: cookie + X-CSRF-Token header must match. Tests
+    // that want to exercise a missing/mismatched CSRF token
+    // build their own request without these headers.
+    headers: {
+      'Origin': origin,
+      'Content-Type': 'application/json',
+      'X-CSRF-Token': CSRF_TOKEN,
+      cookie: `markup.csrf=${CSRF_TOKEN}`,
+    },
     body: JSON.stringify(body),
   });
 }

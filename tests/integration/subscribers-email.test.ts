@@ -23,10 +23,19 @@ vi.mock('@/lib/audit', () => ({
 import { DELETE } from '../../src/app/api/projects/[id]/subscribers/[email]/route';
 import { NextRequest } from 'next/server';
 
+// Test CSRF token used by the request builders. The route's
+// `requireCsrfToken` check (see `src/lib/csrf.ts`) requires the
+// X-CSRF-Token header to match the `markup.csrf` cookie.
+const CSRF_TOKEN='***';
+
 function req(origin = 'https://markup.ashbi.ca'): NextRequest {
   return new NextRequest('https://markup.ashbi.ca/api/projects/proj-1/subscribers/alice%40example.com', {
     method: 'DELETE',
-    headers: { 'Origin': origin },
+    headers: {
+      'Origin': origin,
+      'X-CSRF-Token': CSRF_TOKEN,
+      cookie: `markup.csrf=${CSRF_TOKEN}`,
+    },
   });
 }
 
@@ -56,7 +65,7 @@ describe('DELETE /api/projects/[id]/subscribers/[email]', () => {
     // The client encodes + as %2B; the route must see the literal +.
     const r = new NextRequest(
       'https://markup.ashbi.ca/api/projects/proj-1/subscribers/alice%2Btest%40example.com',
-      { method: 'DELETE', headers: { 'Origin': 'https://markup.ashbi.ca' } }
+      { method: 'DELETE', headers: { 'Origin': 'https://markup.ashbi.ca', 'X-CSRF-Token': CSRF_TOKEN, cookie: `markup.csrf=${CSRF_TOKEN}` } }
     );
     await DELETE(r, { params: Promise.resolve({ id: 'proj-1', email: 'alice+test@example.com' }) });
     expect(mocks.deleteMany).toHaveBeenCalledWith({
@@ -74,7 +83,7 @@ describe('DELETE /api/projects/[id]/subscribers/[email]', () => {
     // let a path-segment CR/LF reach the DB / audit log.
     const r = new NextRequest(
       'https://markup.ashbi.ca/api/projects/proj-1/subscribers/alice%0ACc%3Aattacker%40example.com',
-      { method: 'DELETE', headers: { 'Origin': 'https://markup.ashbi.ca' } }
+      { method: 'DELETE', headers: { 'Origin': 'https://markup.ashbi.ca', 'X-CSRF-Token': CSRF_TOKEN, cookie: `markup.csrf=${CSRF_TOKEN}` } }
     );
     const res = await DELETE(r, { params: Promise.resolve({ id: 'proj-1', email: 'alice\nCc:attacker@example.com' }) });
     expect(res.status).toBe(400);

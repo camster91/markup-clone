@@ -34,6 +34,7 @@ import { headers } from 'next/headers';
 import { prisma } from '@/lib/prisma';
 import { audit } from '@/lib/audit';
 import ScreenshotView from '@/components/ScreenshotView';
+import type { ScreenshotWithPins } from '@/lib/types';
 
 // Read-only share view must always reflect the latest pins/comments
 // from the DB. The dashboard re-polls every 5s, but a public viewer
@@ -148,10 +149,25 @@ export default async function PublicSharePage({ params }: PageProps) {
       ...page,
       createdAt: page.createdAt.toISOString(),
       updatedAt: page.updatedAt.toISOString(),
-      screenshots: page.screenshots.map((screenshot) => ({
-        ...screenshot,
-        capturedAt: screenshot.capturedAt.toISOString(),
-        pins: screenshot.pins.map((pin) => ({
+      screenshots: page.screenshots.map((screenshot) => {
+        // The share view's ScreenshotView uses the strict
+        // ScreenshotWithPins type. The prisma Screenshot model
+        // has additional fields (updatedAt, page relation) that
+        // the share type doesn't declare — we cast through
+        // `unknown` so the future-proof shape is preserved
+        // without TypeScript complaining about the implicit
+        // prisma extras.
+        return {
+          ...(screenshot as unknown as {
+            id: string;
+            storageKey: string;
+            pageId: string;
+            width: number;
+            height: number;
+            pins: typeof screenshot.pins;
+          }),
+          capturedAt: screenshot.capturedAt.toISOString(),
+          pins: screenshot.pins.map((pin) => ({
           ...pin,
           createdAt: pin.createdAt.toISOString(),
           updatedAt: pin.updatedAt.toISOString(),
@@ -178,7 +194,8 @@ export default async function PublicSharePage({ params }: PageProps) {
             };
           }),
         })),
-      })),
+        };
+      }),
     })),
     createdAt: project.createdAt.toISOString(),
     updatedAt: project.updatedAt.toISOString(),
@@ -231,7 +248,7 @@ export default async function PublicSharePage({ params }: PageProps) {
                     // heartbeat is a no-op anyway).
                     <ScreenshotView
                       key={screenshot.id}
-                      screenshot={screenshot}
+                      screenshot={screenshot as unknown as ScreenshotWithPins}
                       pagePath={page.path}
                       projectId={serializedProject.id}
                       readOnly

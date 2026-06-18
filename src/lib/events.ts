@@ -59,7 +59,7 @@ export interface LiveEventBase {
 export type LiveEvent =
   | (LiveEventBase & { type: 'presence-update'; payload: { presences: Array<{ id: string; userId: string; screenshotId: string | null; cursorX: number | null; cursorY: number | null; lastSeenAt: string }> } })
   | (LiveEventBase & { type: 'new-pin'; payload: { pin: { id: string; screenshotId: string; xPercent: number; yPercent: number; status: string; authorName: string; createdAt: string } } })
-  | (LiveEventBase & { type: 'new-comment'; payload: { pinId: string; comment: { id: string; text: string; author: string; authorRole: string; createdAt: string } } })
+  | (LiveEventBase & { type: 'new-comment'; payload: { pinId: string; comment: { id: string; text: string; author: string; authorRole: string; createdAt: string; attachments: Array<{ id: string; kind: 'image' | 'voice' | 'video'; mimeType: string; size: number; url: string }> } } })
   | (LiveEventBase & { type: 'recapture-complete'; payload: { screenshotId: string; width: number; height: number; capturedAt: string } });
 
 /**

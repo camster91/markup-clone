@@ -107,7 +107,7 @@ export async function GET(req: Request) {
               try {
                 const parsed = JSON.parse(a.pathJson);
                 if (Array.isArray(parsed)) path = parsed as number[][];
-              } catch (err) {
+              } catch {
                 // Don't leak the per-request loop noise — log once.
                 // Production data should never reach this branch
                 // (the POST /api/annotations validator rejects
