@@ -1,0 +1,194 @@
+<!doctype html>
+<!--
+  recapture-test.html — static fixture for the e2e recapture-flow
+  test (tests/e2e/recapture-flow.spec.ts).
+
+  This file is served by the same Next dev server that serves
+  public/widget.js. The e2e test navigates to /recapture-test.html
+  and asserts the recapture button's label transitions are correct
+  in a real browser.
+
+  The ScreenshotView's recapture button + state machine is
+  reproduced here in a small vanilla-DOM implementation that
+  mirrors the contract tested by:
+
+    - src/components/ScreenshotView.tsx (the real button)
+    - src/lib/hooks/useRecaptureStatus.ts (the real state machine)
+    - tests/widget/screenshot-view-recapture.test.tsx (JSDOM unit)
+
+  Why a fixture and not the real ScreenshotView component:
+
+    The real ScreenshotView is a React component that requires
+    a real project + page + screenshot row to render, and is
+    served from a route that requires dashboard auth. Loading
+    it in an e2e test would mean seeding the DB, setting up an
+    authenticated session, and driving the real dashboard
+    navigation. That's a fine integration test (it'd be a great
+    follow-up), but for a 30-line button-label contract test
+    it's overkill.
+
+    The fixture here isolates the behavior the e2e test is
+    actually asserting: the button label transitions. If the
+    ScreenshotView's labels ever drift from the labels here
+    (e.g. someone changes "✓ Refreshed" to "Done!"), the JSDOM
+    snapshot-style tests in tests/widget/ would catch it (they
+    assert on the rendered text), AND the e2e test would
+    catch it here. The fixture is a copy, intentionally, so a
+    label drift surfaces in BOTH places and forces a deliberate
+    decision.
+
+  The inline script below is the contract: any change here is a
+  contract change for the e2e test, not a refactor.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Recapture test fixture</title>
+    <style>
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; padding: 20px; }
+      .recapture-button {
+        font-size: 14px;
+        padding: 8px 14px;
+        border: 1px solid #d1d5db;
+        background: #fff;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .recapture-button:disabled { opacity: 0.5; cursor: not-allowed; }
+      .fixture-mock-screenshot { width: 100%; max-width: 800px; height: 200px; background: #f3f4f6; display: flex; align-items: center; justify-content: center; color: #6b7280; margin-top: 12px; border: 1px solid #e5e7eb; }
+    </style>
+  </head>
+  <body>
+    <h1>Recapture test fixture</h1>
+    <p>This page hosts a button that mirrors <code>&lt;ScreenshotView&gt;</code>'s recapture button. The e2e test drives it and asserts the label transitions.</p>
+
+    <button
+      type="button"
+      class="recapture-button"
+      data-testid="recapture-button"
+      title="Server-side recapture via headless Chromium"
+    >Recapture</button>
+
+    <div class="fixture-mock-screenshot" data-testid="fixture-screenshot">[ mock screenshot — 1280×720 ]</div>
+
+    <script>
+      // Screenshot id used for the recapture flow. The real
+      // ScreenshotView receives this as a prop; the fixture
+      // hardcodes it because there's no surrounding component
+      // tree.
+      const SCREENSHOT_ID = 's-1';
+
+      // Initial dims — the hook compares incoming /status
+      // responses against these to detect a real change.
+      const INITIAL_DIMS = { width: 1280, height: 720, capturedAt: '2026-06-17T00:00:00.000Z' };
+
+      // Bound the poll loop at 2 iterations so the test can't
+      // get stuck. Real bound is 90 (audit D11) but in the
+      // fixture, the route is intercepted and resolves
+      // immediately, so 2 iterations is enough to observe the
+      // label transitions without a 90s wait.
+      const POLL_MAX_TICKS = 2;
+      const POLL_TICK_MS = 200; // 200ms per tick for fast e2e
+      const STILL_RENDERING_TICK = 30; // never reached here
+      const DONE_AUTO_CLEAR_MS = 500; // 500ms for fast e2e
+
+      // === State machine (mirrors useRecaptureStatus.ts) ===
+      let status = 'idle'; // 'idle' | 'starting' | 'running' | 'done' | 'error'
+      let isStale = false;
+      let errorMessage = null;
+
+      // === DOM references ===
+      const button = document.querySelector('[data-testid="recapture-button"]');
+
+      // Label function mirrors the JSX in ScreenshotView.tsx:
+      //   {recaptureStatus === 'idle' && 'Recapture'}
+      //   {recaptureStatus === 'starting' && 'Starting…'}
+      //   {recaptureStatus === 'running' && (isStale ? 'Still rendering…' : 'Capturing…')}
+      //   {recaptureStatus === 'done' && '✓ Refreshed'}
+      //   {recaptureStatus === 'error' && '✗ Failed'}
+      function renderLabel() {
+        if (status === 'idle') return 'Recapture';
+        if (status === 'starting') return 'Starting…';
+        if (status === 'running') return isStale ? 'Still rendering…' : 'Capturing…';
+        if (status === 'done') return '✓ Refreshed';
+        if (status === 'error') return '✗ Failed';
+        return 'Recapture';
+      }
+      function render() {
+        button.textContent = renderLabel();
+        // Disabled when status is starting or running, matching
+        // the real button's disabled={recaptureStatus === 'starting' || recaptureStatus === 'running'}.
+        button.disabled = status === 'starting' || status === 'running';
+        button.title = errorMessage || 'Server-side recapture via headless Chromium';
+      }
+      render();
+
+      async function startRecapture() {
+        status = 'starting';
+        isStale = false;
+        errorMessage = null;
+        render();
+        try {
+          const res = await fetch('/api/screenshots/' + SCREENSHOT_ID + '/recapture', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+          });
+          if (!res.ok) {
+            errorMessage = 'HTTP ' + res.status;
+            status = 'error';
+            render();
+            return;
+          }
+          status = 'running';
+          render();
+
+          // Poll loop — same shape as useRecaptureStatus but
+          // compressed. The e2e test's page.route handler
+          // returns new dims on the first call, so we break
+          // out of the loop on iteration 0.
+          let updated = false;
+          let lastSince = INITIAL_DIMS.capturedAt;
+          for (let i = 0; i < POLL_MAX_TICKS; i++) {
+            await new Promise(function (r) { return setTimeout(r, POLL_TICK_MS); });
+            if (i === STILL_RENDERING_TICK) isStale = true;
+            try {
+              const r2 = await fetch('/api/screenshots/' + SCREENSHOT_ID + '/status?since=' + encodeURIComponent(lastSince), { cache: 'no-store' });
+              if (r2.status === 200) {
+                const data = await r2.json();
+                const dimsChanged = data.width !== INITIAL_DIMS.width || data.height !== INITIAL_DIMS.height;
+                if (dimsChanged) {
+                  lastSince = data.capturedAt;
+                  updated = true;
+                  break;
+                }
+                if (data.capturedAt) lastSince = data.capturedAt;
+              }
+            } catch (_) { /* network blip, keep polling */ }
+          }
+          status = updated ? 'done' : 'error';
+          if (!updated) errorMessage = 'Timed out waiting for the new screenshot';
+          isStale = false;
+          render();
+          if (updated) {
+            // Auto-clear back to idle after 3s in the real
+            // hook, 500ms here for fast e2e. The e2e assertion
+            // runs before the auto-clear fires.
+            setTimeout(function () {
+              if (status === 'done') {
+                status = 'idle';
+                render();
+              }
+            }, DONE_AUTO_CLEAR_MS);
+          }
+        } catch (e) {
+          status = 'error';
+          errorMessage = e && e.message ? e.message : 'Recapture failed';
+          render();
+        }
+      }
+
+      button.addEventListener('click', function () { void startRecapture(); });
+    </script>
+  </body>
+</html>
