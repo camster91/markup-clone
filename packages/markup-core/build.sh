@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # Build the @markup/core shared package.
 #
 # Emits ESM JS + .d.ts files into ./dist/ using the same `tsc` the root
