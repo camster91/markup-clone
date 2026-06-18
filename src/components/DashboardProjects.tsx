@@ -1,8 +1,37 @@
 'use client';
 
+// DashboardProjects
+//
+// List view for the dashboard home page (/). Polls /api/projects
+// with the existing ?since= delta cursor and renders a COMPACT
+// card per project — name, domain, pin counts, last-updated
+// timestamp, and a clickable link to the per-project detail page
+// at /projects/[id].
+//
+// Why a compact card here and a full tree at /projects/[id]:
+//   - The dashboard home used to inline the full project tree
+//     (every page, screenshot, pin, comment). That made the home
+//     page render-heavy and slow to scan when a workspace has
+//     many projects.
+//   - Splitting the detail onto /projects/[id] keeps the home
+//     page scannable — operators see the project list and
+//     pin counts at a glance, and dive into a project for the
+//     full screenshot / pin tree.
+//   - The per-project detail is hosted by <ProjectDetail>, which
+//     re-uses the same ScreenshotView / PinThread / usePresence /
+//     useLiveEvents / useRecaptureStatus hooks. The two pages
+//     share the same component composition; only the wrapper
+//     changes (list of compact cards vs. single full tree).
+//
+// Polling: unchanged from the pre-split dashboard. The 5s tick
+// against /api/projects, with `lastSuccessfulPoll - 1000` as the
+// cursor, is still the source of truth for the home page's
+// "updated just now / Ns ago" affordance. The detail page runs
+// its own identical poll loop scoped to its own projectId.
+
 import { useState, useEffect, useRef, useCallback } from 'react';
+import Link from 'next/link';
 import CopyButton from './CopyButton';
-import ScreenshotView from './ScreenshotView';
 import ProjectSettings, { ShareToggle, IntegrationsSection } from './ProjectSettings';
 import ProjectSubscribers from './ProjectSubscribers';
 import PresenceList from './PresenceList';
@@ -97,9 +126,9 @@ export default function DashboardProjects() {
       <div className="flex justify-end mb-2">
         <span className="text-xs text-gray-400">{getTimeSinceUpdate()}</span>
       </div>
-      <div className="space-y-8">
+      <div className="space-y-4">
         {projects.map(project => (
-          <ProjectCard
+          <ProjectListCard
             key={project.id}
             project={project}
             onProjectUpdated={fetchProjects}
@@ -110,16 +139,22 @@ export default function DashboardProjects() {
   );
 }
 
-// ProjectCard
+// ProjectListCard
 //
-// One project in the dashboard. Extracted from DashboardProjects so
-// the usePresence() hook has a project-scoped lifecycle (mount/unmount
-// when the project list changes). Each project gets its own presence
-// heartbeat + poll; if the project list reorders or grows, the
-// existing instances stay alive. The hook is keyed on projectId, so
-// re-keying (e.g. after a project delete) cleanly tears down the old
-// heartbeat and starts a new one for the new key.
-function ProjectCard({
+// Compact summary card for the dashboard home page. Shows the
+// project name (as a link to /projects/[id]), domain, pin counts,
+// share-link toggle, presence strip, settings menu, and the
+// per-project sub-components (subscribers, integrations) that
+// operators expect to find on the dashboard. The full screenshot
+// / pin / comment tree has been moved to /projects/[id].
+//
+// The compact card is what the operator scans to find the
+// project they want to review; clicking the name (or the
+// "Open project →" affordance) navigates to the per-project
+// page for the full tree. This split keeps the home page
+// snappy (less HTML, fewer re-renders) and makes deep links
+// stable (a per-project URL is bookmarkable / shareable).
+function ProjectListCard({
   project,
   onProjectUpdated,
 }: {
@@ -128,9 +163,12 @@ function ProjectCard({
 }) {
   // usePresence runs the heartbeat + poll for THIS project. We don't
   // pass a cursorRef at this level — that's the per-screenshot concern
-  // handled inside <ScreenshotView>. The presence row's cursor fields
-  // will simply be null (no cursor) until a screenshot reports a
-  // position via its own usePresence call.
+  // handled inside <ScreenshotView> on the detail page. The presence
+  // row's cursor fields will simply be null (no cursor) until a
+  // screenshot reports a position via its own usePresence call.
+  // We keep the call here so the "Online now" strip on the home
+  // page reflects who's currently looking at this project — even
+  // when the operator is on the LIST page, not the detail page.
   const { myUserId, others } = usePresence({ projectId: project.id });
 
   const totalPins = project.pages.reduce(
@@ -141,14 +179,30 @@ function ProjectCard({
     (acc, p) => acc + p.screenshots.reduce((a, s) => a + s.pins.filter(pn => pn.status === 'OPEN').length, 0),
     0
   );
+  const totalScreenshots = project.pages.reduce(
+    (acc, p) => acc + p.screenshots.length,
+    0
+  );
+  const totalPages = project.pages.length;
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
       <div className="bg-gray-900 px-6 py-4">
         <div className="flex items-center justify-between flex-wrap gap-3">
-          <div>
-            <h2 className="text-xl font-semibold text-white">{project.name}</h2>
-            <p className="text-gray-400 text-sm">{project.domain}</p>
+          <div className="min-w-0 flex-1">
+            {/* The project name is the primary "open this project"
+                affordance. We render it as a <Link> to
+                /projects/[id] so deep-linking + right-click-open-
+                in-new-tab work. The "Open project →" link in
+                the body below is a secondary affordance for
+                users who scan to the body before the header. */}
+            <Link
+              href={`/projects/${project.id}`}
+              className="text-xl font-semibold text-white hover:underline focus:underline focus:outline-none"
+            >
+              {project.name}
+            </Link>
+            <p className="text-gray-400 text-sm truncate">{project.domain}</p>
           </div>
           <div className="flex items-center gap-4 text-sm">
             <span className="text-gray-300">
@@ -166,10 +220,22 @@ function ProjectCard({
         </div>
       </div>
 
-      <div className="px-6 py-3 bg-gray-50 border-b border-gray-200 flex items-center gap-2 text-xs">
+      <div className="px-6 py-3 bg-gray-50 border-b border-gray-200 flex items-center gap-2 text-xs flex-wrap">
         <span className="text-gray-500">API Key:</span>
         <code className="bg-white px-2 py-1 rounded border border-gray-200 font-mono">{project.apiKey}</code>
         <CopyButton text={project.apiKey} />
+        <span className="text-gray-300 mx-1">·</span>
+        <span className="text-gray-500">
+          {totalPages} page{totalPages === 1 ? '' : 's'} · {totalScreenshots} capture{totalScreenshots === 1 ? '' : 's'}
+        </span>
+        <span className="ml-auto">
+          <Link
+            href={`/projects/${project.id}`}
+            className="text-blue-600 hover:text-blue-800 hover:underline"
+          >
+            Open project →
+          </Link>
+        </span>
       </div>
 
       {/* Public share link toggle. Reads the project's current
@@ -208,33 +274,6 @@ function ProjectCard({
           change). The IntegrationsSection component fetches
           its own list on mount. */}
       <IntegrationsSection projectId={project.id} />
-
-      <div className="p-6 space-y-6">
-        {project.pages.length === 0 ? (
-          <p className="text-sm text-gray-500 italic">No pages captured yet. Visit the client site with the widget installed.</p>
-        ) : (
-          project.pages.map(page => (
-            <div key={page.id} className="mb-6 last:mb-0">
-              <h3 className="text-sm font-semibold text-gray-700 mb-3 pb-2 border-b flex items-center gap-2">
-                <span className="font-mono">{page.path}</span>
-                <span className="text-xs text-gray-400 font-normal">
-                  {page.screenshots.length} capture{page.screenshots.length === 1 ? '' : 's'}
-                </span>
-              </h3>
-              <div className="space-y-6">
-                {page.screenshots.map(screenshot => (
-                  <ScreenshotView
-                    key={screenshot.id}
-                    screenshot={screenshot}
-                    pagePath={page.path}
-                    projectId={project.id}
-                  />
-                ))}
-              </div>
-            </div>
-          ))
-        )}
-      </div>
     </div>
   );
 }
