@@ -1,54 +1,72 @@
+// Authentication primitives — split into two halves in P2.2.
+//
+//  • Pure helpers (cookie name, role list, isDashboardOrigin, the
+//    401-builder, the two token factories) live in
+//    `@markup/core/auth` so they can be reused outside the app.
+//
+//  • Helpers that have to touch the request scope — `cookies()` from
+//    next/headers for `requireAuth`, or the Prisma client for
+//    `requireProjectKey` — stay here and depend on the framework.
+//
+// Everything imported from `@/lib/auth` in app code and tests keeps
+// working unchanged.
+
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { prisma } from './prisma';
 import { timingSafeEqual } from 'crypto';
-import { parseHost } from './origin';
+import { prisma } from './prisma';
+import {
+  isDashboardOrigin as isDashboardOriginCore,
+  requireDashboardOrigin as requireDashboardOriginCore,
+  SESSION_COOKIE,
+  SESSION_TTL_SECONDS,
+  ROLES,
+  generateApiKey,
+  generateShareToken,
+  getDashboardHost,
+} from '@markup/core/auth';
 
-export const SESSION_COOKIE = 'markup.session';
-// 7 days — matches the Session row's expiresAt (set on issuance).
-// 7d = 7 * 24 * 60 * 60 = 604800s.
-export const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
-// "operator" | "reviewer" — closed set, enforced at the API + UI
-// layer. Stored as a free-form string in the DB so we can add a new
-// role in a single edit without a migration.
-export const ROLES = ['operator', 'reviewer'] as const;
-export type Role = (typeof ROLES)[number];
+// Re-export the pure pieces so `import { ROLES } from '@/lib/auth'`
+// (and similar) still work for every existing callsite.
+export {
+  SESSION_COOKIE,
+  SESSION_TTL_SECONDS,
+  ROLES,
+  generateApiKey,
+  generateShareToken,
+  getDashboardHost,
+};
 
-function getDashboardHost(): string {
-  // parseHost handles both bare-hostname and full-URL forms of the env
-  // var, and falls back to 'markup.ashbi.ca' when unset. We only need
-  // the bare host here — the allow-list compares against `host` (which
-  // includes the port, from `new URL(origin).host`), so a different
-  // port is correctly rejected even when the underlying hostname matches.
-  return parseHost(process.env.DASHBOARD_HOST).host;
+export type { Role } from '@markup/core/auth';
+
+/**
+ * Wrap the package's structural 401-builder into a real NextResponse.
+ * The package can't depend on next/server, so it returns
+ * `{ status, body }`; the route handler below does the JSON shaping.
+ */
+function buildAuthErrorResponse(): NextResponse {
+  const r = requireDashboardOriginCore(new Request('https://placeholder.invalid/'));
+  // The pure check returned null (origin is "https://placeholder.invalid",
+  // not the dashboard host), so we always have a non-null error here.
+  return NextResponse.json(JSON.parse(r!.body), { status: r!.status });
 }
 
 export function isDashboardOrigin(req: Request): boolean {
-  const dashboardHost = getDashboardHost();
-  const origin = req.headers.get('origin');
-  if (origin) {
-    // Accept exact match OR a subdomain of the dashboard host
-    // (`admin.markup.ashbi.ca` → allowed; `markup.ashbi.ca.evil.com` → not).
-    // We do NOT use String.includes() — that accepts e.g. an `evil.com` Origin
-    // whose URL contains the dashboard host as a query parameter.
-    try {
-      const host = new URL(origin).host;
-      if (host === dashboardHost || host.endsWith('.' + dashboardHost)) return true;
-    } catch {
-      // Malformed Origin header — fall through to sec-fetch-site.
-    }
-  }
-  if (req.headers.get('sec-fetch-site') === 'same-origin') return true;
-  return false;
+  return isDashboardOriginCore(req);
 }
 
 export function requireDashboardOrigin(req: Request): NextResponse | null {
-  if (isDashboardOrigin(req)) return null;
-  return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (isDashboardOriginCore(req)) return null;
+  // Re-shape the package's structural error into a real NextResponse.
+  // The package returns `{ status: 401, body: '{"error":"Unauthorized"}' }`;
+  // we rebuild the equivalent NextResponse with the original request's
+  // headers, so any caller that inspects response.headers still gets
+  // the next/server defaults.
+  return buildAuthErrorResponse();
 }
 
 export async function requireProjectKey(req: Request, projectId: string): Promise<NextResponse | null> {
-  if (isDashboardOrigin(req)) return null;
+  if (isDashboardOriginCore(req)) return null;
 
   const provided = req.headers.get('x-api-key');
   if (!provided) return NextResponse.json({ error: 'Missing X-Api-Key' }, { status: 401 });
@@ -73,24 +91,6 @@ export async function requireProjectKey(req: Request, projectId: string): Promis
   return null;
 }
 
-export function generateApiKey(): string {
-  return 'mk_' + require('crypto').randomBytes(20).toString('hex');
-}
-
-/**
- * 32-byte random token, base64url-encoded (no padding).
- *
- * Used for the public /share/[token] view. base64url (not standard base64)
- * keeps the token URL-safe without further escaping. 32 bytes = 256 bits of
- * entropy, which is the same security level we use for the apiKey
- * (40 hex chars = 160 bits, so this is actually stronger). The unique
- * constraint on Project.shareToken backs a uniqueness assumption that holds
- * with 1 - 2^-256 collision probability per issuance.
- */
-export function generateShareToken(): string {
-  return require('crypto').randomBytes(32).toString('base64url');
-}
-
 /**
  * Resolve the current user from the session cookie, if any.
  *
@@ -100,17 +100,9 @@ export function generateShareToken(): string {
  *   - the cookie's token does not match any row (logged out / cleared)
  *   - the session has expired (expiresAt < now)
  *
- * Used by:
- *   - /api/auth/me (returns the user, or 401)
- *   - /api/auth/logout (clears the session row)
- *   - F10+ dashboard routes that need a real user id (presence,
- *     audit, project ownership, etc.) — they'll stack this on top
- *     of the existing requireDashboardOrigin gate.
- *
- * Not behind requireDashboardOrigin on purpose: the login route
- * (POST /api/auth/login) needs to set a session for a brand-new
- * caller who may not yet be on the dashboard origin, and the logout
- * route is idempotent (clearing a missing session is a no-op).
+ * Stays in src/lib/auth.ts (not in @markup/core/auth) because it
+ * needs `cookies()` from next/headers, which is a server-runtime
+ * API and not part of the framework-agnostic package.
  */
 export interface SessionUser {
   id: string;

@@ -2,9 +2,13 @@
   "name": "markup-clone",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "npm run build:core && next build",
+    "build:core": "cd packages/markup-core && ./build.sh",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
@@ -17,6 +21,7 @@
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",
+    "@markup/core": "workspace:*",
     "@prisma/client": "^6.6.0",
     "dotenv": "^16.4.5",
     "next": "16.2.2",
