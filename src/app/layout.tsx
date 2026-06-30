@@ -13,8 +13,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Markup — Visual Feedback Dashboard",
-  description: "Visual feedback tool for client websites. Click anywhere to leave a comment.",
+  title: "Markup Clone",
+  description: "Website cloning and template replication tool",
+  icons: {
+    icon: "/favicon.ico",
+  },
 };
 
 export default function RootLayout({
@@ -25,7 +28,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={\`\${geistSans.variable} \${geistMono.variable} h-full antialiased\`}
     >
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
