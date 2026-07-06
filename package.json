@@ -32,7 +32,7 @@
     "react-dom": "19.2.7"
   },
   "devDependencies": {
-    "@playwright/test": "^1.61.0",
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4",
     "@types/jsdom": "^28.0.3",
     "@types/node": "^20",
@@ -42,7 +42,7 @@
     "@vitejs/plugin-react": "^4.3.3",
     "@vitest/coverage-v8": "^2.1.5",
     "eslint": "^9",
-    "eslint-config-next": "16.2.9",
+    "eslint-config-next": "16.2.10",
     "jsdom": "^29.1.1",
     "supertest": "^7.0.0",
     "tailwindcss": "^4",
