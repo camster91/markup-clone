@@ -157,7 +157,7 @@ describe('recapture.sh: PNG dimension extraction matches the existing fixture', 
   // and verified to be 800x600 by `file`. The script's parser should also read
   // 800x600. This catches any future drift in the script vs the fixture.
   it('matches the file command output for tests/fixtures/test-pin.png', () => {
-    const file = '/Users/biancabienaime/markup-clone/tests/fixtures/test-pin.png';
+    const file = join(__dirname, '..', 'fixtures', 'test-pin.png');
     const w = pngWidth(file);
     const h = pngHeight(file);
     // The fixture is generated at 800x600. If the script's parser disagrees,
