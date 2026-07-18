@@ -15,6 +15,10 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
+      // Tests resolve @markup/core against the workspace package SOURCE so
+      // `vitest` works on a fresh clone without `npm run build:core` first
+      // (the package's exports map points at dist/, which may not exist).
+      '@markup/core': path.resolve(__dirname, './packages/markup-core/src'),
       '@': path.resolve(__dirname, './src'),
     },
   },
