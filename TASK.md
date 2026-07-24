@@ -118,12 +118,13 @@ the merge commit / PR that landed each:
 - Public read-only project share links with revoke (`/api/projects/[id]/share`)
 - Recapture screenshot version history (`model ScreenshotVersion`)
 - PATCH / DELETE 404s on missing records (audit 2026-06-17)
-- **Dashboard session gate (2026-07-24 security audit):** dashboard
-  API routes use `requireDashboardSession` (Origin CSRF +
+- **Dashboard session gate (2026-07-24 security audit, `e62a012`):**
+  dashboard API routes use `requireDashboardSession` (Origin CSRF +
   `markup.session` cookie). Origin alone no longer bypasses
   `requireProjectKey`. Outbound integration URLs pass
   `assertSafeOutboundUrl` (SSRF). Integration/unit tests updated
-  accordingly (`tests/helpers/dashboard-auth.ts`).
+  accordingly (`tests/helpers/dashboard-auth.ts`). Full findings in
+  `docs/plans/2026-07-24-production-security-audit.md`.
 
 ---
 
