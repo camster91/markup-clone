@@ -13,13 +13,12 @@
 //     during the 90s timeout.
 //   - the mountedRef abort-on-unmount guard (audit F5) that bails out of
 //     the 90-tick poll loop if the component unmounts mid-flight.
-//   - the audit-log emission for the user-visible recapture events
-//     (success, failure, spawn-error). The audit() helper is fire-and-
-//     forget; calling it from here keeps the audit line attached to the
-//     state transition that produced it, regardless of which component
-//     instantiates the hook in the future.
 //   - the 3s auto-clear setTimeout that returns the button to 'idle'
-//     after 'done'.
+//     after 'done'. Audit rows for recapture are written by the
+//     server route (POST /api/screenshots/[id]/recapture) — the
+//     client must NOT call audit() (that helper is a server-side
+//     prisma write and would either no-op or leak an unintended
+//     client→DB path).
 //
 // The screenshot is *re-captured* server-side via
 //   POST /api/screenshots/[id]/recapture
@@ -49,7 +48,6 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { dashboardHeaders } from '@/lib/client-origin';
-import { audit } from '@/lib/audit';
 
 export type RecaptureStatus = 'idle' | 'starting' | 'running' | 'done' | 'error';
 
@@ -137,12 +135,6 @@ export function useRecaptureStatus(
       if (!res.ok) {
         const data = await res.json().catch(() => ({} as { error?: string }));
         const message = (data as { error?: string }).error || `HTTP ${res.status}`;
-        audit({
-          actor: 'dashboard',
-          action: 'screenshot.recapture',
-          target: screenshotId,
-          metadata: { status: 'spawn_error', message },
-        });
         throw new Error(message);
       }
       setStatus('running');
@@ -203,12 +195,6 @@ export function useRecaptureStatus(
       if (!updated) {
         setError('Timed out waiting for the new screenshot');
       } else {
-        audit({
-          actor: 'dashboard',
-          action: 'screenshot.recapture',
-          target: screenshotId,
-          metadata: { status: 'ok' },
-        });
         // Auto-clear the "done" indicator after 3 seconds.
         setTimeout(() => {
           if (mountedRef.current) setStatus('idle');

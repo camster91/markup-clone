@@ -183,8 +183,14 @@ function ProjectListCard({
 
       <div className="px-6 py-3 bg-gray-50 border-b border-gray-200 flex items-center gap-2 text-xs flex-wrap">
         <span className="text-gray-500">API Key:</span>
-        <code className="bg-white px-2 py-1 rounded border border-gray-200 font-mono">{project.apiKey}</code>
-        <CopyButton text={project.apiKey} />
+        {project.apiKey ? (
+          <>
+            <code className="bg-white px-2 py-1 rounded border border-gray-200 font-mono">{project.apiKey}</code>
+            <CopyButton text={project.apiKey} />
+          </>
+        ) : (
+          <span className="text-gray-400">Sign in to view</span>
+        )}
         <span className="text-gray-300 mx-1">·</span>
         <span className="text-gray-500">
           {totalPages} page{totalPages === 1 ? '' : 's'} · {totalScreenshots} capture{totalScreenshots === 1 ? '' : 's'}

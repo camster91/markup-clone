@@ -73,6 +73,7 @@ import { POST as loginPOST } from '../../src/app/api/auth/login/route';
 import { POST as logoutPOST } from '../../src/app/api/auth/logout/route';
 import { GET as meGET } from '../../src/app/api/auth/me/route';
 import { requireAuth } from '../../src/lib/auth';
+import { _resetBucket } from '../../src/lib/rate-limit';
 import { NextRequest } from 'next/server';
 import { hashPassword } from '../../src/lib/password';
 
@@ -89,6 +90,11 @@ function loginReq(body: unknown, headers: Record<string, string> = {}): NextRequ
 beforeEach(() => {
   vi.clearAllMocks();
   cookieStore.data.value = undefined;
+  // Reset login rate-limit buckets so earlier tests don't starve
+  // later ones (maxTokens 10 across the whole file).
+  _resetBucket('login:ip:unknown');
+  _resetBucket('login:email:alice@example.com');
+  _resetBucket('login:email:nobody@example.com');
   // Default user row — individual tests override as needed.
   mocks.user.findUnique.mockImplementation(async ({ where }: { where: { email: string } }) => {
     if (where.email === 'alice@example.com') {
@@ -131,20 +137,22 @@ beforeEach(() => {
 });
 
 describe('POST /api/auth/login — valid creds', () => {
-  it('returns 200 with the user and sessionToken, sets the cookie', async () => {
+  it('returns 200 with the user (no sessionToken in body), sets the cookie', async () => {
     const res = await loginPOST(loginReq({ email: 'alice@example.com', password: 'correct-password' }));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.user).toEqual({ id: 'user-1', email: 'alice@example.com', role: 'operator' });
-    expect(typeof body.sessionToken).toBe('string');
-    expect(body.sessionToken.length).toBeGreaterThan(20);
+    // Session token must be cookie-only — never returned in JSON
+    // (XSS would otherwise exfiltrate it from the response body).
+    expect(body.sessionToken).toBeUndefined();
 
     // The response must set the HttpOnly session cookie. Next.js'
     // response.cookies stores the value on the response object;
     // the test asserts the cookie is present and HttpOnly.
     const setCookie = res.cookies.get('markup.session');
     expect(setCookie).toBeDefined();
-    expect(setCookie?.value).toBe(body.sessionToken);
+    expect(setCookie?.value).toBeTruthy();
+    expect(setCookie?.value.length).toBeGreaterThan(20);
     expect(setCookie?.httpOnly).toBe(true);
   });
 
@@ -170,11 +178,14 @@ describe('POST /api/auth/login — valid creds', () => {
     expect(expiresAt).toBeLessThanOrEqual(after + sevenDays + 1000);
   });
 
-  it('returns the same sessionToken in the body that gets stored on the row', async () => {
+  it('stores the session token on the Session row (cookie value matches)', async () => {
     const res = await loginPOST(loginReq({ email: 'alice@example.com', password: 'correct-password' }));
+    expect(res.status).toBe(200);
     const body = await res.json();
+    expect(body.sessionToken).toBeUndefined();
     const call = mocks.session.create.mock.calls[0][0];
-    expect(call.data.token).toBe(body.sessionToken);
+    const setCookie = res.cookies.get('markup.session');
+    expect(setCookie?.value).toBe(call.data.token);
   });
 });
 

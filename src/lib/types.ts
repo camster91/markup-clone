@@ -78,7 +78,8 @@ export type ProjectWithPages = {
   id: string;
   name: string;
   domain: string;
-  apiKey: string;
+  /** Null when the RSC deliberately redacts secrets for anonymous callers. */
+  apiKey: string | null;
   /**
    * The active share link token, if any. NULL = sharing is disabled
    * for this project. The dashboard's ShareToggle component reads

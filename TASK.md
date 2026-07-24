@@ -119,6 +119,17 @@ the merge commit / PR that landed each:
 - Recapture screenshot version history (`model ScreenshotVersion`)
 - PATCH / DELETE 404s on missing records (audit 2026-06-17)
 
+### Production security audit — Critical/High client + media (branch `cursor/production-security-audit-4eb8`)
+- **Status:** shipped (this branch) — commit noted below after push
+- DashboardPoller delta upsert-by-id (empty delta no longer wipes list)
+- Presence GET always full TTL list (dropped `?since=`)
+- Removed client-side `audit()` from `useRecaptureStatus`
+- Login: cookie-only session token, IP/email rate limit, CSRF cookie
+- `dashboardHeaders()` sends CSRF double-submit header
+- Screenshot `/image` + `/history` gated (dashboard origin OR `?share=`)
+- Home/share pages redact `apiKey` for anonymous / public viewers
+- NewProjectForm try/catch/finally around create fetch
+
 ---
 
 ## 🚧 Blocked

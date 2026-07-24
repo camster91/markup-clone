@@ -56,20 +56,56 @@ export default async function PublicSharePage({ params }: PageProps) {
   // 'anonymous' (we don't have a user identity in the public view)
   // and the metadata carries the token prefix and request IP/UA so
   // the audit UI can render it usefully.
+  // Explicit select that EXCLUDES apiKey. The share page is
+  // public — embedding the widget key in the RSC payload (or
+  // accidentally spreading the full prisma row into client
+  // props) would leak a write credential to every share viewer.
   const project = await prisma.project.findUnique({
     where: { shareToken: token },
-    include: {
+    select: {
+      id: true,
+      name: true,
+      domain: true,
+      shareToken: true,
+      createdAt: true,
+      updatedAt: true,
       pages: {
         orderBy: { createdAt: 'asc' },
-        include: {
+        select: {
+          id: true,
+          path: true,
+          createdAt: true,
+          updatedAt: true,
           screenshots: {
             orderBy: { capturedAt: 'desc' },
-            include: {
+            select: {
+              id: true,
+              storageKey: true,
+              pageId: true,
+              width: true,
+              height: true,
+              capturedAt: true,
               pins: {
                 orderBy: { createdAt: 'asc' },
-                include: {
+                select: {
+                  id: true,
+                  xPercent: true,
+                  yPercent: true,
+                  status: true,
+                  elementXPath: true,
+                  elementHTML: true,
+                  createdAt: true,
+                  updatedAt: true,
                   comments: {
                     orderBy: { createdAt: 'asc' },
+                    select: {
+                      id: true,
+                      text: true,
+                      author: true,
+                      authorRole: true,
+                      createdAt: true,
+                      updatedAt: true,
+                    },
                   },
                   // Same shape as /api/projects: include the
                   // annotations (drawn marks) on each pin so the
@@ -78,6 +114,12 @@ export default async function PublicSharePage({ params }: PageProps) {
                   // annotations from this page, only view them.
                   annotations: {
                     orderBy: { createdAt: 'asc' },
+                    select: {
+                      id: true,
+                      kind: true,
+                      pathJson: true,
+                      createdAt: true,
+                    },
                   },
                 },
               },
@@ -143,36 +185,42 @@ export default async function PublicSharePage({ params }: PageProps) {
   // validator, so the JSON.parse here only fails on a hand-crafted
   // DB row; we fall back to an empty array so the share view's
   // ScreenshotView doesn't throw on the bad row.
+  // Build a deliberate client payload — never spread the prisma
+  // row (that would risk re-introducing apiKey if the select
+  // above is widened later).
   const serializedProject = {
-    ...project,
+    id: project.id,
+    name: project.name,
+    domain: project.domain,
+    shareToken: project.shareToken,
+    createdAt: project.createdAt.toISOString(),
+    updatedAt: project.updatedAt.toISOString(),
     pages: project.pages.map((page) => ({
-      ...page,
+      id: page.id,
+      path: page.path,
       createdAt: page.createdAt.toISOString(),
       updatedAt: page.updatedAt.toISOString(),
-      screenshots: page.screenshots.map((screenshot) => {
-        // The share view's ScreenshotView uses the strict
-        // ScreenshotWithPins type. The prisma Screenshot model
-        // has additional fields (updatedAt, page relation) that
-        // the share type doesn't declare — we cast through
-        // `unknown` so the future-proof shape is preserved
-        // without TypeScript complaining about the implicit
-        // prisma extras.
-        return {
-          ...(screenshot as unknown as {
-            id: string;
-            storageKey: string;
-            pageId: string;
-            width: number;
-            height: number;
-            pins: typeof screenshot.pins;
-          }),
-          capturedAt: screenshot.capturedAt.toISOString(),
-          pins: screenshot.pins.map((pin) => ({
-          ...pin,
+      screenshots: page.screenshots.map((screenshot) => ({
+        id: screenshot.id,
+        storageKey: screenshot.storageKey,
+        pageId: screenshot.pageId,
+        width: screenshot.width,
+        height: screenshot.height,
+        capturedAt: screenshot.capturedAt.toISOString(),
+        pins: screenshot.pins.map((pin) => ({
+          id: pin.id,
+          xPercent: pin.xPercent,
+          yPercent: pin.yPercent,
+          status: pin.status,
+          elementXPath: pin.elementXPath,
+          elementHTML: pin.elementHTML,
           createdAt: pin.createdAt.toISOString(),
           updatedAt: pin.updatedAt.toISOString(),
           comments: pin.comments.map((comment) => ({
-            ...comment,
+            id: comment.id,
+            text: comment.text,
+            author: comment.author,
+            authorRole: comment.authorRole,
             createdAt: comment.createdAt.toISOString(),
             updatedAt: comment.updatedAt.toISOString(),
           })),
@@ -194,11 +242,8 @@ export default async function PublicSharePage({ params }: PageProps) {
             };
           }),
         })),
-        };
-      }),
+      })),
     })),
-    createdAt: project.createdAt.toISOString(),
-    updatedAt: project.updatedAt.toISOString(),
   };
 
   return (

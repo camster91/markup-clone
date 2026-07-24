@@ -32,10 +32,36 @@
 // the user can't see. The detail page (/projects/[id]) runs
 // its own identical poll loop scoped to its own projectId;
 // the two are independent.
+//
+// Delta merge: when `?since=` is set the route returns only
+// rows updated after the cursor — NOT a full replacement.
+// We upsert those rows into the existing list by id. An empty
+// delta must leave the list unchanged (replacing with [] would
+// wipe the dashboard). A full fetch (since === null) may
+// replace.
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import DashboardProjects from './DashboardProjects';
 import type { ProjectWithPages } from '@/lib/types';
+
+/** Upsert delta projects into the existing list by id. Preserves
+ *  order of existing rows; appends brand-new ids at the end. */
+function mergeProjectsById(
+  prev: ProjectWithPages[],
+  delta: ProjectWithPages[]
+): ProjectWithPages[] {
+  if (delta.length === 0) return prev;
+  const byId = new Map(prev.map((p) => [p.id, p]));
+  for (const p of delta) {
+    byId.set(p.id, p);
+  }
+  const existingIds = new Set(prev.map((p) => p.id));
+  const updated = prev.map((p) => byId.get(p.id)!);
+  for (const p of delta) {
+    if (!existingIds.has(p.id)) updated.push(p);
+  }
+  return updated;
+}
 
 export default function DashboardPoller({
   projects: initialData,
@@ -56,6 +82,12 @@ export default function DashboardPoller({
   // without a cursor and the route returns the full tree.
   const lastSuccessfulPoll = useRef<number | null>(null);
 
+  // Keep local state in sync when the RSC re-renders with fresh
+  // initialData (e.g. after a soft navigation / revalidation).
+  useEffect(() => {
+    setProjects(initialData);
+  }, [initialData]);
+
   const fetchProjects = useCallback(async () => {
     try {
       // First poll: no cursor, full tree. Subsequent polls: pass the
@@ -70,7 +102,16 @@ export default function DashboardPoller({
       if (!res.ok) return;
       const data = await res.json();
       if (mountedRef.current) {
-        setProjects(data);
+        if (since === null) {
+          // Full fetch — replace.
+          setProjects(Array.isArray(data) ? data : []);
+        } else {
+          // Delta — upsert by id; empty delta leaves the list unchanged.
+          const delta = Array.isArray(data) ? (data as ProjectWithPages[]) : [];
+          if (delta.length > 0) {
+            setProjects((prev) => mergeProjectsById(prev, delta));
+          }
+        }
         setLastUpdated(Date.now());
         // Record the cursor AFTER the response has been applied so a
         // slow request that races a write can't drop the write.

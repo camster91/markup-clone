@@ -27,13 +27,12 @@
 //    route accepts a 60s TTL, so a few missed heartbeats don't drop
 //    the user from the list.
 //
-// 2) POLL (GET /api/presence?projectId=X&since=ISO every 5s)
-//    Returns the list of "online" reviewers for the project. The
-//    dashboard renders each one as a small colored dot in a sidebar.
-//    `since` is the timestamp of the last successful response — same
-//    pattern as /api/projects delta polling. With `since=now-1s` the
-//    response is small; without it (first poll) we get the full TTL
-//    window.
+// 2) POLL (GET /api/presence?projectId=X every 5s)
+//    Returns the full TTL list of "online" reviewers for the project.
+//    We intentionally do NOT pass ?since= — presence rows age out via
+//    a 60s TTL, and a delta-only poll would leave stale users on the
+//    client after they drop off the server list. Always replacing with
+//    the full TTL window is the simplest correct merge.
 //
 // Why polling and not SSE: F2 will swap the GET poll for an SSE
 // stream. The hook's `presences` + `myUserId` shape is designed to
@@ -146,13 +145,6 @@ export function usePresence(opts: UsePresenceOptions): UsePresenceResult {
   const [myUserId, setMyUserId] = useState<string | null>(null);
   const [presences, setPresences] = useState<PresenceRow[]>([]);
 
-  // lastSuccessfulPoll: ms-epoch of the last successful GET. The
-  // /api/presence route accepts ?since=<ISO> and returns only rows
-  // with lastSeenAt > since. We pass lastSuccessfulPoll - 1000 as
-  // the cursor so a row updated in the same ms as our response
-  // can't race past the cursor. null means "no successful poll yet"
-  // → first poll goes out without a cursor.
-  const lastSuccessfulPoll = useRef<number | null>(null);
   // mountedRef: bail out of the heartbeat/poll if the component
   // unmounts during a 5s sleep. Without this, setState would fire
   // on an unmounted component (React warning + memory leak).
@@ -262,10 +254,10 @@ export function usePresence(opts: UsePresenceOptions): UsePresenceResult {
     const fetchList = async () => {
       if (cancelled || !mountedRef.current) return;
       try {
-        const since = lastSuccessfulPoll.current;
-        const url = since === null
-          ? `/api/presence?projectId=${encodeURIComponent(projectId)}`
-          : `/api/presence?projectId=${encodeURIComponent(projectId)}&since=${new Date(since - 1000).toISOString()}`;
+        // Always fetch the full TTL list — no ?since=. Presence
+        // rows expire server-side; a delta poll would leave stale
+        // users in client state after they drop off.
+        const url = `/api/presence?projectId=${encodeURIComponent(projectId)}`;
         const res = await fetch(url, {
           cache: 'no-store',
           headers: dashboardHeaders(),
@@ -279,7 +271,6 @@ export function usePresence(opts: UsePresenceOptions): UsePresenceResult {
         if (mountedRef.current && !cancelled) {
           const list = Array.isArray(data.presences) ? data.presences : [];
           setPresences(list);
-          lastSuccessfulPoll.current = Date.now();
         }
       } catch {
         // silent retry - keep showing old data

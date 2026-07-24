@@ -52,14 +52,14 @@ const mocks = vi.hoisted(() => {
     audit: vi.fn(),
     prisma: {
       screenshot: {
-        findUnique: vi.fn(async ({ where, select }: { where: { id: string }; select?: Record<string, boolean> }) => {
+        findUnique: vi.fn(async ({ where, select }: { where: { id: string }; select?: Record<string, unknown> }) => {
           const row = db.screenshots.find((s) => s.id === where.id);
           if (!row) return null;
           if (!select) return { ...row };
           const out: Record<string, unknown> = {};
           for (const k of Object.keys(select)) {
             if (k === 'page') {
-              out.page = { projectId: 'proj-1' };
+              out.page = { projectId: 'proj-1', project: { shareToken: null } };
             } else {
               out[k] = (row as unknown as Record<string, unknown>)[k];
             }
@@ -144,6 +144,27 @@ vi.mock('@/lib/rate-limit', () => ({
 vi.mock('@/lib/audit', () => ({
   audit: mocks.audit,
 }));
+
+// Recapture is behind requireDashboardAuth + CSRF on this branch.
+// These tests exercise ScreenshotVersion inserts / history reads,
+// not the auth gate — stub session/CSRF so the spawn + version
+// side-effects remain reachable. Keep the real isDashboardOrigin
+// so history's origin/share gate is still exercised.
+vi.mock('@/lib/auth', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/auth')>('@/lib/auth');
+  return {
+    ...actual,
+    requireDashboardAuth: vi.fn(async () => null),
+  };
+});
+
+vi.mock('@/lib/csrf', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/csrf')>('@/lib/csrf');
+  return {
+    ...actual,
+    requireCsrfToken: vi.fn(() => null),
+  };
+});
 
 // Fake child: routes the recapture script's exit event with a
 // configurable capturedAt + dims. The recapture route reads the
@@ -296,6 +317,15 @@ describe('recapture → ScreenshotVersion side effect', () => {
 // ============================================================================
 
 describe('GET /api/screenshots/[id]/history', () => {
+  const DASHBOARD_ORIGIN = 'https://markup.ashbi.ca';
+
+  function historyReq(id: string, extra: Record<string, string> = {}): Request {
+    return new Request(`https://markup.ashbi.ca/api/screenshots/${id}/history`, {
+      method: 'GET',
+      headers: { origin: DASHBOARD_ORIGIN, ...extra },
+    });
+  }
+
   it('returns the last 50 ScreenshotVersion rows in capturedAt desc order', async () => {
     // Seed 3 version rows with strictly increasing capturedAt.
     const seedTimes = [
@@ -316,9 +346,7 @@ describe('GET /api/screenshots/[id]/history', () => {
     }
 
     const res = await HISTORY(
-      new Request(`https://markup.ashbi.ca/api/screenshots/${SCREENSHOT_ID}/history`, {
-        method: 'GET',
-      }),
+      historyReq(SCREENSHOT_ID),
       { params: Promise.resolve({ id: SCREENSHOT_ID }) }
     );
     expect(res.status).toBe(200);
@@ -353,9 +381,7 @@ describe('GET /api/screenshots/[id]/history', () => {
       });
     }
     const res = await HISTORY(
-      new Request(`https://markup.ashbi.ca/api/screenshots/${SCREENSHOT_ID}/history`, {
-        method: 'GET',
-      }),
+      historyReq(SCREENSHOT_ID),
       { params: Promise.resolve({ id: SCREENSHOT_ID }) }
     );
     const body = await res.json();
@@ -365,9 +391,7 @@ describe('GET /api/screenshots/[id]/history', () => {
   it('returns 404 when the screenshot does not exist', async () => {
     mocks.db.screenshots = [];
     const res = await HISTORY(
-      new Request(`https://markup.ashbi.ca/api/screenshots/00000000-0000-0000-0000-000000000000/history`, {
-        method: 'GET',
-      }),
+      historyReq('00000000-0000-0000-0000-000000000000'),
       { params: Promise.resolve({ id: '00000000-0000-0000-0000-000000000000' }) }
     );
     expect(res.status).toBe(404);
@@ -375,10 +399,20 @@ describe('GET /api/screenshots/[id]/history', () => {
 
   it('returns 400 on a non-UUID id', async () => {
     const res = await HISTORY(
-      new Request('https://markup.ashbi.ca/api/screenshots/not-a-uuid/history', { method: 'GET' }),
+      historyReq('not-a-uuid'),
       { params: Promise.resolve({ id: 'not-a-uuid' }) }
     );
     expect(res.status).toBe(400);
+  });
+
+  it('returns 404 for anonymous callers without a share token', async () => {
+    const res = await HISTORY(
+      new Request(`https://markup.ashbi.ca/api/screenshots/${SCREENSHOT_ID}/history`, {
+        method: 'GET',
+      }),
+      { params: Promise.resolve({ id: SCREENSHOT_ID }) }
+    );
+    expect(res.status).toBe(404);
   });
 });
 
@@ -489,6 +523,7 @@ describe('full recapture → history flow', () => {
     const res = await HISTORY(
       new Request(`https://markup.ashbi.ca/api/screenshots/${SCREENSHOT_ID}/history`, {
         method: 'GET',
+        headers: { origin: 'https://markup.ashbi.ca' },
       }),
       { params: Promise.resolve({ id: SCREENSHOT_ID }) }
     );
