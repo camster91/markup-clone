@@ -1,18 +1,28 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin } from '@/lib/auth';
+import { requireDashboardAuth } from '@/lib/auth';
+import { requireCsrfToken } from '@/lib/csrf';
 import { audit } from '@/lib/audit';
-import { validateSubscriberEmail } from '@/lib/validation';
+import { validateSubscriberEmail, validateProjectId } from '@/lib/validation';
+import { assertProjectAccessible } from '@/lib/teams';
 
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardAuth(req);
   if (authErr) return authErr;
 
   try {
     const { id } = await params;
+    const idRes = validateProjectId(id);
+    if (!idRes.ok) return NextResponse.json({ error: idRes.error }, { status: 400 });
+
+    const access = await assertProjectAccessible(id);
+    if (!access.ok) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+
     const subscribers = await prisma.subscriber.findMany({
       where: { projectId: id },
       orderBy: { createdAt: 'asc' },
@@ -28,11 +38,21 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardAuth(req);
   if (authErr) return authErr;
+  const csrfErr = requireCsrfToken(req);
+  if (csrfErr) return csrfErr;
 
   try {
     const { id } = await params;
+    const idRes = validateProjectId(id);
+    if (!idRes.ok) return NextResponse.json({ error: idRes.error }, { status: 400 });
+
+    const access = await assertProjectAccessible(id);
+    if (!access.ok) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+
     const { email } = await req.json();
 
     // Single source of truth for subscriber email shape / length / case

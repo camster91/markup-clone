@@ -23,7 +23,10 @@
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin } from '@/lib/auth';
+import { requireDashboardAuth } from '@/lib/auth';
+import { requireCsrfToken } from '@/lib/csrf';
+import { validateProjectId } from '@/lib/validation';
+import { assertProjectAccessible } from '@/lib/teams';
 import { dispatch } from '@/lib/integrations/dispatcher';
 import { isIntegrationKind } from '@/lib/integrations/types';
 import { validateConfig } from '@/lib/integrations/validate';
@@ -33,11 +36,21 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardAuth(req);
   if (authErr) return authErr;
+  const csrfErr = requireCsrfToken(req);
+  if (csrfErr) return csrfErr;
 
   try {
     const { id: projectId } = await params;
+    const idRes = validateProjectId(projectId);
+    if (!idRes.ok) return NextResponse.json({ error: idRes.error }, { status: 400 });
+
+    const access = await assertProjectAccessible(projectId);
+    if (!access.ok) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+
     const body = (await req.json()) as { integrationId?: unknown };
     if (typeof body.integrationId !== 'string' || body.integrationId.length === 0) {
       return NextResponse.json({ error: 'integrationId required' }, { status: 400 });

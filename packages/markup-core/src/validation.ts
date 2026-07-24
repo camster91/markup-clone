@@ -193,6 +193,15 @@ export function validateProjectDomain(domain: string): ValidationResult<string> 
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(lower)) {
     return { ok: false, error: 'domain must not be an IP address' };
   }
+  // Hex / octal dotted forms that bypass the decimal \d{1,3} check:
+  //   0x7f.0.0.1   0xA9.0xFE.0xA9.0xFE   0177.0.0.1
+  // Chromium / libc will happily resolve these to loopback / IMDS.
+  if (/(?:^|\.)0x[0-9a-f]+/i.test(lower)) {
+    return { ok: false, error: 'domain must not be a hex-encoded IP address' };
+  }
+  if (/(?:^|\.)0[0-7]{3,}(?:\.|$)/.test(lower)) {
+    return { ok: false, error: 'domain must not be an octal-encoded IP address' };
+  }
   // Decimal-encoded IPv4: a single label that is a 32-bit unsigned int.
   if (/^\d+$/.test(lower)) {
     const n = Number(lower);
@@ -205,7 +214,22 @@ export function validateProjectDomain(domain: string): ValidationResult<string> 
   if (lower.includes(':')) {
     return { ok: false, error: 'domain must not be an IP address' };
   }
+  // Reject rebinding / wildcard DNS helpers that map public names onto
+  // private IPs (e.g. 169.254.169.254.nip.io). Any hostname whose labels
+  // are themselves a dotted-quad is treated as an IP smuggle.
+  const labels = lower.split('.');
+  for (let i = 0; i + 3 < labels.length; i++) {
+    const candidate = labels.slice(i, i + 4).join('.');
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(candidate)) {
+      return { ok: false, error: 'domain must not embed an IP address' };
+    }
+  }
   return { ok: true, value: lower };
+}
+
+/** Alias used by CLAUDE.md / route docs — same UUID check as pins. */
+export function validateProjectId(id: unknown): ValidationResult<string> {
+  return validateUuidParam(id, 'projectId');
 }
 
 // Conservative RFC 5322 subset for the local part. We deliberately reject

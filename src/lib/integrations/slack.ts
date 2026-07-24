@@ -22,6 +22,7 @@
 // timestamp in a context row.
 
 import type { PinPayload, SlackConfig } from './types';
+import { assertSafeOutboundUrl } from '@/lib/safe-url';
 
 /**
  * Build the Slack message body for a pin event.
@@ -75,10 +76,15 @@ export function buildSlackBody(payload: PinPayload) {
  * project does not depend on node-fetch.
  */
 export async function post(config: SlackConfig, payload: PinPayload): Promise<void> {
-  const res = await fetch(config.webhookUrl, {
+  const safe = await assertSafeOutboundUrl(config.webhookUrl);
+  if (!safe.ok) {
+    throw new Error(`Slack webhook URL rejected: ${safe.error}`);
+  }
+  const res = await fetch(safe.value, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(buildSlackBody(payload)),
+    redirect: 'error',
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');

@@ -25,6 +25,47 @@ export async function getCallerUser(): Promise<{ id: string; email: string; role
 }
 
 /**
+ * Assert the caller may access a project.
+ *
+ * Returns 404 when the project is missing, 403 when it exists but the
+ * caller is not a member of its team. Legacy / unscoped projects
+ * (teamId IS NULL) remain open to any authenticated dashboard caller
+ * during the transitional single-project install.
+ *
+ * Exported so every project-scoped route (subscribers, share,
+ * integrations, pins, screenshots, …) can reuse the same gate —
+ * previously only PATCH/DELETE /api/projects/[id] enforced it.
+ */
+export async function assertProjectAccessible(projectId: string): Promise<
+  | { ok: true; projectId: string; teamId: string | null }
+  | { ok: false; status: 403 | 404; error: string }
+> {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { id: true, teamId: true },
+  });
+  if (!project) return { ok: false, status: 404, error: 'Project not found' };
+
+  if (project.teamId === null) {
+    return { ok: true, projectId: project.id, teamId: null };
+  }
+
+  const caller = await getCallerUser();
+  if (!caller) {
+    return { ok: false, status: 403, error: "Not a member of this project's team" };
+  }
+
+  const membership = await prisma.teamMember.findFirst({
+    where: { userId: caller.id, teamId: project.teamId },
+    select: { id: true },
+  });
+  if (!membership) {
+    return { ok: false, status: 403, error: "Not a member of this project's team" };
+  }
+  return { ok: true, projectId: project.id, teamId: project.teamId };
+}
+
+/**
  * Return the set of team ids the caller is a direct member of.
  *
  * The query is the lookup behind every team-scoped route:

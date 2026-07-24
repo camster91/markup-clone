@@ -51,7 +51,8 @@
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin } from '@/lib/auth';
+import { requireDashboardAuth } from '@/lib/auth';
+import { requireCsrfToken } from '@/lib/csrf';
 import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
@@ -63,16 +64,23 @@ const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024; // 8MB
 // free-form (NOT a Prisma enum) so we can add a new kind in a single
 // edit without a migration; the route enforces membership here.
 //
-// `image` — pasted screenshots (PNG, JPEG, WebP, GIF).
+// `image` — pasted screenshots (PNG, JPEG, WebP, GIF). SVG is
+// explicitly rejected (XSS via inline SVG when served).
 // `voice` — voice notes (not yet implemented in the UI; reserved).
 // `video` — screen recordings (not yet implemented in the UI; reserved).
 type Kind = 'image' | 'voice' | 'video';
 
-// Map a MIME type to a kind. The route only accepts 'image' this
-// round, but the mapping exists so a future voice/video flow can
-// dispatch on type without re-deriving the kind from the form field.
+const ALLOWED_IMAGE_MIMES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+]);
+
+// Map a MIME type to a kind. The route only accepts allowlisted image
+// types this round; voice / video remain reserved.
 function kindForMime(mime: string): Kind | null {
-  if (mime.startsWith('image/')) return 'image';
+  if (ALLOWED_IMAGE_MIMES.has(mime)) return 'image';
   if (mime.startsWith('audio/')) return 'voice';
   if (mime.startsWith('video/')) return 'video';
   return null;
@@ -83,16 +91,11 @@ function kindForMime(mime: string): Kind | null {
 // extension is purely cosmetic — the GET route serves the file
 // with the mimeType stored in the row, not based on the filename.
 function extForKind(kind: Kind, mime: string): string {
-  // Common image types — most browsers paste PNG or JPEG. WebP and
-  // GIF are also seen. Anything else falls back to the type's
-  // subtype (e.g. 'image/svg+xml' → 'svg+xml') or to the kind name
-  // if there's no '/' at all.
   if (kind === 'image') {
     if (mime === 'image/png') return 'png';
     if (mime === 'image/jpeg') return 'jpg';
     if (mime === 'image/gif') return 'gif';
     if (mime === 'image/webp') return 'webp';
-    if (mime === 'image/svg+xml') return 'svg';
     return 'img';
   }
   if (kind === 'voice') {
@@ -124,11 +127,10 @@ export async function POST(req: Request) {
     );
   }
 
-  // Auth: dashboard origin only. The widget never uploads
-  // attachments and the share view is read-only, so a 401 for any
-  // non-dashboard caller is the right call.
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardAuth(req);
   if (authErr) return authErr;
+  const csrfErr = requireCsrfToken(req);
+  if (csrfErr) return csrfErr;
 
   try {
     const form = await req.formData();
@@ -178,13 +180,16 @@ export async function POST(req: Request) {
       commentIdToBind = commentIdRaw;
     }
 
-    // MIME → kind dispatch. The route only accepts 'image' in this
-    // round; voice / video are reserved for a future surface. A
-    // non-image MIME returns 415 with a clear message — the
-    // dashboard's paste handler should never produce this in
-    // practice (a clipboard image comes through as image/png on
-    // every modern browser), but if a future "upload a file"
-    // button lets the user pick a .pdf by mistake, we fail loud.
+    // MIME → kind dispatch. Only png/jpeg/gif/webp are accepted;
+    // image/svg+xml and any other image/* are rejected (SVG can
+    // execute script when served with the wrong Content-Type or
+    // when embedded). Voice / video remain reserved.
+    if (file.type === 'image/svg+xml') {
+      return NextResponse.json(
+        { error: 'unsupported file type: image/svg+xml' },
+        { status: 415 }
+      );
+    }
     const kind = kindForMime(file.type);
     if (kind === null) {
       return NextResponse.json(

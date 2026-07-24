@@ -14,171 +14,176 @@
 // teamId = NULL (legacy behaviour, kept for back-compat with the
 // single-team install).
 //
-// Auth: every handler is gated by requireDashboardOrigin. We do NOT
-// additionally require an active session — the existing dashboard
-// flows (X-Api-Key on widget calls, cookie session for dashboard
-// calls) cover that. The team-scope filter is a "which projects does
-// this caller see" gate, not an "is this caller allowed to call the
-// API at all" gate.
+// Auth: requireDashboardAuth (Origin + session). POST also requires
+// CSRF. apiKey/shareToken stay in the GET response — the session
+// gate is what makes emitting them safe.
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin, generateApiKey } from '@/lib/auth';
+import { requireDashboardAuth, generateApiKey } from '@/lib/auth';
+import { requireCsrfToken } from '@/lib/csrf';
 import { audit } from '@/lib/audit';
 import { validateProjectDomain, validateProjectName, validateUuidParam } from '@/lib/validation';
 import { getCallerUser, getProjectScopeWhere } from '@/lib/teams';
 
 export async function GET(req: Request) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardAuth(req);
   if (authErr) return authErr;
 
-  // Optional ?since=<ISO> delta polling. When set, only rows whose
-  // updatedAt (or capturedAt, for Screenshot) is strictly after `since`
-  // are returned at every nested level — Project, Page, Screenshot, Pin,
-  // Comment. The dashboard passes `lastSuccessfulPoll - 1000` as `since`
-  // so two rows updated in the same millisecond (e.g. two pins created
-  // by the same request) cannot race past the cursor. When `since` is
-  // missing or unparseable, the route falls back to the legacy
-  // "return the full tree" behaviour.
-  const url = new URL(req.url);
-  const sinceParam = url.searchParams.get('since');
-  const since = sinceParam ? new Date(sinceParam) : null;
-  const filterSince = sinceParam && !Number.isNaN(since!.getTime());
+  try {
+    // Optional ?since=<ISO> delta polling. When set, only rows whose
+    // updatedAt (or capturedAt, for Screenshot) is strictly after `since`
+    // are returned at every nested level — Project, Page, Screenshot, Pin,
+    // Comment. The dashboard passes `lastSuccessfulPoll - 1000` as `since`
+    // so two rows updated in the same millisecond (e.g. two pins created
+    // by the same request) cannot race past the cursor. When `since` is
+    // missing or unparseable, the route falls back to the legacy
+    // "return the full tree" behaviour.
+    const url = new URL(req.url);
+    const sinceParam = url.searchParams.get('since');
+    const since = sinceParam ? new Date(sinceParam) : null;
+    const filterSince = sinceParam && !Number.isNaN(since!.getTime());
 
-  // Resolve the caller and their team scope. The where clause is
-  // composed BEFORE the `updatedAt` filter so the two filters AND
-  // together: callers see "projects in my teams" AND "updated since
-  // the cursor" — never one without the other. The pre-existing
-  // tests that mock prisma.project.findMany without our teams helper
-  // will see the new `where` shape; the integration tests updated
-  // alongside this change assert the team-scope filter is applied.
-  const caller = await getCallerUser();
-  const teamScope = await getProjectScopeWhere(caller?.id ?? null);
+    // Resolve the caller and their team scope. The where clause is
+    // composed BEFORE the `updatedAt` filter so the two filters AND
+    // together: callers see "projects in my teams" AND "updated since
+    // the cursor" — never one without the other. The pre-existing
+    // tests that mock prisma.project.findMany without our teams helper
+    // will see the new `where` shape; the integration tests updated
+    // alongside this change assert the team-scope filter is applied.
+    const caller = await getCallerUser();
+    const teamScope = await getProjectScopeWhere(caller?.id ?? null);
 
-  const projects = await prisma.project.findMany({
-    where: {
-      AND: [
-        teamScope,
-        ...(filterSince ? [{ updatedAt: { gt: since! } }] : []),
-      ],
-    },
-    include: {
-      pages: {
-        where: filterSince ? { updatedAt: { gt: since! } } : undefined,
-        include: {
-          screenshots: {
-            // Screenshot has no `updatedAt` field — its lifetime marker
-            // is `capturedAt`. Same semantics: only screenshots captured
-            // after the cursor are part of the delta.
-            where: filterSince ? { capturedAt: { gt: since! } } : undefined,
-            orderBy: { capturedAt: 'desc' },
-            include: {
-              pins: {
-                where: filterSince ? { updatedAt: { gt: since! } } : undefined,
-                orderBy: { createdAt: 'asc' },
-                include: {
-                  comments: {
-                    where: filterSince ? { updatedAt: { gt: since! } } : undefined,
-                    orderBy: { createdAt: 'asc' },
-                  },
-                  // Annotations: drawn arrows / boxes / freehand
-                  // attached to each pin. The ScreenshotView's SVG
-                  // overlay reads these and renders one <line>/<rect>/
-                  // <polyline> per row. The `where` filters on
-                  // createdAt — no Annotation has an `updatedAt` so
-                  // a new annotation always reflects a new pin event
-                  // for delta polling. We parse pathJson into a
-                  // `number[][]` shape on the way out (the server
-                  // stores it as a JSON string for schema flexibility).
-                  annotations: {
-                    ...(filterSince ? { where: { createdAt: { gt: since! } } } : {}),
-                    orderBy: { createdAt: 'asc' },
+    const projects = await prisma.project.findMany({
+      where: {
+        AND: [
+          teamScope,
+          ...(filterSince ? [{ updatedAt: { gt: since! } }] : []),
+        ],
+      },
+      include: {
+        pages: {
+          where: filterSince ? { updatedAt: { gt: since! } } : undefined,
+          include: {
+            screenshots: {
+              // Screenshot has no `updatedAt` field — its lifetime marker
+              // is `capturedAt`. Same semantics: only screenshots captured
+              // after the cursor are part of the delta.
+              where: filterSince ? { capturedAt: { gt: since! } } : undefined,
+              orderBy: { capturedAt: 'desc' },
+              include: {
+                pins: {
+                  where: filterSince ? { updatedAt: { gt: since! } } : undefined,
+                  orderBy: { createdAt: 'asc' },
+                  include: {
+                    comments: {
+                      where: filterSince ? { updatedAt: { gt: since! } } : undefined,
+                      orderBy: { createdAt: 'asc' },
+                    },
+                    // Annotations: drawn arrows / boxes / freehand
+                    // attached to each pin. The ScreenshotView's SVG
+                    // overlay reads these and renders one <line>/<rect>/
+                    // <polyline> per row. The `where` filters on
+                    // createdAt — no Annotation has an `updatedAt` so
+                    // a new annotation always reflects a new pin event
+                    // for delta polling. We parse pathJson into a
+                    // `number[][]` shape on the way out (the server
+                    // stores it as a JSON string for schema flexibility).
+                    annotations: {
+                      ...(filterSince ? { where: { createdAt: { gt: since! } } } : {}),
+                      orderBy: { createdAt: 'asc' },
+                    },
                   },
                 },
               },
             },
           },
         },
+        subscribers: true,
+        // The team relation is included so the dashboard's
+        // ProjectListCard can render "in <team name>" without a
+        // follow-up lookup. `select` is limited to the columns the
+        // dashboard actually needs (id + name); the rest is a
+        // network-cost-no-no on a list endpoint.
+        team: { select: { id: true, name: true } },
       },
-      subscribers: true,
-      // The team relation is included so the dashboard's
-      // ProjectListCard can render "in <team name>" without a
-      // follow-up lookup. `select` is limited to the columns the
-      // dashboard actually needs (id + name); the rest is a
-      // network-cost-no-no on a list endpoint.
-      team: { select: { id: true, name: true } },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
-  // Project has no `include`-able shareToken — it's a top-level
-  // scalar. select it explicitly so the dashboard's ShareToggle can
-  // see whether a token is active. `shareToken` is dashboard-only
-  // (the route is gated by requireDashboardOrigin) so emitting the
-  // raw token here is fine — only a dashboard user can hit this
-  // endpoint, and they need the token to render the share URL.
-  //
-  // Annotation rows include `pathJson` as a JSON string (the DB
-  // column shape). We parse it client-side at fetch time so the
-  // dashboard sees `path: number[][]` directly — saves every render
-  // from re-parsing, and lines up with the FeedbackAnnotation type
-  // (which declares `path` as a parsed array, not a string).
-  //
-  // A malformed pathJson would have been rejected at write time by
-  // the POST /api/annotations validator, so the JSON.parse here
-  // only fails on a hand-crafted DB row. We fall back to an empty
-  // array so the pin's overlay renders without an exception, and
-  // log once at the route level so a corruption is auditable.
-  //
-  // `pin.annotations` may be undefined in tests that mock the
-  // prisma include with the legacy shape (no annotation field).
-  // Coerce to [] so the response shape is always the same.
-  return NextResponse.json(
-    projects.map((p) => ({
-      id: p.id,
-      name: p.name,
-      domain: p.domain,
-      apiKey: p.apiKey,
-      shareToken: p.shareToken,
-      teamId: p.teamId,
-      team: p.team,
-      createdAt: p.createdAt,
-      updatedAt: p.updatedAt,
-      pages: p.pages.map((page) => ({
-        ...page,
-        screenshots: page.screenshots.map((screenshot) => ({
-          ...screenshot,
-          pins: screenshot.pins.map((pin) => ({
-            ...pin,
-            annotations: (pin.annotations ?? []).map((a) => {
-              let path: number[][] = [];
-              try {
-                const parsed = JSON.parse(a.pathJson);
-                if (Array.isArray(parsed)) path = parsed as number[][];
-              } catch {
-                // Don't leak the per-request loop noise — log once.
-                // Production data should never reach this branch
-                // (the POST /api/annotations validator rejects
-                // malformed input).
-                console.warn(`[projects] annotation ${a.id} has unparseable pathJson`);
-              }
-              return {
-                id: a.id,
-                kind: a.kind,
-                path,
-                createdAt: a.createdAt,
-              };
-            }),
+      orderBy: { createdAt: 'desc' },
+    });
+    // Project has no `include`-able shareToken — it's a top-level
+    // scalar. select it explicitly so the dashboard's ShareToggle can
+    // see whether a token is active. `shareToken` is dashboard-only
+    // (session-gated) so emitting the raw token here is fine — only
+    // an authenticated dashboard user can hit this endpoint, and they
+    // need the token to render the share URL.
+    //
+    // Annotation rows include `pathJson` as a JSON string (the DB
+    // column shape). We parse it client-side at fetch time so the
+    // dashboard sees `path: number[][]` directly — saves every render
+    // from re-parsing, and lines up with the FeedbackAnnotation type
+    // (which declares `path` as a parsed array, not a string).
+    //
+    // A malformed pathJson would have been rejected at write time by
+    // the POST /api/annotations validator, so the JSON.parse here
+    // only fails on a hand-crafted DB row. We fall back to an empty
+    // array so the pin's overlay renders without an exception, and
+    // log once at the route level so a corruption is auditable.
+    //
+    // `pin.annotations` may be undefined in tests that mock the
+    // prisma include with the legacy shape (no annotation field).
+    // Coerce to [] so the response shape is always the same.
+    return NextResponse.json(
+      projects.map((p) => ({
+        id: p.id,
+        name: p.name,
+        domain: p.domain,
+        apiKey: p.apiKey,
+        shareToken: p.shareToken,
+        teamId: p.teamId,
+        team: p.team,
+        createdAt: p.createdAt,
+        updatedAt: p.updatedAt,
+        pages: p.pages.map((page) => ({
+          ...page,
+          screenshots: page.screenshots.map((screenshot) => ({
+            ...screenshot,
+            pins: screenshot.pins.map((pin) => ({
+              ...pin,
+              annotations: (pin.annotations ?? []).map((a) => {
+                let path: number[][] = [];
+                try {
+                  const parsed = JSON.parse(a.pathJson);
+                  if (Array.isArray(parsed)) path = parsed as number[][];
+                } catch {
+                  // Don't leak the per-request loop noise — log once.
+                  // Production data should never reach this branch
+                  // (the POST /api/annotations validator rejects
+                  // malformed input).
+                  console.warn(`[projects] annotation ${a.id} has unparseable pathJson`);
+                }
+                return {
+                  id: a.id,
+                  kind: a.kind,
+                  path,
+                  createdAt: a.createdAt,
+                };
+              }),
+            })),
           })),
         })),
-      })),
-      subscribers: p.subscribers,
-    }))
-  );
+        subscribers: p.subscribers,
+      }))
+    );
+  } catch (error) {
+    console.error('Projects list error:', error);
+    return NextResponse.json({ error: 'Failed to list projects' }, { status: 500 });
+  }
 }
 
 export async function POST(req: Request) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardAuth(req);
   if (authErr) return authErr;
+  const csrfErr = requireCsrfToken(req);
+  if (csrfErr) return csrfErr;
 
   try {
     const { name, domain, teamId } = await req.json();

@@ -120,7 +120,7 @@ the merge commit / PR that landed each:
 - PATCH / DELETE 404s on missing records (audit 2026-06-17)
 
 ### Production security audit — Critical/High client + media (branch `cursor/production-security-audit-4eb8`)
-- **Status:** shipped · **Commit:** `d1cd056`
+- **Status:** shipped · **Commit:** `0930aef`
 - DashboardPoller delta upsert-by-id (empty delta no longer wipes list)
 - Presence GET always full TTL list (dropped `?since=`)
 - Removed client-side `audit()` from `useRecaptureStatus`
@@ -129,6 +129,18 @@ the merge commit / PR that landed each:
 - Screenshot `/image` + `/history` gated (dashboard origin OR `?share=`)
 - Home/share pages redact `apiKey` for anonymous / public viewers
 - NewProjectForm try/catch/finally around create fetch
+
+### Production security audit — dashboard API gates (branch `cursor/production-security-audit-4eb8`)
+- **Status:** shipped · **Commit:** _(pending — this commit)_
+- `requireDashboardAuth` + CSRF on dashboard writes across projects,
+  pins, comments, annotations, attachments, workspaces, presence,
+  screenshots recapture
+- `assertProjectAccessible` + `validateProjectId` on project-scoped routes
+- Integration list redacts webhook URLs / headers in `configJson`
+- Outbound integration URLs: `validateOutboundUrlShape` at write time;
+  `assertSafeOutboundUrl` + `redirect: 'error'` before fetch
+- Attachments reject `image/svg+xml` (png/jpeg/gif/webp only)
+- Presence POST derives `userId` from session (ignores client spoof)
 
 ---
 

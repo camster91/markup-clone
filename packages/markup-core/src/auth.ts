@@ -65,14 +65,36 @@ export function isDashboardOrigin(req: Request): boolean {
     // (`admin.markup.ashbi.ca` → allowed; `markup.ashbi.ca.evil.com` → not).
     // We do NOT use String.includes() — that accepts e.g. an `evil.com` Origin
     // whose URL contains the dashboard host as a query parameter.
+    //
+    // IMPORTANT: when Origin is present but does NOT match, we must NOT
+    // fall through to sec-fetch-site. A forged Origin of
+    // `https://evil.com` paired with `Sec-Fetch-Site: same-origin`
+    // (also forgeable from curl) previously granted dashboard access.
     try {
       const host = new URL(origin).host;
       if (host === dashboardHost || host.endsWith('.' + dashboardHost)) return true;
+      return false;
     } catch {
-      // Malformed Origin header — fall through to sec-fetch-site.
+      // Malformed Origin header — reject; do not fall through.
+      return false;
     }
   }
-  if (req.headers.get('sec-fetch-site') === 'same-origin') return true;
+  // No Origin header: browsers omit Origin on some same-origin
+  // navigations / <img> loads. Accept only when BOTH:
+  //   1. Sec-Fetch-Site: same-origin (browser-set, not a substitute
+  //      for authentication — see requireDashboardAuth), AND
+  //   2. Host / :authority matches the configured dashboard host
+  //      (stops a curl that only sets sec-fetch-site against a
+  //      differently-routed front door).
+  if (req.headers.get('sec-fetch-site') === 'same-origin') {
+    const hostHeader = (req.headers.get('host') || '').toLowerCase();
+    if (
+      hostHeader === dashboardHost.toLowerCase() ||
+      hostHeader.endsWith('.' + dashboardHost.toLowerCase())
+    ) {
+      return true;
+    }
+  }
   return false;
 }
 

@@ -5,6 +5,7 @@
 import { config as loadEnv } from 'dotenv';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
+import { vi } from 'vitest';
 
 const envTestPath = path.resolve(process.cwd(), '.env.test');
 if (existsSync(envTestPath)) {
@@ -25,3 +26,21 @@ process.env.DASHBOARD_HOST = process.env.DASHBOARD_HOST || 'markup.ashbi.ca';
 const k = 'M' + 'AILGUN_API_KEY';
 process.env[k] = process.env[k] || 'test_key';
 process.env.MAILGUN_DOMAIN = process.env.MAILGUN_DOMAIN || 'ashbi.ca';
+
+// Dashboard routes now require Origin + session via requireDashboardAuth.
+// Integration tests focus on business logic and already send Origin (+ CSRF
+// on writes); they do not spin up a real Session row. Stub the session gate
+// so those suites keep testing the route body. Auth-specific coverage lives
+// in tests/unit/auth.test.ts and tests/integration/auth.test.ts (which
+// exercise requireAuth / requireDashboardOrigin / requireProjectKey
+// directly — those exports stay unmocked below).
+vi.mock('@/lib/auth', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/lib/auth')>();
+  return {
+    ...actual,
+    // Keep the Origin allow-list; only skip the session cookie lookup so
+    // route integration tests don't need a real Session row. Tests that
+    // assert 401 on a bad Origin still pass through requireDashboardOrigin.
+    requireDashboardAuth: vi.fn(async (req: Request) => actual.requireDashboardOrigin(req)),
+  };
+});

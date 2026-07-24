@@ -12,7 +12,8 @@
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin } from '@/lib/auth';
+import { requireDashboardAuth } from '@/lib/auth';
+import { requireCsrfToken } from '@/lib/csrf';
 import { audit } from '@/lib/audit';
 import { validateTeamRole, validateUuidParam } from '@/lib/validation';
 
@@ -30,8 +31,10 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string; teamId: string; memberId: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardAuth(req);
   if (authErr) return authErr;
+  const csrfErr = requireCsrfToken(req);
+  if (csrfErr) return csrfErr;
 
   try {
     const { id, teamId, memberId } = await params;
@@ -71,8 +74,10 @@ export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string; teamId: string; memberId: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardAuth(req);
   if (authErr) return authErr;
+  const csrfErr = requireCsrfToken(req);
+  if (csrfErr) return csrfErr;
 
   try {
     const { id, teamId, memberId } = await params;

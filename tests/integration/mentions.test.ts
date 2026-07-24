@@ -21,6 +21,12 @@ const mocks = vi.hoisted(() => ({
     update: vi.fn(),
   },
   user: { findMany: vi.fn() },
+  project: {
+    findUnique: vi.fn().mockResolvedValue({
+      id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      teamId: null,
+    }),
+  },
   audit: vi.fn(),
   sendMentionEmail: vi.fn(),
   fetch: vi.fn(),
@@ -31,6 +37,7 @@ vi.mock('@/lib/prisma', () => ({
     comment: mocks.comment,
     pin: mocks.pin,
     user: mocks.user,
+    project: mocks.project,
   },
 }));
 
@@ -51,11 +58,18 @@ const SCREENSHOT_A = '22222222-2222-2222-2222-222222222222';
 const PROJECT_A = '33333333-3333-3333-3333-333333333333';
 const ORIGIN = 'https://markup.ashbi.ca';
 const KEY = `comments:origin:${ORIGIN}:${PIN_A}`;
+const CSRF_TOKEN = 'test-csrf-token';
 
 function makeReq(body: unknown, headers: Record<string, string> = {}): Request {
   return new Request(`https://markup.ashbi.ca/api/pins/${PIN_A}/comments`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', origin: ORIGIN, ...headers },
+    headers: {
+      'Content-Type': 'application/json',
+      origin: ORIGIN,
+      'X-CSRF-Token': CSRF_TOKEN,
+      cookie: `markup.csrf=${CSRF_TOKEN}`,
+      ...headers,
+    },
     body: JSON.stringify(body),
   });
 }
@@ -88,6 +102,10 @@ function setupStandardMocks(opts: {
     // The status lookup for the reopen-on-reply branch.
     return Promise.resolve({ status: opts.pinStatus ?? 'OPEN' });
   });
+    mocks.project.findUnique.mockResolvedValue({
+      id: PROJECT_A,
+      teamId: null,
+    });
   mocks.pin.update.mockResolvedValue({ id: PIN_A, status: 'OPEN' });
   mocks.user.findMany.mockResolvedValue(opts.mentionedUsers ?? []);
   mocks.audit.mockClear();

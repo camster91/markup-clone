@@ -15,6 +15,13 @@ const mocks = vi.hoisted(() => ({
     findUnique: vi.fn(),
     update: vi.fn(),
   },
+  project: {
+    findUnique: vi.fn().mockResolvedValue({
+      id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      teamId: null,
+    }),
+  },
+  attachment: { findMany: vi.fn() },
 }));
 
 vi.mock('@/lib/prisma', () => ({
@@ -56,8 +63,23 @@ beforeEach(() => {
   // (so we skip the reopen-on-reply update path) — that keeps each loop
   // iteration fast and the assertions on 429 straightforward.
   mocks.comment.create.mockResolvedValue({ id: 'c-1', text: 'hi' });
-  mocks.pin.findUnique.mockResolvedValue({ status: 'OPEN' });
+  // First findUnique is the pin→project scope lookup; later calls are
+  // pinMeta / status. Return a shape that satisfies both.
+  mocks.pin.findUnique.mockResolvedValue({
+    status: 'OPEN',
+    screenshot: {
+      id: 'ss-1',
+      page: {
+        projectId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        project: { name: 'Test' },
+      },
+    },
+  });
   mocks.pin.update.mockResolvedValue({ id: PIN_A, status: 'OPEN' });
+  mocks.project.findUnique.mockResolvedValue({
+    id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    teamId: null,
+  });
 });
 
 afterEach(() => {

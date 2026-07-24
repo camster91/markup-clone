@@ -22,7 +22,8 @@
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin } from '@/lib/auth';
+import { requireDashboardAuth } from '@/lib/auth';
+import { requireCsrfToken } from '@/lib/csrf';
 import { audit } from '@/lib/audit';
 import {
   validateTeamRole,
@@ -41,7 +42,7 @@ export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string; teamId: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardAuth(req);
   if (authErr) return authErr;
 
   const { id, teamId } = await params;
@@ -87,8 +88,10 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string; teamId: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardAuth(req);
   if (authErr) return authErr;
+  const csrfErr = requireCsrfToken(req);
+  if (csrfErr) return csrfErr;
 
   try {
     const { id, teamId } = await params;

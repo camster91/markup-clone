@@ -6,31 +6,27 @@
 // through the same validator — a typo in one route's check
 // would otherwise silently let bad configs through to the
 // adapter (which would then 4xx at the receiver).
+//
+// Outbound URLs go through `validateOutboundUrlShape` (https
+// only, no credentials, no IP literals / internal hosts). The
+// fetch adapters additionally call `assertSafeOutboundUrl`
+// (DNS + private-IP reject) immediately before fetch.
 
 import type { DiscordConfig, IntegrationKind, SlackConfig, WebhookConfig } from './types';
+import { validateOutboundUrlShape } from '@/lib/safe-url';
 
 export type ValidationResult<T> = { ok: true; value: T } | { ok: false; error: string };
-
-function isNonEmptyString(v: unknown): v is string {
-  return typeof v === 'string' && v.length > 0;
-}
 
 function validateSlackConfig(raw: unknown): ValidationResult<SlackConfig> {
   if (!raw || typeof raw !== 'object') {
     return { ok: false, error: 'config must be an object' };
   }
   const r = raw as Record<string, unknown>;
-  if (!isNonEmptyString(r.webhookUrl)) {
-    return { ok: false, error: 'slack config requires a non-empty webhookUrl' };
+  const urlRes = validateOutboundUrlShape(r.webhookUrl);
+  if (!urlRes.ok) {
+    return { ok: false, error: `slack webhookUrl: ${urlRes.error}` };
   }
-  // http(s) only — block file://, data:, javascript: etc. The
-  // adapter uses node:fetch which would happily try most
-  // schemes, but we'd rather reject at the boundary than
-  // launch a 30s fetch to a URL that can't possibly work.
-  if (!/^https?:\/\//i.test(r.webhookUrl)) {
-    return { ok: false, error: 'slack webhookUrl must be http(s)' };
-  }
-  return { ok: true, value: { webhookUrl: r.webhookUrl } };
+  return { ok: true, value: { webhookUrl: urlRes.value } };
 }
 
 function validateDiscordConfig(raw: unknown): ValidationResult<DiscordConfig> {
@@ -38,13 +34,11 @@ function validateDiscordConfig(raw: unknown): ValidationResult<DiscordConfig> {
     return { ok: false, error: 'config must be an object' };
   }
   const r = raw as Record<string, unknown>;
-  if (!isNonEmptyString(r.webhookUrl)) {
-    return { ok: false, error: 'discord config requires a non-empty webhookUrl' };
+  const urlRes = validateOutboundUrlShape(r.webhookUrl);
+  if (!urlRes.ok) {
+    return { ok: false, error: `discord webhookUrl: ${urlRes.error}` };
   }
-  if (!/^https?:\/\//i.test(r.webhookUrl)) {
-    return { ok: false, error: 'discord webhookUrl must be http(s)' };
-  }
-  return { ok: true, value: { webhookUrl: r.webhookUrl } };
+  return { ok: true, value: { webhookUrl: urlRes.value } };
 }
 
 function validateWebhookConfig(raw: unknown): ValidationResult<WebhookConfig> {
@@ -52,11 +46,9 @@ function validateWebhookConfig(raw: unknown): ValidationResult<WebhookConfig> {
     return { ok: false, error: 'config must be an object' };
   }
   const r = raw as Record<string, unknown>;
-  if (!isNonEmptyString(r.url)) {
-    return { ok: false, error: 'webhook config requires a non-empty url' };
-  }
-  if (!/^https?:\/\//i.test(r.url)) {
-    return { ok: false, error: 'webhook url must be http(s)' };
+  const urlRes = validateOutboundUrlShape(r.url);
+  if (!urlRes.ok) {
+    return { ok: false, error: `webhook url: ${urlRes.error}` };
   }
   // `headers` is optional. If present, it must be a flat
   // object of string→string. We do NOT restrict which
@@ -75,7 +67,7 @@ function validateWebhookConfig(raw: unknown): ValidationResult<WebhookConfig> {
   return {
     ok: true,
     value: {
-      url: r.url,
+      url: urlRes.value,
       headers: r.headers ? (r.headers as Record<string, string>) : undefined,
     },
   };
