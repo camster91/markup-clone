@@ -131,7 +131,7 @@ the merge commit / PR that landed each:
 - NewProjectForm try/catch/finally around create fetch
 
 ### Production security audit — dashboard API gates (branch `cursor/production-security-audit-4eb8`)
-- **Status:** shipped · **Commit:** _(pending — this commit)_
+- **Status:** shipped · **Commit:** `76d22ec`
 - `requireDashboardAuth` + CSRF on dashboard writes across projects,
   pins, comments, annotations, attachments, workspaces, presence,
   screenshots recapture
