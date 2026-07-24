@@ -52,6 +52,8 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardSession } from '@/lib/auth';
+import { consume } from '@/lib/rate-limit';
+import { audit } from '@/lib/audit';
 import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
@@ -128,6 +130,12 @@ export async function POST(req: Request) {
   // non-dashboard / unauthenticated caller is the right call.
   const authErr = await requireDashboardSession(req);
   if (authErr) return authErr;
+
+  const origin = req.headers.get('origin') ?? 'unknown';
+  const rateCheck = consume(`attachments:origin:${origin}:new`, { maxTokens: 30, refillRate: 0.5 });
+  if (!rateCheck.ok) {
+    return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(rateCheck.retryAfterSec) } });
+  }
 
   try {
     const form = await req.formData();
@@ -258,6 +266,13 @@ export async function POST(req: Request) {
         size: file.size,
       },
       select: { id: true, kind: true, size: true },
+    });
+
+    audit({
+      actor: 'dashboard',
+      action: 'attachment.create',
+      target: attachment.id,
+      metadata: { kind, size: file.size, commentId: commentIdToBind },
     });
 
     return NextResponse.json(

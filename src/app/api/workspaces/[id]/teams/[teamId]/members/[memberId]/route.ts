@@ -13,6 +13,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardSession } from '@/lib/auth';
+import { consume } from '@/lib/rate-limit';
 import { audit } from '@/lib/audit';
 import { validateTeamRole, validateUuidParam } from '@/lib/validation';
 
@@ -41,6 +42,12 @@ export async function PATCH(
     if (!tidRes.ok) return NextResponse.json({ error: tidRes.error }, { status: 400 });
     const midRes = validateUuidParam(memberId, 'memberId');
     if (!midRes.ok) return NextResponse.json({ error: midRes.error }, { status: 400 });
+
+    const origin = req.headers.get('origin') ?? 'unknown';
+    const rateCheck = consume(`members:origin:${origin}:${midRes.value}`, { maxTokens: 30, refillRate: 0.5 });
+    if (!rateCheck.ok) {
+      return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(rateCheck.retryAfterSec) } });
+    }
 
     const body = await req.json();
     const { role } = body as { role?: unknown };
@@ -82,6 +89,12 @@ export async function DELETE(
     if (!tidRes.ok) return NextResponse.json({ error: tidRes.error }, { status: 400 });
     const midRes = validateUuidParam(memberId, 'memberId');
     if (!midRes.ok) return NextResponse.json({ error: midRes.error }, { status: 400 });
+
+    const origin = req.headers.get('origin') ?? 'unknown';
+    const rateCheck = consume(`members:origin:${origin}:${midRes.value}`, { maxTokens: 30, refillRate: 0.5 });
+    if (!rateCheck.ok) {
+      return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(rateCheck.retryAfterSec) } });
+    }
 
     const existing = await findMember(widRes.value, tidRes.value, midRes.value);
     if (!existing) return NextResponse.json({ error: 'Member not found' }, { status: 404 });

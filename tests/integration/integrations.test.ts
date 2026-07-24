@@ -406,10 +406,25 @@ describe('POST /api/projects/[id]/integrations', () => {
 // CRUD: GET /api/projects/[id]/integrations
 // ============================================================================
 describe('GET /api/projects/[id]/integrations', () => {
-  it('lists every integration for the project', async () => {
+  it('lists every integration for the project with secrets redacted', async () => {
     const rows = [
-      { id: 'int-1', projectId: PROJECT_ID, kind: 'slack', configJson: '{}' },
-      { id: 'int-2', projectId: PROJECT_ID, kind: 'discord', configJson: '{}' },
+      {
+        id: 'int-1',
+        projectId: PROJECT_ID,
+        kind: 'slack',
+        configJson: JSON.stringify({
+          webhookUrl: 'https://hooks.slack.com/services/T00/B00/secret-token',
+        }),
+      },
+      {
+        id: 'int-2',
+        projectId: PROJECT_ID,
+        kind: 'webhook',
+        configJson: JSON.stringify({
+          url: 'https://example.com/hooks/very-secret-path?token=abc',
+          headers: { Authorization: 'Bearer super-secret' },
+        }),
+      },
     ];
     mocks.integration.findMany.mockResolvedValue(rows);
     const res = await IntegrationsGET(req(`https://markup.ashbi.ca/api/projects/${PROJECT_ID}/integrations`), {
@@ -421,7 +436,14 @@ describe('GET /api/projects/[id]/integrations', () => {
       orderBy: { createdAt: 'asc' },
     });
     const body = await res.json();
-    expect(body).toEqual(rows);
+    expect(body).toHaveLength(2);
+    const slackConfig = JSON.parse(body[0].configJson);
+    expect(slackConfig.webhookUrl).toBe('https://hooks.slack.com/services/T0…');
+    expect(slackConfig.webhookUrl).not.toContain('secret-token');
+    const webhookConfig = JSON.parse(body[1].configJson);
+    expect(webhookConfig.url).toBe('https://example.com/hooks/very-…');
+    expect(webhookConfig.url).not.toContain('token=abc');
+    expect(webhookConfig.headers).toEqual({ Authorization: '***' });
   });
 });
 

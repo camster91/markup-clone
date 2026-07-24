@@ -65,14 +65,16 @@ export default function DashboardPoller({
     const ac = new AbortController();
     abortRef.current = ac;
     try {
-      // First poll: no cursor, full tree. Subsequent polls: pass the
-      // last successful poll timestamp minus 1s so we don't miss rows
-      // that were updated in the same millisecond as the previous
-      // response was being serialized.
+      // First poll: summary view, no cursor. Subsequent polls: pass
+      // the last successful poll timestamp minus 1s so we don't miss
+      // rows that were updated in the same millisecond as the previous
+      // response was being serialized. `view=summary` returns pins as
+      // { id, status } only — enough for card counts without shipping
+      // comment / annotation trees every 5s.
       const since = lastSuccessfulPoll.current;
       const url = since === null
-        ? '/api/projects'
-        : `/api/projects?since=${new Date(since - 1000).toISOString()}`;
+        ? '/api/projects?view=summary'
+        : `/api/projects?view=summary&since=${new Date(since - 1000).toISOString()}`;
       const res = await fetch(url, {
         signal: ac.signal,
         credentials: 'same-origin',

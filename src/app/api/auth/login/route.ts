@@ -28,6 +28,7 @@ import { SESSION_COOKIE, SESSION_TTL_SECONDS } from '@/lib/auth';
 import { verifyPassword } from '@/lib/password';
 import { consume } from '@/lib/rate-limit';
 import { randomBytes } from 'crypto';
+import { getClientIp } from '@/lib/request-ip';
 
 export const dynamic = 'force-dynamic';
 
@@ -55,8 +56,7 @@ export async function POST(req: Request) {
   // Rate limit before the DB lookup. ~5 attempts/min per email and
   // per client IP (maxTokens: 5, refillRate: 1/12 ≈ one token every
   // 12s). Either empty bucket → 429 with Retry-After.
-  const ip =
-    (req.headers.get('x-forwarded-for') ?? '').split(',')[0]?.trim() || 'unknown';
+  const ip = getClientIp(req);
   const emailBucket = consume(`login:email:${email}`, { maxTokens: 5, refillRate: 1 / 12 });
   if (!emailBucket.ok) {
     return NextResponse.json(

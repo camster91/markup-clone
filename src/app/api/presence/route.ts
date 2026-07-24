@@ -27,6 +27,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardSession } from '@/lib/auth';
+import { consume } from '@/lib/rate-limit';
 import { validateScreenshotId, validatePercent } from '@/lib/validation';
 
 // Presence TTL. Anything older than this is "offline" and the GET route
@@ -70,6 +71,12 @@ export async function POST(req: Request) {
   const projectIdErr = requireUuid(body.projectId, 'projectId');
   if (projectIdErr) return NextResponse.json({ error: projectIdErr }, { status: 400 });
   const projectId = body.projectId as string;
+
+  const origin = req.headers.get('origin') ?? 'unknown';
+  const rateCheck = consume(`presence:origin:${origin}:${projectId}`, { maxTokens: 30, refillRate: 0.5 });
+  if (!rateCheck.ok) {
+    return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(rateCheck.retryAfterSec) } });
+  }
 
   // userId: required, must be a UUID. The client generates a v4 on
   // first load and stores it in localStorage. A bad userId usually

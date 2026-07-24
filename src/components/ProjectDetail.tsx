@@ -10,35 +10,24 @@
 // <DashboardProjects>, but scoped to a single project:
 //   - usePresence keys on this projectId (project-level heartbeat +
 //     per-screenshot heartbeats from <ScreenshotView>)
-//   - useLiveEvents subscribes to this project's SSE stream
+//   - LiveEventsProvider opens ONE SSE stream; ScreenshotView and
+//     PinThread register handlers via useProjectLiveEvents
 //   - useRecaptureStatus is hosted by <ScreenshotView> for each
 //     screenshot, exactly as in the old dashboard
 //   - the recapture button is wired to the same POST endpoint
 //
-// Polling: this component re-uses the same ?since= delta-polling
-// pattern that the list page uses against /api/projects. The route
-// /api/projects/[id] does NOT exist as a GET (PATCH/DELETE only — see
-// src/app/api/projects/[id]/route.ts), so we poll the LIST endpoint
-// and filter to this project client-side. The cost is one extra
-// row-level filter per poll, in exchange for NOT having to add a
-// new route handler. The list payload already carries every nested
-// update (page, screenshot, pin, comment, annotation) the detail
-// page cares about, so the per-project page can stay in sync with
-// the rest of the dashboard without any new server endpoint.
-//
-// Why not just navigate back to / for updates: the list page's poll
-// is 5s and clears on unmount, so a detail view that polls the list
-// independently stays current even if the user never goes back to
-// the list. That's the expected behavior of a "view this project"
-// detail page.
+// Polling: polls GET /api/projects?id=<uuid> (full tree for THIS
+// project only) with the same ?since= delta cursor the list page
+// uses. Filtering by id means we never re-download every project
+// on the install just to refresh one detail page.
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import ScreenshotView from './ScreenshotView';
 import ProjectSettings, { ShareToggle, IntegrationsSection } from './ProjectSettings';
 import ProjectSubscribers from './ProjectSubscribers';
 import PresenceList from './PresenceList';
+import { LiveEventsProvider } from './LiveEventsProvider';
 import { usePresence } from '@/lib/hooks/usePresence';
-import { useLiveEvents } from '@/lib/hooks/useLiveEvents';
 import type { ProjectWithPages } from '@/lib/types';
 
 export interface ProjectDetailProps {
@@ -63,15 +52,14 @@ export default function ProjectDetail({ initialProject }: ProjectDetailProps) {
 
   const fetchProject = useCallback(async () => {
     try {
-      // The list endpoint serves the full project list. We poll it
-      // and pick out our project; the cost is one extra row-level
-      // filter per poll, in exchange for NOT having to add a new
-      // server endpoint.
+      // Single-project full tree via ?id= — avoids downloading every
+      // project on the install just to refresh this detail page.
       const since = lastSuccessfulPoll.current;
+      const base = `/api/projects?id=${encodeURIComponent(project.id)}`;
       const url = since === null
-        ? '/api/projects'
-        : `/api/projects?since=${new Date(since - 1000).toISOString()}`;
-      const res = await fetch(url);
+        ? base
+        : `${base}&since=${new Date(since - 1000).toISOString()}`;
+      const res = await fetch(url, { credentials: 'same-origin' });
       if (!res.ok) return;
       const data: ProjectWithPages[] = await res.json();
       if (!mountedRef.current) return;
@@ -89,12 +77,9 @@ export default function ProjectDetail({ initialProject }: ProjectDetailProps) {
         // write.
         lastSuccessfulPoll.current = Date.now();
       } else {
-        // Project was deleted on the server while we were on the
-        // detail page. Just bump the timestamp; the user will see
-        // stale data until they navigate back to the list. A real
-        // "project was deleted" banner would be a follow-up — the
-        // dashboard's own <ProjectSettings> delete button owns
-        // that flow.
+        // Empty delta (nothing changed since cursor) OR project
+        // was deleted. Just bump the timestamp; keep showing the
+        // current tree until the next non-empty poll / navigation.
         setLastUpdated(Date.now());
         lastSuccessfulPoll.current = Date.now();
       }
@@ -119,33 +104,16 @@ export default function ProjectDetail({ initialProject }: ProjectDetailProps) {
     };
   }, [fetchProject]);
 
-  // === Live updates (SSE) =================================================
-  // The hook subscribes to /api/events?projectId=X on mount and
-  // re-subscribes if the projectId changes. We don't dispatch on
-  // events here directly — <ScreenshotView> hosts its own
-  // useLiveEvents for the new-comment path and applies the update
-  // to its local pin state. Project-level events (e.g. settings
-  // changes) are still picked up by the 5s poll above. Subscribing
-  // here makes the connection symmetric with the per-screenshot
-  // subscriptions and lets future event types add a project-level
-  // dispatch without touching <ScreenshotView>.
-  useLiveEvents({
-    projectId: project.id,
-    onEvent: () => {
-      // No-op for now — pin/comment updates are handled by
-      // <ScreenshotView>'s own useLiveEvents subscription. The
-      // hook call here keeps the SSE connection alive so future
-      // project-level events can be dispatched without a
-      // subscription change.
-    },
-  });
-
+  // Single SSE subscription for the whole detail tree. Children
+  // (ScreenshotView, PinThread) register via useProjectLiveEvents.
   return (
-    <ProjectDetailCard
-      project={project}
-      lastUpdated={lastUpdated}
-      onProjectUpdated={fetchProject}
-    />
+    <LiveEventsProvider projectId={project.id}>
+      <ProjectDetailCard
+        project={project}
+        lastUpdated={lastUpdated}
+        onProjectUpdated={fetchProject}
+      />
+    </LiveEventsProvider>
   );
 }
 

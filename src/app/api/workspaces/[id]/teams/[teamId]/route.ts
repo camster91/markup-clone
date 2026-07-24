@@ -10,6 +10,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardSession } from '@/lib/auth';
+import { consume } from '@/lib/rate-limit';
 import { audit } from '@/lib/audit';
 import { validateTeamName, validateUuidParam } from '@/lib/validation';
 
@@ -33,6 +34,12 @@ export async function PATCH(
     if (!widRes.ok) return NextResponse.json({ error: widRes.error }, { status: 400 });
     const tidRes = validateUuidParam(teamId, 'teamId');
     if (!tidRes.ok) return NextResponse.json({ error: tidRes.error }, { status: 400 });
+
+    const origin = req.headers.get('origin') ?? 'unknown';
+    const rateCheck = consume(`teams:origin:${origin}:${tidRes.value}`, { maxTokens: 30, refillRate: 0.5 });
+    if (!rateCheck.ok) {
+      return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(rateCheck.retryAfterSec) } });
+    }
 
     const body = await req.json();
     const { name } = body as { name?: unknown };
@@ -67,6 +74,12 @@ export async function DELETE(
     if (!widRes.ok) return NextResponse.json({ error: widRes.error }, { status: 400 });
     const tidRes = validateUuidParam(teamId, 'teamId');
     if (!tidRes.ok) return NextResponse.json({ error: tidRes.error }, { status: 400 });
+
+    const origin = req.headers.get('origin') ?? 'unknown';
+    const rateCheck = consume(`teams:origin:${origin}:${tidRes.value}`, { maxTokens: 30, refillRate: 0.5 });
+    if (!rateCheck.ok) {
+      return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(rateCheck.retryAfterSec) } });
+    }
 
     const existing = await findTeam(widRes.value, tidRes.value);
     if (!existing) return NextResponse.json({ error: 'Team not found' }, { status: 404 });

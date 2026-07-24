@@ -253,7 +253,7 @@ describe('DashboardPoller — client island', () => {
     });
     let projectsCalls = projectsPollCalls(fetchMock);
     expect(projectsCalls).toHaveLength(1);
-    expect(projectsCalls[0]?.[0]).toBe('/api/projects');
+    expect(projectsCalls[0]?.[0]).toBe('/api/projects?view=summary');
 
     // Second tick: with ?since=<ISO> cursor. The cursor is
     // the last successful poll timestamp - 1000ms.
@@ -263,7 +263,7 @@ describe('DashboardPoller — client island', () => {
     projectsCalls = projectsPollCalls(fetchMock);
     expect(projectsCalls).toHaveLength(2);
     const secondUrl = projectsCalls[1]?.[0] as string;
-    expect(secondUrl).toMatch(/^\/api\/projects\?since=/);
+    expect(secondUrl).toMatch(/^\/api\/projects\?view=summary&since=/);
   });
 
   it('keeps the rendered tree on a non-2xx response (no crash, no drop)', async () => {

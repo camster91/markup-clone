@@ -6,7 +6,7 @@ import HistoryPanel from './HistoryPanel';
 import type { Pin, FeedbackComment, ScreenshotWithPins, FeedbackAnnotation } from '@/lib/types';
 import { useRecaptureStatus } from '@/lib/hooks/useRecaptureStatus';
 import { usePresence, colorForUserId, shortLabelForUserId } from '@/lib/hooks/usePresence';
-import { useLiveEvents } from '@/lib/hooks/useLiveEvents';
+import { useProjectLiveEvents } from './LiveEventsProvider';
 
 export default function ScreenshotView({
   screenshot,
@@ -208,7 +208,7 @@ export default function ScreenshotView({
     // future change that wires the form back in shouldn't be able to
     // smuggle state mutations through.
     if (readOnly) return;
-    setPins(prev => prev.map(p => p.id === pinId ? { ...p, comments: [...p.comments, comment] } : p));
+    setPins(prev => prev.map(p => p.id === pinId ? { ...p, comments: [...(p.comments ?? []), comment] } : p));
   };
 
   // === Annotation rendering ==============================================
@@ -267,35 +267,34 @@ export default function ScreenshotView({
   // is the "fast path" but the polling fallback (which the rest of
   // the dashboard depends on) must remain the source of truth. The
   // useRecaptureStatus hook will pick up the new PNG via either path.
-  useLiveEvents({
-    projectId: projectId ?? null,
-    screenshotId: projectId ? screenshot.id : null,
-    onEvent: (event) => {
-      if (event.type === 'new-comment') {
-        // The payload shape is documented in src/lib/events.ts; the
-        // server picks a safe projection (no apiKey, no full pin row).
-        const payload = event.payload as {
-          pinId: string;
-          comment: FeedbackComment;
-        };
-        // The active pin is the one the reviewer is currently
-        // looking at. If the SSE event is for a different pin (a
-        // collaborator commenting on a sibling pin), we still
-        // optimistically append — the PinThread only opens for
-        // the active pin, but the next time it opens, the
-        // comment will be there. (This also keeps the pin's
-        // comment-count display in sync.)
-        if (payload.pinId && payload.comment && payload.comment.id) {
-          setPins(prev => prev.map(p =>
-            p.id === payload.pinId
-              ? (p.comments.some(c => c.id === payload.comment.id)
-                  ? p // dedupe: comment already in local state
-                  : { ...p, comments: [...p.comments, payload.comment] })
-              : p
-          ));
-        }
+  // Shared SSE via LiveEventsProvider (one EventSource per project
+  // detail page). Outside a provider (share view) this is a no-op.
+  useProjectLiveEvents((event) => {
+    if (event.type === 'new-comment') {
+      // The payload shape is documented in src/lib/events.ts; the
+      // server picks a safe projection (no apiKey, no full pin row).
+      const payload = event.payload as {
+        pinId: string;
+        comment: FeedbackComment;
+      };
+      // The active pin is the one the reviewer is currently
+      // looking at. If the SSE event is for a different pin (a
+      // collaborator commenting on a sibling pin), we still
+      // optimistically append — the PinThread only opens for
+      // the active pin, but the next time it opens, the
+      // comment will be there. (This also keeps the pin's
+      // comment-count display in sync.)
+      if (payload.pinId && payload.comment && payload.comment.id) {
+        setPins(prev => prev.map(p => {
+          const comments = p.comments ?? [];
+          return p.id === payload.pinId
+            ? (comments.some(c => c.id === payload.comment.id)
+                ? p // dedupe: comment already in local state
+                : { ...p, comments: [...comments, payload.comment] })
+            : p;
+        }));
       }
-    },
+    }
   });
 
   return (
@@ -417,7 +416,7 @@ export default function ScreenshotView({
                 height: 28,
                 zIndex: isActive ? 10 : 5,
               }}
-              title={pin.comments[0]?.text || `Pin ${idx + 1}`}
+              title={(pin.comments ?? [])[0]?.text || `Pin ${idx + 1}`}
             >
               {idx + 1}
             </button>
@@ -453,7 +452,13 @@ export default function ScreenshotView({
               if (!pin) return null;
               return (
                 <PinThread
-                  pin={pin}
+                  pin={{
+                    ...pin,
+                    xPercent: pin.xPercent ?? 0,
+                    yPercent: pin.yPercent ?? 0,
+                    createdAt: pin.createdAt ?? '',
+                    comments: pin.comments ?? [],
+                  }}
                   projectId={projectId ?? null}
                   readOnly={readOnly}
                   onClose={() => setActivePinId(null)}

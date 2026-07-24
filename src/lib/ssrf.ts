@@ -7,10 +7,15 @@
 // (169.254.169.254), RFC1918 ranges, or localhost — turning the
 // app into an internal-network proxy.
 //
-// This module rejects those hosts at validation time. DNS rebinding
-// (public hostname → private IP at fetch time) is a residual risk;
-// blocking at resolve time would need an undici dispatcher hook and
-// is tracked as a follow-up Medium.
+// This module rejects those hosts at validation time AND at resolve
+// time (`safeOutboundFetch` DNS-looks up the hostname and rejects
+// any private/loopback address). A residual TOCTOU race remains
+// between lookup and connect (attacker flips DNS after we check);
+// closing that fully needs an undici connect hook. The resolve-time
+// check still stops the common rebinding case where a hostname
+// initially resolves public then flips to 169.254 before fetch.
+
+import dns from 'node:dns/promises';
 
 export type SsrfCheckResult = { ok: true; url: URL } | { ok: false; error: string };
 
@@ -67,6 +72,20 @@ function isBlockedIpv6(hostname: string): boolean {
 }
 
 /**
+ * True when `ip` is a private, loopback, link-local, or otherwise
+ * blocked address for outbound webhook targets (IPv4 + IPv6).
+ */
+export function isBlockedResolvedAddress(ip: string): boolean {
+  const addr = ip.toLowerCase().replace(/^\[|\]$/g, '');
+  if (!addr) return true;
+  if (isIpv4(addr)) return isPrivateOrLocalIpv4(addr);
+  if (isIpv6Literal(addr)) return isBlockedIpv6(addr);
+  // Non-IP strings shouldn't appear from dns.lookup({ all: true }),
+  // but treat unknowns as blocked rather than open a hole.
+  return true;
+}
+
+/**
  * Parse `raw` as an absolute http(s) URL and reject hosts that are
  * local, private, or otherwise unsafe as webhook targets.
  */
@@ -110,4 +129,45 @@ export function assertSafeOutboundUrl(raw: string): SsrfCheckResult {
   }
 
   return { ok: true, url };
+}
+
+/**
+ * Fetch an outbound URL after validating the URL shape and that every
+ * DNS-resolved address is public.
+ *
+ * Residual TOCTOU: DNS can flip between lookup and connect (classic
+ * rebinding). We intentionally do NOT rewrite the URL to a pinned IP
+ * (that breaks TLS SNI/certs for Slack/Discord). The pre-fetch lookup
+ * still closes the common case where an attacker registers a public
+ * A record then flips to 169.254 before we connect.
+ */
+export async function safeOutboundFetch(
+  url: string,
+  init?: RequestInit
+): Promise<Response> {
+  const check = assertSafeOutboundUrl(url);
+  if (!check.ok) {
+    throw new Error(check.error);
+  }
+
+  const hostname = check.url.hostname;
+  // Literal IPs were already checked by assertSafeOutboundUrl; still
+  // re-check via isBlockedResolvedAddress for a single code path.
+  if (isIpv4(hostname) || isIpv6Literal(hostname)) {
+    if (isBlockedResolvedAddress(hostname)) {
+      throw new Error('resolved address is not allowed');
+    }
+  } else {
+    const records = await dns.lookup(hostname, { all: true });
+    if (records.length === 0) {
+      throw new Error('resolved address is not allowed');
+    }
+    for (const rec of records) {
+      if (isBlockedResolvedAddress(rec.address)) {
+        throw new Error('resolved address is not allowed');
+      }
+    }
+  }
+
+  return fetch(url, init);
 }

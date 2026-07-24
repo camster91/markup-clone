@@ -135,11 +135,10 @@ describe('GET / — dashboard home page (RSC refactor)', () => {
     ]);
     await DashboardPage();
     expect(mocks.project.findMany).toHaveBeenCalled();
-    // The full tree include shape — pages, screenshots, pins,
-    // comments, annotations, subscribers, team. The polling
-    // client island renders from this payload, so the include
-    // shape must match the /api/projects route (or the first
-    // paint and the polled deltas would diverge).
+    // Summary include shape — pages → screenshots → pins as
+    // { id, status } only (no comments / annotations). Matches
+    // GET /api/projects?view=summary so the first paint and the
+    // polled deltas stay aligned.
     expect(mocks.project.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         include: expect.objectContaining({
@@ -148,10 +147,7 @@ describe('GET / — dashboard home page (RSC refactor)', () => {
               screenshots: expect.objectContaining({
                 include: expect.objectContaining({
                   pins: expect.objectContaining({
-                    include: expect.objectContaining({
-                      comments: expect.anything(),
-                      annotations: expect.anything(),
-                    }),
+                    select: { id: true, status: true },
                   }),
                 }),
               }),

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardSession } from '@/lib/auth';
 import { audit } from '@/lib/audit';
+import { consume } from '@/lib/rate-limit';
 import { unlink } from 'fs/promises';
 import { validatePinId } from '@/lib/validation';
 
@@ -20,6 +21,13 @@ export async function PATCH(
     if (!idRes.ok) {
       return NextResponse.json({ error: idRes.error }, { status: 400 });
     }
+
+    const origin = req.headers.get('origin') ?? 'unknown';
+    const rateCheck = consume(`pins:origin:${origin}:${idRes.value}`, { maxTokens: 30, refillRate: 0.5 });
+    if (!rateCheck.ok) {
+      return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(rateCheck.retryAfterSec) } });
+    }
+
     const { status } = await req.json();
     if (status !== 'OPEN' && status !== 'RESOLVED') {
       return NextResponse.json({ error: 'status must be OPEN or RESOLVED' }, { status: 400 });
@@ -27,6 +35,12 @@ export async function PATCH(
     const pin = await prisma.pin.update({
       where: { id },
       data: { status },
+    });
+    audit({
+      actor: pin.screenshotId ?? 'dashboard',
+      action: 'pin.update',
+      target: id,
+      metadata: { status },
     });
     return NextResponse.json({ success: true, data: pin });
   } catch (error) {
@@ -47,6 +61,12 @@ export async function DELETE(
     const idRes = validatePinId(id);
     if (!idRes.ok) {
       return NextResponse.json({ error: idRes.error }, { status: 400 });
+    }
+
+    const origin = req.headers.get('origin') ?? 'unknown';
+    const rateCheck = consume(`pins:origin:${origin}:${idRes.value}`, { maxTokens: 30, refillRate: 0.5 });
+    if (!rateCheck.ok) {
+      return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(rateCheck.retryAfterSec) } });
     }
 
     // Find the pin and its screenshot

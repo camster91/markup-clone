@@ -22,6 +22,7 @@
 // timestamp in a context row.
 
 import type { PinPayload, SlackConfig } from './types';
+import { safeOutboundFetch } from '@/lib/ssrf';
 
 /**
  * Build the Slack message body for a pin event.
@@ -71,11 +72,11 @@ export function buildSlackBody(payload: PinPayload) {
  * POST the pin payload to the Slack incoming webhook URL.
  *
  * Throws on a non-2xx response (the route layer catches and
- * records lastError). Uses global `fetch` (Node 18+) — the
- * project does not depend on node-fetch.
+ * records lastError). Uses `safeOutboundFetch` so DNS-resolved
+ * private/loopback addresses are rejected before the request.
  */
 export async function post(config: SlackConfig, payload: PinPayload): Promise<void> {
-  const res = await fetch(config.webhookUrl, {
+  const res = await safeOutboundFetch(config.webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(buildSlackBody(payload)),

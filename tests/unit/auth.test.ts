@@ -42,8 +42,14 @@ import {
 } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 
-function makeReq(headers: Record<string, string>): Request {
-  return new Request('https://markup.ashbi.ca/api/test', { headers });
+function makeReq(
+  headers: Record<string, string>,
+  init: { method?: string } = {}
+): Request {
+  return new Request('https://markup.ashbi.ca/api/test', {
+    method: init.method ?? 'GET',
+    headers,
+  });
 }
 
 function liveSession() {
@@ -82,8 +88,24 @@ describe('isDashboardOrigin', () => {
     expect(isDashboardOrigin(makeReq({}))).toBe(false);
   });
 
-  it('accepts when sec-fetch-site is same-origin (browser same-origin fetch)', () => {
+  it('accepts GET when sec-fetch-site is same-origin (browser same-origin fetch)', () => {
     expect(isDashboardOrigin(makeReq({ 'sec-fetch-site': 'same-origin' }))).toBe(true);
+  });
+
+  it('rejects POST without Origin even when sec-fetch-site is same-origin', () => {
+    expect(
+      isDashboardOrigin(
+        makeReq({ 'sec-fetch-site': 'same-origin' }, { method: 'POST' })
+      )
+    ).toBe(false);
+  });
+
+  it('accepts POST with a matching Origin header', () => {
+    expect(
+      isDashboardOrigin(
+        makeReq({ origin: 'https://markup.ashbi.ca' }, { method: 'POST' })
+      )
+    ).toBe(true);
   });
 
   it('rejects when sec-fetch-site is cross-site (browser cross-origin fetch)', () => {

@@ -23,6 +23,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardSession, generateApiKey } from '@/lib/auth';
 import { audit } from '@/lib/audit';
+import { consume } from '@/lib/rate-limit';
 import { unlink } from 'fs/promises';
 import { validateProjectName } from '@/lib/validation';
 import { assertProjectAccessible } from '@/lib/project-access';
@@ -38,6 +39,12 @@ export async function DELETE(
 
   try {
     const { id } = await params;
+
+    const origin = req.headers.get('origin') ?? 'unknown';
+    const rateCheck = consume(`projects:origin:${origin}:${id}`, { maxTokens: 30, refillRate: 0.5 });
+    if (!rateCheck.ok) {
+      return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(rateCheck.retryAfterSec) } });
+    }
 
     const access = await assertProjectAccessible(id);
     if (!access.ok) {
@@ -94,6 +101,12 @@ export async function PATCH(
 
   try {
     const { id } = await params;
+
+    const origin = req.headers.get('origin') ?? 'unknown';
+    const rateCheck = consume(`projects:origin:${origin}:${id}`, { maxTokens: 30, refillRate: 0.5 });
+    if (!rateCheck.ok) {
+      return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(rateCheck.retryAfterSec) } });
+    }
 
     const access = await assertProjectAccessible(id);
     if (!access.ok) {

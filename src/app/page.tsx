@@ -25,25 +25,18 @@ import { getCallerUser, getProjectScopeWhere } from '@/lib/teams';
 //      <DashboardProjects> with the latest data.
 //
 // Why an RSC: the project list is small (projects → pages →
-// screenshots → pins) and the dashboard is a list-and-form
+// screenshots → pin counts) and the dashboard is a list-and-form
 // page. The first paint carries the project list baked into
 // the HTML so the operator sees their projects on the first
 // frame — no loading flash, no JS-required state hydration.
 // The client island <DashboardPoller> takes over from there:
 // it owns the live state and the 5s poll, and any new pin
-// / comment / annotation created by another operator shows
-// up on the next tick.
+// shows up on the next tick.
 //
-// The full per-project tree (pages / screenshots / pins /
-// comments / annotations) is rendered into the initial HTML
-// for every project the caller can see. For a transitional
-// single-project install that's trivially small. For a
-// workspace with many projects, this can grow — the per-
-// project detail page (/projects/[id]) exists so the home
-// page doesn't have to inline the deep tree. We still embed
-// the full tree in the home page's first paint because the
-// polling island needs the full payload to render the
-// "N pins / M open" affordance without a follow-up fetch.
+// Summary payload: home SSR + poller use the same light shape as
+// GET /api/projects?view=summary — pins as { id, status } only,
+// no comments / annotations. The per-project detail page
+// (/projects/[id]) loads the full tree.
 //
 // Team-scope: the same helper that gates /api/projects'
 // team-scope filter (getProjectScopeWhere) gates this RSC's
@@ -89,6 +82,10 @@ export default async function Dashboard() {
   if (caller) {
     const teamScope = await getProjectScopeWhere(caller.id);
 
+    // Summary shape — same as GET /api/projects?view=summary. Home
+    // cards only need pin id/status for "N pins / M open" counts;
+    // shipping comments + annotations on every SSR + 5s poll was
+    // the M2 cost. Detail pages fetch the full tree separately.
     const projects = await prisma.project.findMany({
       where: teamScope,
       include: {
@@ -100,14 +97,7 @@ export default async function Dashboard() {
               include: {
                 pins: {
                   orderBy: { createdAt: 'asc' },
-                  include: {
-                    comments: {
-                      orderBy: { createdAt: 'asc' },
-                    },
-                    annotations: {
-                      orderBy: { createdAt: 'asc' },
-                    },
-                  },
+                  select: { id: true, status: true },
                 },
               },
             },
@@ -119,13 +109,8 @@ export default async function Dashboard() {
       orderBy: { createdAt: 'desc' },
     });
 
-    // Serialize the tree to the ProjectWithPages shape. Same
-    // contract as the /api/projects route: Date fields are
-    // ISO strings, annotation.pathJson is parsed into a
-    // number[][] `path` field, missing annotations default to
-    // an empty array. elementHTML is omitted (DOM snippet can
-    // carry PII / script-ish content; dashboard doesn't need it
-    // in the list payload).
+    // Serialize to the ProjectWithPages summary shape. Dates → ISO
+    // strings; pins are { id, status } only (no comments/annotations).
     initialData = projects.map((p) => ({
       id: p.id,
       name: p.name,
@@ -150,36 +135,7 @@ export default async function Dashboard() {
           capturedAt: screenshot.capturedAt.toISOString(),
           pins: screenshot.pins.map((pin) => ({
             id: pin.id,
-            xPercent: pin.xPercent,
-            yPercent: pin.yPercent,
             status: pin.status,
-            elementXPath: pin.elementXPath,
-            createdAt: pin.createdAt.toISOString(),
-            comments: pin.comments.map((comment) => ({
-              id: comment.id,
-              text: comment.text,
-              author: comment.author,
-              authorRole: comment.authorRole,
-              createdAt: comment.createdAt.toISOString(),
-              attachments: [],
-            })),
-            annotations: (pin.annotations ?? []).map((annotation) => {
-              let path: number[][] = [];
-              try {
-                const parsed = JSON.parse(annotation.pathJson);
-                if (Array.isArray(parsed)) path = parsed as number[][];
-              } catch {
-                // Bad pathJson (would have been rejected at write
-                // time). Fall back to an empty path so the
-                // ScreenshotView doesn't throw.
-              }
-              return {
-                id: annotation.id,
-                kind: annotation.kind as 'arrow' | 'box' | 'freehand',
-                path,
-                createdAt: annotation.createdAt.toISOString(),
-              };
-            }),
           })),
         })),
       })),

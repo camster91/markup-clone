@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardSession } from '@/lib/auth';
+import { consume } from '@/lib/rate-limit';
 import { validatePinId } from '@/lib/validation';
 import { audit } from '@/lib/audit';
 
@@ -33,6 +34,12 @@ export async function DELETE(
       // helper. The error message is generic enough to cover both
       // cases — the route name in the URL is the disambiguator.
       return NextResponse.json({ error: idRes.error }, { status: 400 });
+    }
+
+    const origin = req.headers.get('origin') ?? 'unknown';
+    const rateCheck = consume(`annotations:origin:${origin}:${idRes.value}`, { maxTokens: 30, refillRate: 0.5 });
+    if (!rateCheck.ok) {
+      return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(rateCheck.retryAfterSec) } });
     }
 
     // Cheap existence check so we can distinguish "deleted" from

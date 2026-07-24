@@ -14,6 +14,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardSession } from '@/lib/auth';
+import { consume } from '@/lib/rate-limit';
 import { audit } from '@/lib/audit';
 import { validateWorkspaceName, validateUuidParam } from '@/lib/validation';
 
@@ -28,6 +29,12 @@ export async function PATCH(
     const { id } = await params;
     const idRes = validateUuidParam(id, 'id');
     if (!idRes.ok) return NextResponse.json({ error: idRes.error }, { status: 400 });
+
+    const origin = req.headers.get('origin') ?? 'unknown';
+    const rateCheck = consume(`workspaces:origin:${origin}:${idRes.value}`, { maxTokens: 30, refillRate: 0.5 });
+    if (!rateCheck.ok) {
+      return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(rateCheck.retryAfterSec) } });
+    }
 
     const body = await req.json();
     const { name } = body as { name?: unknown };
@@ -60,6 +67,12 @@ export async function DELETE(
     const { id } = await params;
     const idRes = validateUuidParam(id, 'id');
     if (!idRes.ok) return NextResponse.json({ error: idRes.error }, { status: 400 });
+
+    const origin = req.headers.get('origin') ?? 'unknown';
+    const rateCheck = consume(`workspaces:origin:${origin}:${idRes.value}`, { maxTokens: 30, refillRate: 0.5 });
+    if (!rateCheck.ok) {
+      return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(rateCheck.retryAfterSec) } });
+    }
 
     const existing = await prisma.workspace.findUnique({
       where: { id: idRes.value },

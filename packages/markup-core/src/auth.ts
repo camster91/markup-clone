@@ -13,7 +13,9 @@
 //   - ROLES / Role — the closed set of operator / reviewer roles.
 //   - getDashboardHost() — read the configured dashboard host from env.
 //   - isDashboardOrigin(req) — pure check: does the request come from
-//     the dashboard origin (Origin header or sec-fetch-site)?
+//     the dashboard origin? Mutating methods (POST/PATCH/PUT/DELETE)
+//     require a matching Origin header; GET/HEAD/OPTIONS also accept
+//     sec-fetch-site: same-origin.
 //   - requireDashboardOrigin(req) — same check, but returns the
 //     NextResponse 401 for a route handler to bail out with.
 //   - generateApiKey() / generateShareToken() — token factories that
@@ -58,6 +60,10 @@ export function getDashboardHost(): string {
 }
 
 export function isDashboardOrigin(req: Request): boolean {
+  const method = req.method.toUpperCase();
+  const mutating =
+    method === 'POST' || method === 'PATCH' || method === 'PUT' || method === 'DELETE';
+
   const dashboardHost = getDashboardHost();
   const origin = req.headers.get('origin');
   if (origin) {
@@ -69,9 +75,16 @@ export function isDashboardOrigin(req: Request): boolean {
       const host = new URL(origin).host;
       if (host === dashboardHost || host.endsWith('.' + dashboardHost)) return true;
     } catch {
-      // Malformed Origin header — fall through to sec-fetch-site.
+      // Malformed Origin header — fall through.
     }
   }
+
+  // Mutating methods must carry a matching Origin. Sec-Fetch-Site alone
+  // is forgeable on non-browser clients and is not enough CSRF proof
+  // for writes. Safe methods may still use same-origin Sec-Fetch-Site
+  // (e.g. same-origin <img> / fetch for screenshot bytes).
+  if (mutating) return false;
+
   if (req.headers.get('sec-fetch-site') === 'same-origin') return true;
   return false;
 }

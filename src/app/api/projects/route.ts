@@ -17,11 +17,20 @@
 // Auth: every handler is gated by requireDashboardSession (Origin
 // CSRF + active session cookie). The team-scope filter is a "which
 // projects does this caller see" gate on top of that.
+//
+// GET query params:
+//   ?view=summary — light tree: pins as { id, status } only (no
+//     comments / annotations). Used by the home poller + SSR.
+//   ?view=full or omitted — full tree (comments + annotations).
+//   ?id=<uuid> — restrict to a single project (0..1 rows). Used by
+//     ProjectDetail so it doesn't download every project.
+//   ?since=<ISO> — delta filter at every nested level (unchanged).
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardSession, generateApiKey } from '@/lib/auth';
 import { audit } from '@/lib/audit';
+import { consume } from '@/lib/rate-limit';
 import { validateProjectDomain, validateProjectName, validateUuidParam } from '@/lib/validation';
 import { getCallerUser, getProjectScopeWhere } from '@/lib/teams';
 
@@ -40,22 +49,60 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const sinceParam = url.searchParams.get('since');
   const since = sinceParam ? new Date(sinceParam) : null;
-  const filterSince = sinceParam && !Number.isNaN(since!.getTime());
+  const filterSince = !!(sinceParam && since && !Number.isNaN(since.getTime()));
+
+  // ?view=summary → pins as { id, status } only (home list / poller).
+  // Absent or `full` → comments + annotations included (detail consumers).
+  const viewParam = url.searchParams.get('view');
+  const isSummary = viewParam === 'summary';
+
+  // Optional ?id=<uuid> → single-project filter (array of length 0..1).
+  // ProjectDetail polls with this so it never downloads the full list.
+  const idParam = url.searchParams.get('id');
+  let projectIdFilter: string | undefined;
+  if (idParam) {
+    const idRes = validateUuidParam(idParam, 'id');
+    if (!idRes.ok) {
+      return NextResponse.json({ error: idRes.error }, { status: 400 });
+    }
+    projectIdFilter = idRes.value;
+  }
 
   // Resolve the caller and their team scope. The where clause is
   // composed BEFORE the `updatedAt` filter so the two filters AND
   // together: callers see "projects in my teams" AND "updated since
-  // the cursor" — never one without the other. The pre-existing
-  // tests that mock prisma.project.findMany without our teams helper
-  // will see the new `where` shape; the integration tests updated
-  // alongside this change assert the team-scope filter is applied.
+  // the cursor" — never one without the other.
   const caller = await getCallerUser();
   const teamScope = await getProjectScopeWhere(caller?.id ?? null);
+
+  // Pin include shape depends on view. Summary skips comments /
+  // annotations (and uses select so Prisma doesn't pull the columns).
+  const pinsQuery = isSummary
+    ? {
+        where: filterSince ? { updatedAt: { gt: since! } } : undefined,
+        orderBy: { createdAt: 'asc' as const },
+        select: { id: true, status: true },
+      }
+    : {
+        where: filterSince ? { updatedAt: { gt: since! } } : undefined,
+        orderBy: { createdAt: 'asc' as const },
+        include: {
+          comments: {
+            where: filterSince ? { updatedAt: { gt: since! } } : undefined,
+            orderBy: { createdAt: 'asc' as const },
+          },
+          annotations: {
+            ...(filterSince ? { where: { createdAt: { gt: since! } } } : {}),
+            orderBy: { createdAt: 'asc' as const },
+          },
+        },
+      };
 
   const projects = await prisma.project.findMany({
     where: {
       AND: [
         teamScope,
+        ...(projectIdFilter ? [{ id: projectIdFilter }] : []),
         ...(filterSince ? [{ updatedAt: { gt: since! } }] : []),
       ],
     },
@@ -64,71 +111,55 @@ export async function GET(req: Request) {
         where: filterSince ? { updatedAt: { gt: since! } } : undefined,
         include: {
           screenshots: {
-            // Screenshot has no `updatedAt` field — its lifetime marker
-            // is `capturedAt`. Same semantics: only screenshots captured
-            // after the cursor are part of the delta.
             where: filterSince ? { capturedAt: { gt: since! } } : undefined,
             orderBy: { capturedAt: 'desc' },
             include: {
-              pins: {
-                where: filterSince ? { updatedAt: { gt: since! } } : undefined,
-                orderBy: { createdAt: 'asc' },
-                include: {
-                  comments: {
-                    where: filterSince ? { updatedAt: { gt: since! } } : undefined,
-                    orderBy: { createdAt: 'asc' },
-                  },
-                  // Annotations: drawn arrows / boxes / freehand
-                  // attached to each pin. The ScreenshotView's SVG
-                  // overlay reads these and renders one <line>/<rect>/
-                  // <polyline> per row. The `where` filters on
-                  // createdAt — no Annotation has an `updatedAt` so
-                  // a new annotation always reflects a new pin event
-                  // for delta polling. We parse pathJson into a
-                  // `number[][]` shape on the way out (the server
-                  // stores it as a JSON string for schema flexibility).
-                  annotations: {
-                    ...(filterSince ? { where: { createdAt: { gt: since! } } } : {}),
-                    orderBy: { createdAt: 'asc' },
-                  },
-                },
-              },
+              pins: pinsQuery,
             },
           },
         },
       },
       subscribers: true,
-      // The team relation is included so the dashboard's
-      // ProjectListCard can render "in <team name>" without a
-      // follow-up lookup. `select` is limited to the columns the
-      // dashboard actually needs (id + name); the rest is a
-      // network-cost-no-no on a list endpoint.
       team: { select: { id: true, name: true } },
     },
     orderBy: { createdAt: 'desc' },
   });
-  // Project has no `include`-able shareToken — it's a top-level
-  // scalar. select it explicitly so the dashboard's ShareToggle can
-  // see whether a token is active. `shareToken` is dashboard-only
-  // (the route is gated by requireDashboardSession) so emitting the
-  // raw token here is fine — only a dashboard user can hit this
-  // endpoint, and they need the token to render the share URL.
-  //
-  // Annotation rows include `pathJson` as a JSON string (the DB
-  // column shape). We parse it client-side at fetch time so the
-  // dashboard sees `path: number[][]` directly — saves every render
-  // from re-parsing, and lines up with the FeedbackAnnotation type
-  // (which declares `path` as a parsed array, not a string).
-  //
-  // A malformed pathJson would have been rejected at write time by
-  // the POST /api/annotations validator, so the JSON.parse here
-  // only fails on a hand-crafted DB row. We fall back to an empty
-  // array so the pin's overlay renders without an exception, and
-  // log once at the route level so a corruption is auditable.
-  //
-  // `pin.annotations` may be undefined in tests that mock the
-  // prisma include with the legacy shape (no annotation field).
-  // Coerce to [] so the response shape is always the same.
+
+  if (isSummary) {
+    return NextResponse.json(
+      projects.map((p) => ({
+        id: p.id,
+        name: p.name,
+        domain: p.domain,
+        apiKey: p.apiKey,
+        shareToken: p.shareToken,
+        teamId: p.teamId,
+        team: p.team,
+        createdAt: p.createdAt,
+        updatedAt: p.updatedAt,
+        pages: p.pages.map((page) => ({
+          id: page.id,
+          path: page.path,
+          createdAt: page.createdAt,
+          updatedAt: page.updatedAt,
+          screenshots: page.screenshots.map((screenshot) => ({
+            id: screenshot.id,
+            storageKey: screenshot.storageKey,
+            pageId: screenshot.pageId,
+            width: screenshot.width,
+            height: screenshot.height,
+            capturedAt: screenshot.capturedAt,
+            pins: screenshot.pins.map((pin) => ({
+              id: pin.id,
+              status: pin.status,
+            })),
+          })),
+        })),
+        subscribers: p.subscribers,
+      }))
+    );
+  }
+
   return NextResponse.json(
     projects.map((p) => ({
       id: p.id,
@@ -144,39 +175,51 @@ export async function GET(req: Request) {
         ...page,
         screenshots: page.screenshots.map((screenshot) => ({
           ...screenshot,
-          pins: screenshot.pins.map((pin) => ({
-            // Omit elementHTML — DOM snippets can carry PII / markup
-            // and the dashboard list UI never renders them.
-            id: pin.id,
-            xPercent: pin.xPercent,
-            yPercent: pin.yPercent,
-            status: pin.status,
-            elementXPath: pin.elementXPath,
-            authorName: pin.authorName,
-            createdAt: pin.createdAt,
-            updatedAt: pin.updatedAt,
-            screenshotId: pin.screenshotId,
-            comments: pin.comments,
-            annotations: (pin.annotations ?? []).map((a) => {
-              let path: number[][] = [];
-              try {
-                const parsed = JSON.parse(a.pathJson);
-                if (Array.isArray(parsed)) path = parsed as number[][];
-              } catch {
-                // Don't leak the per-request loop noise — log once.
-                // Production data should never reach this branch
-                // (the POST /api/annotations validator rejects
-                // malformed input).
-                console.warn(`[projects] annotation ${a.id} has unparseable pathJson`);
-              }
-              return {
-                id: a.id,
-                kind: a.kind,
-                path,
-                createdAt: a.createdAt,
-              };
-            }),
-          })),
+          pins: screenshot.pins.map((pin) => {
+            const fullPin = pin as typeof pin & {
+              xPercent: number;
+              yPercent: number;
+              elementXPath: string | null;
+              authorName: string | null;
+              createdAt: Date;
+              updatedAt: Date;
+              screenshotId: string;
+              comments: unknown;
+              annotations?: Array<{
+                id: string;
+                kind: string;
+                pathJson: string;
+                createdAt: Date;
+              }>;
+            };
+            return {
+              id: fullPin.id,
+              xPercent: fullPin.xPercent,
+              yPercent: fullPin.yPercent,
+              status: fullPin.status,
+              elementXPath: fullPin.elementXPath,
+              authorName: fullPin.authorName,
+              createdAt: fullPin.createdAt,
+              updatedAt: fullPin.updatedAt,
+              screenshotId: fullPin.screenshotId,
+              comments: fullPin.comments,
+              annotations: (fullPin.annotations ?? []).map((a) => {
+                let path: number[][] = [];
+                try {
+                  const parsed = JSON.parse(a.pathJson);
+                  if (Array.isArray(parsed)) path = parsed as number[][];
+                } catch {
+                  console.warn(`[projects] annotation ${a.id} has unparseable pathJson`);
+                }
+                return {
+                  id: a.id,
+                  kind: a.kind,
+                  path,
+                  createdAt: a.createdAt,
+                };
+              }),
+            };
+          }),
         })),
       })),
       subscribers: p.subscribers,
@@ -187,6 +230,12 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const authErr = await requireDashboardSession(req);
   if (authErr) return authErr;
+
+  const origin = req.headers.get('origin') ?? 'unknown';
+  const rateCheck = consume(`projects:origin:${origin}:new`, { maxTokens: 30, refillRate: 0.5 });
+  if (!rateCheck.ok) {
+    return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(rateCheck.retryAfterSec) } });
+  }
 
   try {
     const { name, domain, teamId } = await req.json();

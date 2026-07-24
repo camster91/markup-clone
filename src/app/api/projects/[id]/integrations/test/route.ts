@@ -24,6 +24,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardSession } from '@/lib/auth';
+import { consume } from '@/lib/rate-limit';
 import { assertProjectAccessible } from '@/lib/project-access';
 import { dispatch } from '@/lib/integrations/dispatcher';
 import { isIntegrationKind } from '@/lib/integrations/types';
@@ -39,6 +40,13 @@ export async function POST(
 
   try {
     const { id: projectId } = await params;
+
+    const origin = req.headers.get('origin') ?? 'unknown';
+    const rateCheck = consume(`integrations:origin:${origin}:${projectId}`, { maxTokens: 30, refillRate: 0.5 });
+    if (!rateCheck.ok) {
+      return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(rateCheck.retryAfterSec) } });
+    }
+
     const access = await assertProjectAccessible(projectId);
     if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
 

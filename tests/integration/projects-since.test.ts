@@ -195,6 +195,57 @@ describe('GET /api/projects — ?since= delta polling', () => {
     expect(call.where.AND).toHaveLength(1);
   });
 
+  it('?view=summary selects pins as { id, status } only (no comments/annotations)', async () => {
+    mocks.project.findMany.mockResolvedValue([
+      {
+        ...fullTree[0],
+        pages: [
+          {
+            ...fullTree[0].pages[0],
+            screenshots: [
+              {
+                ...fullTree[0].pages[0].screenshots[0],
+                pins: [{ id: 'pin-1', status: 'OPEN' }],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+    const res = await GET(getReq('?view=summary'));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body[0].pages[0].screenshots[0].pins[0]).toEqual({
+      id: 'pin-1',
+      status: 'OPEN',
+    });
+    const call = mocks.project.findMany.mock.calls[0][0];
+    const pins = call.include.pages.include.screenshots.include.pins;
+    expect(pins.select).toEqual({ id: true, status: true });
+    expect(pins.include).toBeUndefined();
+  });
+
+  it('?id=<uuid> scopes the where clause to a single project', async () => {
+    mocks.project.findMany.mockResolvedValue(fullTree);
+    const id = '11111111-1111-4111-8111-111111111111';
+    const res = await GET(getReq(`?id=${id}`));
+    expect(res.status).toBe(200);
+    const call = mocks.project.findMany.mock.calls[0][0];
+    expect(call.where.AND).toEqual(
+      expect.arrayContaining([{ id }])
+    );
+    // Full include (not summary) when view is absent.
+    const pins = call.include.pages.include.screenshots.include.pins;
+    expect(pins.include.comments).toBeDefined();
+    expect(pins.include.annotations).toBeDefined();
+  });
+
+  it('rejects a non-UUID ?id= with 400', async () => {
+    const res = await GET(getReq('?id=not-a-uuid'));
+    expect(res.status).toBe(400);
+    expect(mocks.project.findMany).not.toHaveBeenCalled();
+  });
+
   it('with since=<ISO>, sends an updatedAt filter on every nested level', async () => {
     mocks.project.findMany.mockResolvedValue(deltaTree);
     const cursor = '2026-06-15T11:59:30.000Z';

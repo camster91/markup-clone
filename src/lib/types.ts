@@ -47,15 +47,22 @@ export type FeedbackAnnotation = {
 
 export type Pin = {
   id: string;
-  xPercent: number;
-  yPercent: number;
+  /** Present on full-tree payloads; omitted on `?view=summary`. */
+  xPercent?: number;
+  /** Present on full-tree payloads; omitted on `?view=summary`. */
+  yPercent?: number;
   status: string;
   elementXPath?: string | null;
   elementHTML?: string | null;
-  createdAt: string;
-  comments: FeedbackComment[];
-  /** Drawn marks (arrows / boxes / freehand) attached to this pin. */
-  annotations: FeedbackAnnotation[];
+  createdAt?: string;
+  /**
+   * Full-tree only. Summary view (`?view=summary` / home SSR) returns
+   * pins as `{ id, status }` so home polling never ships comment /
+   * annotation trees. Detail consumers always get the arrays.
+   */
+  comments?: FeedbackComment[];
+  /** Drawn marks (arrows / boxes / freehand). Full-tree only. */
+  annotations?: FeedbackAnnotation[];
 };
 
 export type ScreenshotWithPins = {

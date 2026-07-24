@@ -30,6 +30,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardSession } from '@/lib/auth';
+import { consume } from '@/lib/rate-limit';
 import { audit } from '@/lib/audit';
 import { validateWorkspaceName } from '@/lib/validation';
 
@@ -65,6 +66,12 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const authErr = await requireDashboardSession(req);
   if (authErr) return authErr;
+
+  const origin = req.headers.get('origin') ?? 'unknown';
+  const rateCheck = consume(`workspaces:origin:${origin}:new`, { maxTokens: 30, refillRate: 0.5 });
+  if (!rateCheck.ok) {
+    return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(rateCheck.retryAfterSec) } });
+  }
 
   try {
     const body = await req.json();

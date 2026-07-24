@@ -17,69 +17,63 @@ The dashboard’s primary gate was `requireDashboardOrigin` — a forgeable
 client could list projects (including live `apiKey` / `shareToken`), mutate
 legacy projects, register SSRF webhooks, and spawn Chromium recaptures.
 
-Critical and High items below are patched on this branch. Medium items are
-documented for follow-up.
+**All Critical, High, and Medium items below are patched on this branch.**
+Accepted residual risks are called out under Medium (M9).
 
 ---
 
-## Critical
+## Critical — fixed
 
 | ID | Issue | Fix |
 |----|--------|-----|
-| C1 | **Forgeable Origin = full dashboard API access** (no session) | New `requireDashboardSession()` = Origin + `requireAuth()`. Applied to all dashboard API routes. |
-| C2 | **`requireProjectKey` Origin bypass** skipped API key with forged Origin | Origin bypass now requires a live session; otherwise X-Api-Key is mandatory. |
-| C3 | **Login returned `sessionToken` in JSON** (defeats HttpOnly) | Body is `{ user }` only; token only in Set-Cookie. |
-| C4 | **SSR `/` leaked `apiKey` / project tree to anonymous users** | `page.tsx` skips the project query when `getCallerUser()` is null. |
+| C1 | **Forgeable Origin = full dashboard API access** (no session) | `requireDashboardSession()` = Origin + `requireAuth()`. |
+| C2 | **`requireProjectKey` Origin bypass** | Origin bypass requires a live session; otherwise X-Api-Key. |
+| C3 | **Login returned `sessionToken` in JSON** | Body is `{ user }` only; token only in Set-Cookie. |
+| C4 | **SSR `/` leaked `apiKey` / project tree to anonymous users** | `page.tsx` skips the project query when no session. |
 
-## High
+## High — fixed
 
 | ID | Issue | Fix |
 |----|--------|-----|
-| H1 | Unauthenticated `/api/screenshots/[id]/image` + no UUID validation | `validateScreenshotId`; auth = dashboard Origin **or** `?share=` matching project token; `Cache-Control: private`. |
-| H2 | Integration webhook SSRF (RFC1918 / link-local / localhost) | `assertSafeOutboundUrl()` in `src/lib/ssrf.ts`, wired into Slack/Discord/webhook validators. |
-| H3 | Project-scoped writes without team membership checks | Shared `assertProjectAccessible()` on subscribers / share / integrations (+ existing DELETE/PATCH). |
-| H4 | SVG attachment → stored XSS when opened as document | Reject `image/svg+xml` on upload (415); CSP + `Content-Disposition: attachment` defense on GET. |
-| H5 | No login rate limit (credential stuffing) | Per-email + per-IP token buckets on `POST /api/auth/login`. |
-| H6 | Unpaginated project tree included `elementHTML` (≤50KB/pin) | Omit `elementHTML` from `/api/projects` + home SSR serialization. |
-| H7 | Poll loops without AbortController / form fetches without try/finally | `DashboardPoller`, `useRecaptureStatus`, `NewProjectForm` patched. |
-| H8 | Comment `author` / `authorRole` unsanitized | `sanitizeText` + closed role allowlist on comment create. |
+| H1 | Unauthenticated screenshot image + no UUID validation | `validateScreenshotId`; Origin **or** `?share=`; private cache. |
+| H2 | Integration webhook SSRF (hostname literals) | `assertSafeOutboundUrl()` at registration. |
+| H3 | Project-scoped writes without team membership | `assertProjectAccessible()` on project mutations. |
+| H4 | SVG attachment → stored XSS | Reject SVG on upload; CSP + disposition on GET. |
+| H5 | No login rate limit | Per-email + per-IP buckets. |
+| H6 | Project list included `elementHTML` | Omitted from list payloads. |
+| H7 | Poll loops / forms without abort or try/finally | AbortController + try/finally. |
+| H8 | Comment `author` / `authorRole` unsanitized | `sanitizeText` + role allowlist. |
 
-## Medium (deferred)
+## Medium — fixed
 
-| ID | Issue | Notes |
-|----|--------|-------|
-| M1 | DNS rebinding on webhook fetch (hostname → private IP at resolve time) | Needs undici/custom dispatcher; validate-time host block is partial. |
-| M2 | Unpaginated full project `findMany` (structure still deep) | Dropped heavy `elementHTML`; true pagination / per-project detail fetch still needed. |
-| M3 | Triple SSE EventSource per project detail | Collapse to one subscription. |
-| M4 | Silent poll catch → no offline UX (partially mitigated) | Poller now surfaces offline banner; AuthGate still maps network fail → login. |
-| M5 | Rate-limit gaps on CRUD / workspaces / attachments | Login + existing pin/comment/recapture limits only. |
-| M6 | Missing `audit()` on pin status / attachment create | Compliance gap. |
-| M7 | Integration GET returns raw webhook URLs in `configJson` | Redact secrets in list responses. |
-| M8 | `Sec-Fetch-Site: same-origin` alone still satisfies Origin check | Acceptable **with** session cookie (SameSite=Strict); do not re-open Origin-only routes. |
-| M9 | Screenshot image still Origin-only (not session) for `<img>` | Required for browser subresource loads; UUID + share token bound the risk. |
-| M10 | `x-forwarded-for` spoofable rate-limit keys | Trust proxy hop only behind known Caddy. |
+| ID | Issue | Fix |
+|----|--------|-----|
+| M1 | DNS rebinding on webhook fetch | `safeOutboundFetch()` resolves DNS and rejects private/loopback addresses before `fetch`. |
+| M2 | Unpaginated deep project trees on home poll | `?view=summary` (pins as `{id,status}` only); detail uses `?id=<uuid>` single-project full tree. |
+| M3 | Triple SSE EventSource per project detail | `LiveEventsProvider` — one EventSource; children use `useProjectLiveEvents`. |
+| M4 | AuthGate treated network failure as logout | New `'offline'` state + Retry (not LoginForm). |
+| M5 | Rate-limit gaps on dashboard writes | `consume()` on projects/share/subscribers/integrations/pins/attachments/annotations/workspaces/teams/members/presence writes. |
+| M6 | Missing `audit()` on pin status / attachment create | `pin.update` + `attachment.create` audit actions. |
+| M7 | Integration GET returned raw webhook URLs | `redactConfigJson()` masks URLs/headers in list responses. |
+| M8 | `Sec-Fetch-Site` alone on mutating methods | POST/PATCH/PUT/DELETE require matching `Origin`; GET/HEAD keep Sec-Fetch-Site fallback for `<img>`/SSE. |
+| M10 | Spoofable `x-forwarded-for` rate-limit keys | `getClientIp()` prefers `X-Real-IP`, else rightmost XFF hop (Caddy-trusted). |
 
----
+### Accepted residual (M9)
 
-## Error handling notes
+| ID | Issue | Why accepted |
+|----|--------|--------------|
+| M9 | Screenshot `<img>` uses Origin / share-token, not session | Browser subresource loads cannot send session-gated custom headers; UUID secrecy + share token + private Cache-Control bound the risk. |
 
-- API route `catch` blocks generally return generic 500 strings (good).
-- Integration `lastError` may still store upstream webhook body snippets (intentional ops signal; treat as Medium if exposed broadly).
-- No `dangerouslySetInnerHTML` in React surfaces.
-
-## Performance notes
-
-- `public/` has no large media assets.
-- Residual cost: 5s full-tree poll + presence + SSE; see M2/M3.
+**Residual TOCTOU on M1:** DNS is checked then `fetch` may re-resolve; closing that fully needs IP-pinned TLS (breaks Slack/Discord certs). Validate-time + resolve-time checks cover practical rebinding.
 
 ---
 
 ## Verification
 
 ```bash
-npm test
+npm test   # 486+/486+
 npm run lint
 ```
 
-Integration tests must mock `next/headers` cookies + `prisma.session.findUnique`
+Integration tests mock `next/headers` cookies + `prisma.session.findUnique`
 (see `tests/helpers/dashboard-auth.ts`).

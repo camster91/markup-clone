@@ -12,6 +12,7 @@
 // the failure on the integration row.
 
 import type { PinPayload, WebhookConfig } from './types';
+import { safeOutboundFetch } from '@/lib/ssrf';
 
 /**
  * Build the request headers for a generic-webhook dispatch.
@@ -48,7 +49,7 @@ export async function post(config: WebhookConfig, payload: PinPayload): Promise<
   if (!Object.keys(headers).some((k) => k.toLowerCase() === 'content-type')) {
     headers['Content-Type'] = 'application/json';
   }
-  const res = await fetch(config.url, {
+  const res = await safeOutboundFetch(config.url, {
     method: 'POST',
     headers,
     body: JSON.stringify(payload),

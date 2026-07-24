@@ -23,9 +23,11 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardSession } from '@/lib/auth';
 import { audit } from '@/lib/audit';
+import { consume } from '@/lib/rate-limit';
 import { assertProjectAccessible } from '@/lib/project-access';
 import { isIntegrationKind, type IntegrationKind } from '@/lib/integrations/types';
 import { validateConfig } from '@/lib/integrations/validate';
+import { redactConfigJson } from '@/lib/integrations/redact';
 
 export async function GET(
   req: Request,
@@ -43,7 +45,12 @@ export async function GET(
       where: { projectId },
       orderBy: { createdAt: 'asc' },
     });
-    return NextResponse.json(integrations);
+    return NextResponse.json(
+      integrations.map((row) => ({
+        ...row,
+        configJson: redactConfigJson(row.kind, row.configJson),
+      }))
+    );
   } catch (error) {
     console.error('Integration list error:', error);
     return NextResponse.json({ error: 'Failed to list integrations' }, { status: 500 });
@@ -59,6 +66,13 @@ export async function POST(
 
   try {
     const { id: projectId } = await params;
+
+    const origin = req.headers.get('origin') ?? 'unknown';
+    const rateCheck = consume(`integrations:origin:${origin}:${projectId}`, { maxTokens: 30, refillRate: 0.5 });
+    if (!rateCheck.ok) {
+      return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(rateCheck.retryAfterSec) } });
+    }
+
     const access = await assertProjectAccessible(projectId);
     if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
 

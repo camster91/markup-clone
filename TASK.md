@@ -1,7 +1,7 @@
 # TASK.md — markup-clone task board
 
-**Last updated:** 2026-07-24 (security audit test updates for
-`requireDashboardSession` + SSRF guards).
+**Last updated:** 2026-07-24 (M2–M5 medium audit fixes on
+`cursor/production-security-audit-3b24`, uncommitted).
 
 **Format:** each item has a status (`shipped`, `ready`, `blocked`,
 `parked`), a one-line description, and the source — git commit SHA
@@ -125,6 +125,11 @@ the merge commit / PR that landed each:
   `assertSafeOutboundUrl` (SSRF). Integration/unit tests updated
   accordingly (`tests/helpers/dashboard-auth.ts`). Full findings in
   `docs/plans/2026-07-24-production-security-audit.md`.
+- **M2–M5 medium audit fixes (2026-07-24, uncommitted on
+  `cursor/production-security-audit-3b24`):** summary project list
+  (`?view=summary` / home SSR), single SSE via `LiveEventsProvider`,
+  AuthGate `offline` + Retry, dashboard write rate-limits. See audit
+  plan Medium table.
 
 ---
 

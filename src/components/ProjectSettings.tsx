@@ -659,7 +659,10 @@ type IntegrationRow = {
 
 /** Pull the destination URL out of a row's configJson. The
  *  shape is kind-specific; this helper centralises the
- *  branching. Returns null when the config doesn't parse —
+ *  branching. GET /integrations already redacts secrets in
+ *  configJson (scheme+host + short path prefix), so the value
+ *  here is display-safe — maskUrl further softens it for the
+ *  list row. Returns null when the config doesn't parse —
  *  the row still renders the kind label, just without a URL. */
 function urlForRow(row: IntegrationRow): string | null {
   try {
