@@ -15,14 +15,15 @@
 //   test route's mock surface is separate from the CRUD
 //   surface.
 //
-// All routes are gated by requireDashboardOrigin — the same
+// All routes are gated by requireDashboardSession — the same
 // gate every other /api/projects/* route uses. The widget does
 // not (and should not) ever hit these.
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin } from '@/lib/auth';
+import { requireDashboardSession } from '@/lib/auth';
 import { audit } from '@/lib/audit';
+import { assertProjectAccessible } from '@/lib/project-access';
 import { isIntegrationKind, type IntegrationKind } from '@/lib/integrations/types';
 import { validateConfig } from '@/lib/integrations/validate';
 
@@ -30,11 +31,14 @@ export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardSession(req);
   if (authErr) return authErr;
 
   try {
     const { id: projectId } = await params;
+    const access = await assertProjectAccessible(projectId);
+    if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
+
     const integrations = await prisma.integration.findMany({
       where: { projectId },
       orderBy: { createdAt: 'asc' },
@@ -50,11 +54,14 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardSession(req);
   if (authErr) return authErr;
 
   try {
     const { id: projectId } = await params;
+    const access = await assertProjectAccessible(projectId);
+    if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
+
     const body = (await req.json()) as { kind?: unknown; config?: unknown };
 
     // 1. Validate kind against the closed set. We use the same
@@ -74,18 +81,8 @@ export async function POST(
       return NextResponse.json({ error: configRes.error }, { status: 400 });
     }
 
-    // 3. Verify the project exists. Without this, prisma.create
-    //    throws a foreign-key error which we'd catch as 500 —
-    //    the operator can't distinguish "project not found"
-    //    from "DB exploded". Same pattern as the other
-    //    /api/projects/* routes.
-    const project = await prisma.project.findUnique({
-      where: { id: projectId },
-      select: { id: true },
-    });
-    if (!project) {
-      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
-    }
+    // 3. Project existence + team membership already checked via
+    //    assertProjectAccessible above.
 
     // 4. Insert. We store the config as a JSON string so the
     //    column is a plain TEXT — no Prisma `Json` mapping

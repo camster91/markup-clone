@@ -65,8 +65,34 @@ export function requireDashboardOrigin(req: Request): NextResponse | null {
   return buildAuthErrorResponse();
 }
 
+/**
+ * Dashboard-origin CSRF gate PLUS an active session.
+ *
+ * `requireDashboardOrigin` alone is forgeable (`Origin` /
+ * `Sec-Fetch-Site` are attacker-controlled headers on any
+ * non-browser client). Session cookies are HttpOnly + SameSite=Strict,
+ * so this helper is the real authentication gate for dashboard APIs.
+ * Keep Origin as the CSRF signal; require the session as identity.
+ */
+export async function requireDashboardSession(req: Request): Promise<NextResponse | null> {
+  const originErr = requireDashboardOrigin(req);
+  if (originErr) return originErr;
+  const user = await requireAuth();
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  return null;
+}
+
 export async function requireProjectKey(req: Request, projectId: string): Promise<NextResponse | null> {
-  if (isDashboardOriginCore(req)) return null;
+  // Dashboard callers may omit X-Api-Key — but only when they also
+  // hold a valid session. Origin alone used to short-circuit this
+  // check, which let any client forge `Origin: https://<DASHBOARD_HOST>`
+  // and bypass the widget API key entirely.
+  if (isDashboardOriginCore(req)) {
+    const user = await requireAuth();
+    if (user) return null;
+  }
 
   const provided = req.headers.get('x-api-key');
   if (!provided) return NextResponse.json({ error: 'Missing X-Api-Key' }, { status: 401 });

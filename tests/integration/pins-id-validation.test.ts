@@ -21,6 +21,7 @@
 // "pinId" in the error so the response is self-explanatory.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { liveSessionRow } from '../helpers/dashboard-auth';
 
 const mocks = vi.hoisted(() => ({
   pin: {
@@ -30,7 +31,19 @@ const mocks = vi.hoisted(() => ({
   },
   screenshot: { findUnique: vi.fn(), delete: vi.fn() },
   audit: vi.fn(),
+  session: { findUnique: vi.fn() },
 }));
+
+const cookieStore = vi.hoisted(() => {
+  const data: { value?: string } = { value: 'test-dashboard-session' };
+  return {
+    data,
+    get: (name: string) => (data.value !== undefined ? { name, value: data.value } : undefined),
+    set: (_n: string, value: string) => { data.value = value === '' ? undefined : value; },
+    delete: () => { data.value = undefined; },
+    has: () => data.value !== undefined,
+  };
+});
 
 vi.mock('@/lib/prisma', () => ({
   prisma: mocks,
@@ -38,6 +51,10 @@ vi.mock('@/lib/prisma', () => ({
 
 vi.mock('@/lib/audit', () => ({
   audit: mocks.audit,
+}));
+
+vi.mock('next/headers', () => ({
+  cookies: vi.fn(async () => cookieStore),
 }));
 
 import { PATCH, DELETE } from '../../src/app/api/pins/[id]/route';
@@ -61,6 +78,8 @@ function deleteReq(id: string): Request {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  cookieStore.data.value = 'test-dashboard-session';
+  mocks.session.findUnique.mockResolvedValue(liveSessionRow());
   // Default happy path values — the validation tests below should reject
   // before any of these run, so the assertions on `.not.toHaveBeenCalled()`
   // are meaningful.

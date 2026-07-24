@@ -45,9 +45,14 @@ export default function HistoryPanel({
    *  we re-fetch the history on every bump so the new version shows
    *  up at the top of the grid. */
   refreshKey,
+  /** Optional share token appended to thumbnail / full image URLs
+   *  so share viewers (if ever shown History) can authorize image
+   *  GETs. Dashboard callers omit this. */
+  shareToken = null,
 }: {
   screenshotId: string;
   refreshKey: number;
+  shareToken?: string | null;
 }) {
   const [versions, setVersions] = useState<ScreenshotVersionRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -121,7 +126,8 @@ export default function HistoryPanel({
           // older captures still exist on disk and the file is
           // immutable (immutable Cache-Control makes the browser
           // cache it for a year).
-          const thumbUrl = `/api/screenshots/${screenshotId}/image?storageKey=${encodeURIComponent(v.storageKey)}`;
+          const shareQ = shareToken ? `&share=${encodeURIComponent(shareToken)}` : '';
+          const thumbUrl = `/api/screenshots/${screenshotId}/image?storageKey=${encodeURIComponent(v.storageKey)}${shareQ}`;
           return (
             <button
               key={v.id}
@@ -178,7 +184,7 @@ export default function HistoryPanel({
             </div>
             {/* eslint-disable-next-line @next/next/no-img-element -- see comment above. */}
             <img
-              src={`/api/screenshots/${screenshotId}/image?storageKey=${encodeURIComponent(selected.storageKey)}`}
+              src={`/api/screenshots/${screenshotId}/image?storageKey=${encodeURIComponent(selected.storageKey)}${shareToken ? `&share=${encodeURIComponent(shareToken)}` : ''}`}
               alt={`Version from ${new Date(selected.capturedAt).toLocaleString()}`}
               className="block max-w-full h-auto"
             />

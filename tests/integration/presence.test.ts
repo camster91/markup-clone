@@ -20,16 +20,33 @@
 // client, and returns the right status.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { liveSessionRow } from '../helpers/dashboard-auth';
 
 const mocks = vi.hoisted(() => ({
   presence: {
     upsert: vi.fn(),
     findMany: vi.fn(),
   },
+  session: { findUnique: vi.fn() },
 }));
+
+const cookieStore = vi.hoisted(() => {
+  const data: { value?: string } = { value: 'test-dashboard-session' };
+  return {
+    data,
+    get: (name: string) => (data.value !== undefined ? { name, value: data.value } : undefined),
+    set: (_n: string, value: string) => { data.value = value === '' ? undefined : value; },
+    delete: () => { data.value = undefined; },
+    has: () => data.value !== undefined,
+  };
+});
 
 vi.mock('@/lib/prisma', () => ({
   prisma: mocks,
+}));
+
+vi.mock('next/headers', () => ({
+  cookies: vi.fn(async () => cookieStore),
 }));
 
 import { GET, POST } from '../../src/app/api/presence/route';
@@ -57,6 +74,8 @@ function getReq(qs: string, headers: Record<string, string> = {}): NextRequest {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  cookieStore.data.value = 'test-dashboard-session';
+  mocks.session.findUnique.mockResolvedValue(liveSessionRow());
   // Default upsert mock: return a row that looks like the one we
   // would have stored. The route's POST echoes this back to the
   // client, so we use it to assert the upsert was called with the

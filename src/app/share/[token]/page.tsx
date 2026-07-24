@@ -252,6 +252,7 @@ export default async function PublicSharePage({ params }: PageProps) {
                       pagePath={page.path}
                       projectId={serializedProject.id}
                       readOnly
+                      shareToken={token}
                     />
                   ))}
                 </div>

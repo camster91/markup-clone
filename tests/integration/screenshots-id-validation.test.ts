@@ -21,13 +21,26 @@
 // the recapture route.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { liveSessionRow } from '../helpers/dashboard-auth';
 
 const mocks = vi.hoisted(() => ({
   consume: vi.fn().mockReturnValue({ ok: true, remaining: 5 }),
   spawn: vi.fn(),
   audit: vi.fn(),
   screenshot: { findUnique: vi.fn() },
+  session: { findUnique: vi.fn() },
 }));
+
+const cookieStore = vi.hoisted(() => {
+  const data: { value?: string } = { value: 'test-dashboard-session' };
+  return {
+    data,
+    get: (name: string) => (data.value !== undefined ? { name, value: data.value } : undefined),
+    set: (_n: string, value: string) => { data.value = value === '' ? undefined : value; },
+    delete: () => { data.value = undefined; },
+    has: () => data.value !== undefined,
+  };
+});
 
 vi.mock('@/lib/prisma', () => ({
   prisma: mocks,
@@ -39,6 +52,10 @@ vi.mock('@/lib/rate-limit', () => ({
 
 vi.mock('@/lib/audit', () => ({
   audit: mocks.audit,
+}));
+
+vi.mock('next/headers', () => ({
+  cookies: vi.fn(async () => cookieStore),
 }));
 
 // Fake child for the recapture route — never actually invoked on a
@@ -69,6 +86,8 @@ import { GET as STATUS } from '../../src/app/api/screenshots/[id]/status/route';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  cookieStore.data.value = 'test-dashboard-session';
+  mocks.session.findUnique.mockResolvedValue(liveSessionRow());
   mocks.consume.mockReturnValue({ ok: true, remaining: 5 });
   mocks.screenshot.findUnique.mockResolvedValue({
     width: 1280,

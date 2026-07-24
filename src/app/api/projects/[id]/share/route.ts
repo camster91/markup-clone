@@ -19,8 +19,9 @@
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin, generateShareToken } from '@/lib/auth';
+import { requireDashboardSession, generateShareToken } from '@/lib/auth';
 import { audit } from '@/lib/audit';
+import { assertProjectAccessible } from '@/lib/project-access';
 
 // Generate a new share token for the project.
 //
@@ -35,16 +36,16 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardSession(req);
   if (authErr) return authErr;
 
   try {
     const { id } = await params;
+    const access = await assertProjectAccessible(id);
+    if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
 
-    // Verify the project exists first. Without this, prisma.update
-    // throws P2025 (not found) which the catch turns into 500 — the
-    // user can't distinguish "project not found" from "the database
-    // exploded". Same pattern as /api/projects/[id] PATCH/DELETE.
+    // Name for the audit log (assertProjectAccessible already proved
+    // existence + team membership).
     const existing = await prisma.project.findUnique({
       where: { id },
       select: { id: true, name: true },
@@ -99,11 +100,13 @@ export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardSession(req);
   if (authErr) return authErr;
 
   try {
     const { id } = await params;
+    const access = await assertProjectAccessible(id);
+    if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
 
     // findUnique so we can distinguish "project not found" (404) from
     // "project exists but no token" (200, revoked: false). The PATCH

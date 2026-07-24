@@ -122,6 +122,9 @@ const mocks = vi.hoisted(() => {
           return db.versions.find((v) => v.storageKey === where.storageKey) ?? null;
         }),
       },
+      session: {
+        findUnique: vi.fn(),
+      },
     },
   };
 });
@@ -143,6 +146,23 @@ vi.mock('@/lib/rate-limit', () => ({
 
 vi.mock('@/lib/audit', () => ({
   audit: mocks.audit,
+}));
+
+import { liveSessionRow } from '../helpers/dashboard-auth';
+
+const cookieStore = vi.hoisted(() => {
+  const data: { value?: string } = { value: 'test-dashboard-session' };
+  return {
+    data,
+    get: (name: string) => (data.value !== undefined ? { name, value: data.value } : undefined),
+    set: (_n: string, value: string) => { data.value = value === '' ? undefined : value; },
+    delete: () => { data.value = undefined; },
+    has: () => data.value !== undefined,
+  };
+});
+
+vi.mock('next/headers', () => ({
+  cookies: vi.fn(async () => cookieStore),
 }));
 
 // Fake child: routes the recapture script's exit event with a
@@ -200,6 +220,8 @@ const PAGE_ID = '22222222-2222-2222-2222-222222222222';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  cookieStore.data.value = 'test-dashboard-session';
+  mocks.prisma.session.findUnique.mockResolvedValue(liveSessionRow());
   mocks.consume.mockReturnValue({ ok: true, remaining: 5 });
   mocks.db.screenshots = [];
   mocks.db.versions = [];

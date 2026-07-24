@@ -1,19 +1,21 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin } from '@/lib/auth';
+import { requireDashboardSession } from '@/lib/auth';
 import { consume } from '@/lib/rate-limit';
-import { validatePinText } from '@/lib/validation';
+import { validatePinText, validatePinId, sanitizeText, LIMITS } from '@/lib/validation';
 import { emit } from '@/lib/events';
 import { audit } from '@/lib/audit';
 import { parseMentions } from '@/lib/mentions';
 import { sendMentionEmail } from '@/lib/email';
 import { parseHost } from '@/lib/origin';
 
+const COMMENT_AUTHOR_ROLES = ['operator', 'reviewer', 'client'] as const;
+
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardSession(req);
   if (authErr) return authErr;
 
   // Rate limit AFTER auth, BEFORE the DB write.
@@ -25,37 +27,53 @@ export async function POST(
   // single-instance deploy; will not share buckets across instances if we
   // ever scale horizontally.
   const origin = req.headers.get('origin') ?? 'unknown';
-  const { id: pinId } = await params;
+  const { id: pinIdRaw } = await params;
+  const pinIdRes = validatePinId(pinIdRaw);
+  if (!pinIdRes.ok) {
+    return NextResponse.json({ error: pinIdRes.error }, { status: 400 });
+  }
+  const pinId = pinIdRes.value;
   const rateCheck = consume(`comments:origin:${origin}:${pinId}`, { maxTokens: 30, refillRate: 0.5 });
   if (!rateCheck.ok) {
     return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(rateCheck.retryAfterSec) } });
   }
 
   try {
-    const { id } = await params;
+    const id = pinId;
     const { text, author, authorRole, attachmentIds } = await req.json();
-    // Use the same validator as the pin-create flow (R0.3) so the comment
-    // text gets the same length cap, trim, and null-byte rejection. A
-    // missing/empty/whitespace-only text is rejected here (it would
-    // produce a 500 from the prisma NOT NULL constraint otherwise).
+
+    // Sanitize author (length cap + control-char strip). Default
+    // to "Reviewer" when omitted / empty after sanitize.
+    let authorValue = 'Reviewer';
+    if (author !== undefined && author !== null) {
+      if (typeof author !== 'string') {
+        return NextResponse.json({ error: 'author must be a string' }, { status: 400 });
+      }
+      const authorRes = sanitizeText(author, LIMITS.AUTHOR_NAME_MAX, 'author');
+      if (!authorRes.ok) {
+        return NextResponse.json({ error: authorRes.error }, { status: 400 });
+      }
+      if (authorRes.value.trim().length > 0) {
+        authorValue = authorRes.value.trim();
+      }
+    }
+
+    // Closed set for authorRole — matches comment UI + widget roles.
+    let authorRoleValue: (typeof COMMENT_AUTHOR_ROLES)[number] = 'reviewer';
+    if (authorRole !== undefined && authorRole !== null) {
+      if (typeof authorRole !== 'string' || !(COMMENT_AUTHOR_ROLES as readonly string[]).includes(authorRole)) {
+        return NextResponse.json(
+          { error: `authorRole must be one of: ${COMMENT_AUTHOR_ROLES.join(', ')}` },
+          { status: 400 }
+        );
+      }
+      authorRoleValue = authorRole as (typeof COMMENT_AUTHOR_ROLES)[number];
+    }
+
     // attachmentIds is an optional array of UUIDs pointing at
     // Attachment rows. The attachments are uploaded separately via
-    // POST /api/attachments (which validates the file + commentId
-    // in isolation) and then "claimed" by this comment at create
-    // time. This split keeps the comment-create path JSON-only
-    // and lets the attachment route run its own file
-    // validation/MIME check/write-then-rename outside the
-    // comment tx.
-    //
-    // The closed set of behavior we accept:
-    //   - undefined / missing → no attachments (backwards compat
-    //     with the pre-feature widget / dashboard).
-    //   - empty array [] → no attachments.
-    //   - non-array → 400.
-    //   - any non-UUID string → 400.
-    //   - any duplicate id → 400 (the create below is a single
-    //     `connect` call per id; a duplicate would be a no-op
-    //     attach + a confusing UX, so reject).
+    // POST /api/attachments and then "claimed" by this comment at
+    // create time.
     let normalizedAttachmentIds: string[] = [];
     if (attachmentIds !== undefined) {
       if (!Array.isArray(attachmentIds)) {
@@ -149,8 +167,8 @@ export async function POST(
       data: {
         pinId: id,
         text,
-        author: author || 'Reviewer',
-        authorRole: authorRole || 'reviewer',
+        author: authorValue,
+        authorRole: authorRoleValue,
         // Claim the uploaded attachments by linking them to the
         // new comment. `connect` is the right shape because the
         // Attachment rows already exist — we just add the

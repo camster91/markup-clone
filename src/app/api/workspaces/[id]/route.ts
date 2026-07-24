@@ -13,7 +13,7 @@
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin } from '@/lib/auth';
+import { requireDashboardSession } from '@/lib/auth';
 import { audit } from '@/lib/audit';
 import { validateWorkspaceName, validateUuidParam } from '@/lib/validation';
 
@@ -21,7 +21,7 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardSession(req);
   if (authErr) return authErr;
 
   try {
@@ -53,7 +53,7 @@ export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardSession(req);
   if (authErr) return authErr;
 
   try {

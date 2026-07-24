@@ -164,9 +164,18 @@ export async function GET(
         'Content-Length': fileStat.size.toString(),
         // Attachments are immutable once written — no update
         // path, no PATCH. Cache-Control is the same immutable
-        // year-long max-age the screenshot route uses.
-        'Cache-Control': 'public, max-age=31536000, immutable',
+        // year-long max-age the screenshot route used historically.
+        'Cache-Control': 'private, max-age=31536000, immutable',
         'ETag': etag,
+        // Defense in depth if an SVG ever slips through minting:
+        // force download rather than inline render, and block any
+        // nested resource loads via CSP.
+        ...(attachment.mimeType.toLowerCase().includes('svg')
+          ? {
+              'Content-Disposition': `attachment; filename="${attachment.id}.svg"`,
+            }
+          : {}),
+        "Content-Security-Policy": "default-src 'none'",
       },
     });
   } catch (error) {

@@ -1,18 +1,22 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin } from '@/lib/auth';
+import { requireDashboardSession } from '@/lib/auth';
 import { audit } from '@/lib/audit';
 import { validateSubscriberEmail } from '@/lib/validation';
+import { assertProjectAccessible } from '@/lib/project-access';
 
 export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string; email: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardSession(req);
   if (authErr) return authErr;
 
   try {
     const { id: projectId, email } = await params;
+    const access = await assertProjectAccessible(projectId);
+    if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
+
     // Normalize the email the same way the POST /subscribers route does
     // (R0.3 wired validateSubscriberEmail there, which lowercases on the
     // way in). Without this, a dashboard DELETE for `Alice@Example.com`

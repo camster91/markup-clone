@@ -2,9 +2,9 @@
 //
 // What this file pins down:
 //
-//   1) POST /api/auth/login with valid creds returns 200 + session,
-//      sets the HttpOnly cookie, and creates a Session row with the
-//      correct user/expiresAt.
+//   1) POST /api/auth/login with valid creds returns 200 + user,
+//      sets the HttpOnly cookie (sessionToken is NOT in the body),
+//      and creates a Session row with the correct user/expiresAt.
 //   2) POST /api/auth/login with invalid creds returns 401 and
 //      creates NO session row.
 //   3) GET /api/auth/me with a valid session returns the user.
@@ -18,6 +18,7 @@
 // calls prisma, and sets/clears the HttpOnly cookie via NextResponse.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { _resetBucket } from '@/lib/rate-limit';
 
 const mocks = vi.hoisted(() => ({
   user: {
@@ -89,6 +90,11 @@ function loginReq(body: unknown, headers: Record<string, string> = {}): NextRequ
 beforeEach(() => {
   vi.clearAllMocks();
   cookieStore.data.value = undefined;
+  // Login route rate-limits per email + per IP; clear so earlier
+  // cases in this file (or parallel files) don't bleed 429s.
+  _resetBucket('login:email:alice@example.com');
+  _resetBucket('login:email:nobody@example.com');
+  _resetBucket('login:ip:unknown');
   // Default user row — individual tests override as needed.
   mocks.user.findUnique.mockImplementation(async ({ where }: { where: { email: string } }) => {
     if (where.email === 'alice@example.com') {
@@ -131,20 +137,19 @@ beforeEach(() => {
 });
 
 describe('POST /api/auth/login — valid creds', () => {
-  it('returns 200 with the user and sessionToken, sets the cookie', async () => {
+  it('returns 200 with the user, sets the HttpOnly session cookie, and omits sessionToken from the body', async () => {
     const res = await loginPOST(loginReq({ email: 'alice@example.com', password: 'correct-password' }));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.user).toEqual({ id: 'user-1', email: 'alice@example.com', role: 'operator' });
-    expect(typeof body.sessionToken).toBe('string');
-    expect(body.sessionToken.length).toBeGreaterThan(20);
+    // sessionToken must NEVER appear in the JSON body — the cookie is
+    // the only carrier (HttpOnly + SameSite=Strict).
+    expect(body).not.toHaveProperty('sessionToken');
 
-    // The response must set the HttpOnly session cookie. Next.js'
-    // response.cookies stores the value on the response object;
-    // the test asserts the cookie is present and HttpOnly.
     const setCookie = res.cookies.get('markup.session');
     expect(setCookie).toBeDefined();
-    expect(setCookie?.value).toBe(body.sessionToken);
+    expect(typeof setCookie?.value).toBe('string');
+    expect(setCookie!.value.length).toBeGreaterThan(20);
     expect(setCookie?.httpOnly).toBe(true);
   });
 
@@ -170,11 +175,11 @@ describe('POST /api/auth/login — valid creds', () => {
     expect(expiresAt).toBeLessThanOrEqual(after + sevenDays + 1000);
   });
 
-  it('returns the same sessionToken in the body that gets stored on the row', async () => {
+  it('stores the same token on the Session row that is set on the cookie', async () => {
     const res = await loginPOST(loginReq({ email: 'alice@example.com', password: 'correct-password' }));
-    const body = await res.json();
+    const setCookie = res.cookies.get('markup.session');
     const call = mocks.session.create.mock.calls[0][0];
-    expect(call.data.token).toBe(body.sessionToken);
+    expect(call.data.token).toBe(setCookie?.value);
   });
 });
 

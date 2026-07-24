@@ -44,8 +44,10 @@ export default function DashboardPoller({
 }) {
   const [projects, setProjects] = useState<ProjectWithPages[]>(initialData);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const [offline, setOffline] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef(true);
+  const abortRef = useRef<AbortController | null>(null);
   // Timestamp (ms since epoch) of the last successful /api/projects
   // response. The route accepts ?since=<ISO> and returns only rows whose
   // updatedAt is strictly after the cursor, so the next poll passes
@@ -57,6 +59,11 @@ export default function DashboardPoller({
   const lastSuccessfulPoll = useRef<number | null>(null);
 
   const fetchProjects = useCallback(async () => {
+    // Abort any in-flight poll before starting a new one so a slow
+    // response can't overwrite fresher state after unmount / next tick.
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
     try {
       // First poll: no cursor, full tree. Subsequent polls: pass the
       // last successful poll timestamp minus 1s so we don't miss rows
@@ -66,17 +73,27 @@ export default function DashboardPoller({
       const url = since === null
         ? '/api/projects'
         : `/api/projects?since=${new Date(since - 1000).toISOString()}`;
-      const res = await fetch(url);
-      if (!res.ok) return;
+      const res = await fetch(url, {
+        signal: ac.signal,
+        credentials: 'same-origin',
+      });
+      if (!res.ok) {
+        if (mountedRef.current) setOffline(true);
+        return;
+      }
       const data = await res.json();
       if (mountedRef.current) {
         setProjects(data);
         setLastUpdated(Date.now());
+        setOffline(false);
         // Record the cursor AFTER the response has been applied so a
         // slow request that races a write can't drop the write.
         lastSuccessfulPoll.current = Date.now();
       }
-    } catch {
+    } catch (err) {
+      // AbortError on unmount / superseded poll — ignore.
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      if (mountedRef.current) setOffline(true);
       // silent retry - keep showing old data
     }
   }, []);
@@ -97,15 +114,26 @@ export default function DashboardPoller({
 
     return () => {
       mountedRef.current = false;
+      abortRef.current?.abort();
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, [fetchProjects]);
 
   return (
-    <DashboardProjects
-      projects={projects}
-      lastUpdated={lastUpdated}
-      onProjectUpdated={fetchProjects}
-    />
+    <>
+      {offline && (
+        <div
+          className="mb-4 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"
+          role="status"
+        >
+          Dashboard updates paused — reconnecting…
+        </div>
+      )}
+      <DashboardProjects
+        projects={projects}
+        lastUpdated={lastUpdated}
+        onProjectUpdated={fetchProjects}
+      />
+    </>
   );
 }

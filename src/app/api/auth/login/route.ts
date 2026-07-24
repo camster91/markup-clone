@@ -4,16 +4,17 @@
 // the `markup.session` HttpOnly cookie. The login route is INTENTIONALLY
 // NOT behind requireDashboardOrigin — the caller may not be on the
 // dashboard origin yet (that's the whole point of login), and the
-// route's defence-in-depth is the password + the session token's 256
+// route's defence-in-depth is the password + the session cookie's 256
 // bits of entropy. Once a session is set, subsequent dashboard
-// fetches layer `requireDashboardOrigin` on top of the session
-// check.
+// fetches layer `requireDashboardSession` on top of Origin.
 //
 // Body: { email: string, password: string }
-// 200:  { user: { id, email, role }, sessionToken: string }
+// 200:  { user: { id, email, role } }  — sessionToken is NEVER returned
+//       in the JSON body (HttpOnly cookie only; avoids XSS exfiltration)
 // 400:  missing/invalid body
 // 401:  wrong email or wrong password (deliberately the same error
 //       and status so an attacker cannot enumerate emails)
+// 429:  rate-limited (per-email and per-IP buckets)
 //
 // Cookie attributes:
 //   - HttpOnly: yes — never exposed to JS (no XSS exfiltration)
@@ -25,6 +26,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { SESSION_COOKIE, SESSION_TTL_SECONDS } from '@/lib/auth';
 import { verifyPassword } from '@/lib/password';
+import { consume } from '@/lib/rate-limit';
 import { randomBytes } from 'crypto';
 
 export const dynamic = 'force-dynamic';
@@ -49,6 +51,26 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'email and password required' }, { status: 400 });
   }
   const email = body.email.toLowerCase();
+
+  // Rate limit before the DB lookup. ~5 attempts/min per email and
+  // per client IP (maxTokens: 5, refillRate: 1/12 ≈ one token every
+  // 12s). Either empty bucket → 429 with Retry-After.
+  const ip =
+    (req.headers.get('x-forwarded-for') ?? '').split(',')[0]?.trim() || 'unknown';
+  const emailBucket = consume(`login:email:${email}`, { maxTokens: 5, refillRate: 1 / 12 });
+  if (!emailBucket.ok) {
+    return NextResponse.json(
+      { error: 'Too many requests', retryAfterSec: emailBucket.retryAfterSec },
+      { status: 429, headers: { 'Retry-After': String(emailBucket.retryAfterSec) } }
+    );
+  }
+  const ipBucket = consume(`login:ip:${ip}`, { maxTokens: 5, refillRate: 1 / 12 });
+  if (!ipBucket.ok) {
+    return NextResponse.json(
+      { error: 'Too many requests', retryAfterSec: ipBucket.retryAfterSec },
+      { status: 429, headers: { 'Retry-After': String(ipBucket.retryAfterSec) } }
+    );
+  }
 
   // Look up the user. We do NOT distinguish "no such email" from
   // "wrong password" in the response — the same 401 with the same
@@ -89,11 +111,11 @@ export async function POST(req: Request) {
   // Set the session cookie. SameSite=Strict + HttpOnly + Secure-in-prod
   // is the cookie-attribute trio that the task spec calls for; the
   // Secure flag is gated on NODE_ENV so local dev (http://localhost)
-  // still works.
+  // still works. The JSON body deliberately omits sessionToken —
+  // the cookie is the only carrier.
   const res = NextResponse.json(
     {
       user: { id: user.id, email: user.email, role: user.role },
-      sessionToken: session.token,
     },
     { status: 200 }
   );

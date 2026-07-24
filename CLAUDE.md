@@ -9,9 +9,10 @@ and hard don'ts below.
 ## Conventions
 
 - Use `requireProjectKey(req)` for widget-originated requests and
-  `requireDashboardOrigin(req)` for dashboard-originated requests.
-  Do not introduce new auth helpers — both exist in `src/lib/auth.ts`
-  and both are battle-tested.
+  `requireDashboardSession(req)` for dashboard-originated requests
+  (Origin CSRF + session). Do not use bare `requireDashboardOrigin`
+  on new routes — Origin alone is forgeable. Helpers live in
+  `src/lib/auth.ts`.
 - Validate all UUID params with `validateScreenshotId` /
   `validateProjectId` / `validatePinId` from `src/lib/validation.ts`.
   Never `parseInt(req.params.id)` and trust the result — every route

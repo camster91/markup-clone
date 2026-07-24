@@ -78,118 +78,127 @@ export default async function Dashboard() {
   // have no team memberships). Mirrors the /api/projects
   // route's where clause so the first paint matches what the
   // polling client will see on its first delta.
+  //
+  // Anonymous (no session): skip the project query entirely so
+  // we never serialize apiKey / shareToken into HTML for a
+  // logged-out visitor. AuthGate still renders the login modal;
+  // NewProjectForm stays mounted (POST will 401 until login).
   const caller = await getCallerUser();
-  const teamScope = await getProjectScopeWhere(caller?.id ?? null);
+  let initialData: ProjectWithPages[] = [];
 
-  const projects = await prisma.project.findMany({
-    where: teamScope,
-    include: {
-      pages: {
-        orderBy: { createdAt: 'asc' },
-        include: {
-          screenshots: {
-            orderBy: { capturedAt: 'desc' },
-            include: {
-              pins: {
-                orderBy: { createdAt: 'asc' },
-                include: {
-                  comments: {
-                    orderBy: { createdAt: 'asc' },
-                  },
-                  annotations: {
-                    orderBy: { createdAt: 'asc' },
+  if (caller) {
+    const teamScope = await getProjectScopeWhere(caller.id);
+
+    const projects = await prisma.project.findMany({
+      where: teamScope,
+      include: {
+        pages: {
+          orderBy: { createdAt: 'asc' },
+          include: {
+            screenshots: {
+              orderBy: { capturedAt: 'desc' },
+              include: {
+                pins: {
+                  orderBy: { createdAt: 'asc' },
+                  include: {
+                    comments: {
+                      orderBy: { createdAt: 'asc' },
+                    },
+                    annotations: {
+                      orderBy: { createdAt: 'asc' },
+                    },
                   },
                 },
               },
             },
           },
         },
+        subscribers: true,
+        team: { select: { id: true, name: true } },
       },
-      subscribers: true,
-      team: { select: { id: true, name: true } },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
+      orderBy: { createdAt: 'desc' },
+    });
 
-  // Serialize the tree to the ProjectWithPages shape. Same
-  // contract as the /api/projects route: Date fields are
-  // ISO strings, annotation.pathJson is parsed into a
-  // number[][] `path` field, missing annotations default to
-  // an empty array. The client FeedbackAnnotation type
-  // declares `path` as a parsed array — the page is the
-  // conversion boundary.
-  const initialData: ProjectWithPages[] = projects.map((p) => ({
-    id: p.id,
-    name: p.name,
-    domain: p.domain,
-    apiKey: p.apiKey,
-    shareToken: p.shareToken,
-    teamId: p.teamId,
-    team: p.team,
-    createdAt: p.createdAt.toISOString(),
-    updatedAt: p.updatedAt.toISOString(),
-    pages: p.pages.map((page) => ({
-      id: page.id,
-      path: page.path,
-      createdAt: page.createdAt.toISOString(),
-      updatedAt: page.updatedAt.toISOString(),
-      screenshots: page.screenshots.map((screenshot) => ({
-        id: screenshot.id,
-        storageKey: screenshot.storageKey,
-        pageId: screenshot.pageId,
-        width: screenshot.width,
-        height: screenshot.height,
-        capturedAt: screenshot.capturedAt.toISOString(),
-        pins: screenshot.pins.map((pin) => ({
-          id: pin.id,
-          xPercent: pin.xPercent,
-          yPercent: pin.yPercent,
-          status: pin.status,
-          elementXPath: pin.elementXPath,
-          elementHTML: pin.elementHTML,
-          createdAt: pin.createdAt.toISOString(),
-          comments: pin.comments.map((comment) => ({
-            id: comment.id,
-            text: comment.text,
-            author: comment.author,
-            authorRole: comment.authorRole,
-            createdAt: comment.createdAt.toISOString(),
-            attachments: [],
+    // Serialize the tree to the ProjectWithPages shape. Same
+    // contract as the /api/projects route: Date fields are
+    // ISO strings, annotation.pathJson is parsed into a
+    // number[][] `path` field, missing annotations default to
+    // an empty array. elementHTML is omitted (DOM snippet can
+    // carry PII / script-ish content; dashboard doesn't need it
+    // in the list payload).
+    initialData = projects.map((p) => ({
+      id: p.id,
+      name: p.name,
+      domain: p.domain,
+      apiKey: p.apiKey,
+      shareToken: p.shareToken,
+      teamId: p.teamId,
+      team: p.team,
+      createdAt: p.createdAt.toISOString(),
+      updatedAt: p.updatedAt.toISOString(),
+      pages: p.pages.map((page) => ({
+        id: page.id,
+        path: page.path,
+        createdAt: page.createdAt.toISOString(),
+        updatedAt: page.updatedAt.toISOString(),
+        screenshots: page.screenshots.map((screenshot) => ({
+          id: screenshot.id,
+          storageKey: screenshot.storageKey,
+          pageId: screenshot.pageId,
+          width: screenshot.width,
+          height: screenshot.height,
+          capturedAt: screenshot.capturedAt.toISOString(),
+          pins: screenshot.pins.map((pin) => ({
+            id: pin.id,
+            xPercent: pin.xPercent,
+            yPercent: pin.yPercent,
+            status: pin.status,
+            elementXPath: pin.elementXPath,
+            createdAt: pin.createdAt.toISOString(),
+            comments: pin.comments.map((comment) => ({
+              id: comment.id,
+              text: comment.text,
+              author: comment.author,
+              authorRole: comment.authorRole,
+              createdAt: comment.createdAt.toISOString(),
+              attachments: [],
+            })),
+            annotations: (pin.annotations ?? []).map((annotation) => {
+              let path: number[][] = [];
+              try {
+                const parsed = JSON.parse(annotation.pathJson);
+                if (Array.isArray(parsed)) path = parsed as number[][];
+              } catch {
+                // Bad pathJson (would have been rejected at write
+                // time). Fall back to an empty path so the
+                // ScreenshotView doesn't throw.
+              }
+              return {
+                id: annotation.id,
+                kind: annotation.kind as 'arrow' | 'box' | 'freehand',
+                path,
+                createdAt: annotation.createdAt.toISOString(),
+              };
+            }),
           })),
-          annotations: (pin.annotations ?? []).map((annotation) => {
-            let path: number[][] = [];
-            try {
-              const parsed = JSON.parse(annotation.pathJson);
-              if (Array.isArray(parsed)) path = parsed as number[][];
-            } catch {
-              // Bad pathJson (would have been rejected at write
-              // time). Fall back to an empty path so the
-              // ScreenshotView doesn't throw.
-            }
-            return {
-              id: annotation.id,
-              kind: annotation.kind as 'arrow' | 'box' | 'freehand',
-              path,
-              createdAt: annotation.createdAt.toISOString(),
-            };
-          }),
         })),
       })),
-    })),
-    subscribers: p.subscribers.map((s) => ({
-      id: s.id,
-      projectId: s.projectId,
-      email: s.email,
-      createdAt: s.createdAt.toISOString(),
-    })),
-  }));
+      subscribers: p.subscribers.map((s) => ({
+        id: s.id,
+        projectId: s.projectId,
+        email: s.email,
+        createdAt: s.createdAt.toISOString(),
+      })),
+    }));
+  }
 
   // Latest project for the widget snippet. The list is sorted
   // by createdAt desc (matches the /api/projects orderBy) so
   // the first row is the latest. We fall back to a no-snippet
   // card when there are zero projects — the operator has to
-  // create one to get a snippet.
-  const latest = initialData[0];
+  // create one to get a snippet. Never show WidgetSnippet with
+  // an apiKey when there is no authenticated caller.
+  const latest = caller ? initialData[0] : undefined;
   const dashboardHost = process.env.DASHBOARD_HOST || 'markup.ashbi.ca';
 
   return (

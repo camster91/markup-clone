@@ -23,7 +23,7 @@
 //     roundtrip independent of the comment-create roundtrip (a
 //     network blip on one doesn't fail the other).
 //
-// Auth: requireDashboardOrigin. The dashboard is the only mint
+// Auth: requireDashboardSession. The dashboard is the only mint
 // surface — the widget never uploads attachments (it posts a
 // pin+screenshot at most, and the screenshot goes through its own
 // /api/pins route), and the /share/[token] view is read-only.
@@ -51,7 +51,7 @@
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin } from '@/lib/auth';
+import { requireDashboardSession } from '@/lib/auth';
 import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
@@ -84,15 +84,14 @@ function kindForMime(mime: string): Kind | null {
 // with the mimeType stored in the row, not based on the filename.
 function extForKind(kind: Kind, mime: string): string {
   // Common image types — most browsers paste PNG or JPEG. WebP and
-  // GIF are also seen. Anything else falls back to the type's
-  // subtype (e.g. 'image/svg+xml' → 'svg+xml') or to the kind name
-  // if there's no '/' at all.
+  // GIF are also seen. SVG is rejected upstream (XSS). Anything
+  // else falls back to 'img'.
   if (kind === 'image') {
     if (mime === 'image/png') return 'png';
     if (mime === 'image/jpeg') return 'jpg';
     if (mime === 'image/gif') return 'gif';
     if (mime === 'image/webp') return 'webp';
-    if (mime === 'image/svg+xml') return 'svg';
+    // image/svg+xml is rejected upstream (XSS); never map it here.
     return 'img';
   }
   if (kind === 'voice') {
@@ -124,10 +123,10 @@ export async function POST(req: Request) {
     );
   }
 
-  // Auth: dashboard origin only. The widget never uploads
+  // Auth: dashboard session required. The widget never uploads
   // attachments and the share view is read-only, so a 401 for any
-  // non-dashboard caller is the right call.
-  const authErr = requireDashboardOrigin(req);
+  // non-dashboard / unauthenticated caller is the right call.
+  const authErr = await requireDashboardSession(req);
   if (authErr) return authErr;
 
   try {
@@ -195,6 +194,19 @@ export async function POST(req: Request) {
     if (kind !== 'image') {
       return NextResponse.json(
         { error: `attachment kind '${kind}' is not yet supported` },
+        { status: 415 }
+      );
+    }
+
+    // Reject SVG — browsers will execute embedded scripts when an
+    // SVG is served as image/* or opened directly. Even with
+    // Content-Disposition: attachment on GET, minting SVG into
+    // the attachment store is an XSS footgun we refuse at the
+    // boundary.
+    const mime = (file.type || '').toLowerCase();
+    if (mime === 'image/svg+xml' || mime.includes('svg')) {
+      return NextResponse.json(
+        { error: 'SVG uploads are not allowed (XSS risk)' },
         { status: 415 }
       );
     }

@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { isDashboardOrigin } from '@/lib/auth';
+import { validateScreenshotId } from '@/lib/validation';
 import { readFile, stat } from 'fs/promises';
 import path from 'path';
 
@@ -11,8 +13,40 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const ss = await prisma.screenshot.findUnique({ where: { id } });
+    const idRes = validateScreenshotId(id);
+    if (!idRes.ok) {
+      return NextResponse.json({ error: idRes.error }, { status: 400 });
+    }
+
+    // Load the screenshot with enough context to validate the
+    // share-token auth surface (page → project.shareToken). Select
+    // only what we need for auth + file serve.
+    const ss = await prisma.screenshot.findUnique({
+      where: { id: idRes.value },
+      select: {
+        id: true,
+        storageKey: true,
+        capturedAt: true,
+        page: {
+          select: {
+            project: { select: { shareToken: true } },
+          },
+        },
+      },
+    });
     if (!ss) return NextResponse.json({ error: 'not found' }, { status: 404 });
+
+    // Auth: dashboard origin OR ?share= matching the project's
+    // shareToken. Same non-leak pattern as attachments — probes
+    // without a valid token get 404, not 401.
+    const dashboard = isDashboardOrigin(req);
+    const url = new URL(req.url);
+    const shareParam = url.searchParams.get('share');
+    const projectShareToken = ss.page?.project?.shareToken ?? null;
+    const shareTokenValid = !!shareParam && shareParam === projectShareToken;
+    if (!dashboard && !shareTokenValid) {
+      return NextResponse.json({ error: 'not found' }, { status: 404 });
+    }
 
     // Optional ?storageKey=<key>: serves a specific version's PNG
     // instead of the Screenshot's current "latest pointer". Used by
@@ -28,7 +62,7 @@ export async function GET(
     // can't pass a storageKey belonging to a different screenshot
     // and read someone else's PNG. If the key doesn't match any
     // version, we 404 (defense against probing).
-    const requestedKey = new URL(req.url).searchParams.get('storageKey');
+    const requestedKey = url.searchParams.get('storageKey');
     let storageKey = ss.storageKey;
     let versionCapturedAt: Date | null = null;
     if (requestedKey && requestedKey !== ss.storageKey) {
@@ -43,11 +77,17 @@ export async function GET(
         where: { storageKey: requestedKey },
         select: { screenshotId: true, capturedAt: true, storageKey: true },
       });
-      if (!version || version.screenshotId !== id) {
+      if (!version || version.screenshotId !== idRes.value) {
         return NextResponse.json({ error: 'version not found' }, { status: 404 });
       }
       storageKey = version.storageKey;
       versionCapturedAt = version.capturedAt;
+    }
+
+    // Path-traversal defense on the canonical storageKey too (in
+    // case a hand-crafted DB row ever carries a separator).
+    if (storageKey.includes('/') || storageKey.includes('\\') || storageKey.includes('..')) {
+      return NextResponse.json({ error: 'invalid storageKey' }, { status: 400 });
     }
 
     const filePath = path.join(SCREENSHOTS_DIR, storageKey);
@@ -60,8 +100,8 @@ export async function GET(
     // here we let the ETag do the work for the HistoryPanel's
     // thumbnails).
     const etag = versionCapturedAt
-      ? `"${id}-${versionCapturedAt.getTime()}-${storageKey}"`
-      : `"${id}-${ss.capturedAt.getTime()}"`;
+      ? `"${idRes.value}-${versionCapturedAt.getTime()}-${storageKey}"`
+      : `"${idRes.value}-${ss.capturedAt.getTime()}"`;
 
     if (req.headers.get('if-none-match') === etag) {
       return new NextResponse(null, { status: 304 });
@@ -72,7 +112,9 @@ export async function GET(
       headers: {
         'Content-Type': 'image/png',
         'Content-Length': fileStat.size.toString(),
-        'Cache-Control': 'public, max-age=31536000, immutable',
+        // private — images require auth (dashboard origin or share
+        // token); do not let shared caches serve them anonymously.
+        'Cache-Control': 'private, max-age=3600',
         'ETag': etag,
       },
     });

@@ -7,6 +7,7 @@
 // would otherwise silently let bad configs through to the
 // adapter (which would then 4xx at the receiver).
 
+import { assertSafeOutboundUrl } from '@/lib/ssrf';
 import type { DiscordConfig, IntegrationKind, SlackConfig, WebhookConfig } from './types';
 
 export type ValidationResult<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -30,6 +31,8 @@ function validateSlackConfig(raw: unknown): ValidationResult<SlackConfig> {
   if (!/^https?:\/\//i.test(r.webhookUrl)) {
     return { ok: false, error: 'slack webhookUrl must be http(s)' };
   }
+  const ssrf = assertSafeOutboundUrl(r.webhookUrl);
+  if (!ssrf.ok) return { ok: false, error: ssrf.error };
   return { ok: true, value: { webhookUrl: r.webhookUrl } };
 }
 
@@ -44,6 +47,8 @@ function validateDiscordConfig(raw: unknown): ValidationResult<DiscordConfig> {
   if (!/^https?:\/\//i.test(r.webhookUrl)) {
     return { ok: false, error: 'discord webhookUrl must be http(s)' };
   }
+  const ssrf = assertSafeOutboundUrl(r.webhookUrl);
+  if (!ssrf.ok) return { ok: false, error: ssrf.error };
   return { ok: true, value: { webhookUrl: r.webhookUrl } };
 }
 
@@ -58,6 +63,8 @@ function validateWebhookConfig(raw: unknown): ValidationResult<WebhookConfig> {
   if (!/^https?:\/\//i.test(r.url)) {
     return { ok: false, error: 'webhook url must be http(s)' };
   }
+  const ssrf = assertSafeOutboundUrl(r.url);
+  if (!ssrf.ok) return { ok: false, error: ssrf.error };
   // `headers` is optional. If present, it must be a flat
   // object of string→string. We do NOT restrict which
   // headers — operators may need to set signature / auth

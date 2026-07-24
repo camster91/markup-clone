@@ -10,6 +10,7 @@
 // - SQL schema mismatches (prisma calls the right methods)
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { liveSessionRow } from '../helpers/dashboard-auth';
 
 // Mock prisma BEFORE importing routes. vi.mock is hoisted, so the factory
 // can't reference module-level vars. Use vi.hoisted() to get shared state.
@@ -20,24 +21,39 @@ const mocks = vi.hoisted(() => ({
   pin: { delete: vi.fn() },
   subscriber: { findMany: vi.fn(), create: vi.fn(), findUnique: vi.fn(), delete: vi.fn() },
   auditLog: { create: vi.fn().mockResolvedValue({ id: 'audit-log-1' }) },
-  // The route's team-scope gate calls getCallerUser() which reads
-  // the session cookie + looks up the Session row. Default: no
-  // session, so the route treats the caller as anonymous — that
-  // means team-scope gating falls back to "no caller" → 403
-  // whenever the project has teamId != null. Tests that need a
-  // logged-in caller override per-test.
-  session: { findUnique: vi.fn().mockResolvedValue(null) },
+  // requireDashboardSession needs a live session by default. Tests that
+  // need an anonymous caller (rare — Origin alone is no longer enough)
+  // override session.findUnique to null explicitly.
+  session: { findUnique: vi.fn() },
   // Team membership lookup. Default: no membership.
   teamMember: { findFirst: vi.fn().mockResolvedValue(null) },
 }));
+
+const cookieStore = vi.hoisted(() => {
+  const data: { value?: string } = { value: 'test-dashboard-session' };
+  return {
+    data,
+    get: (name: string) => (data.value !== undefined ? { name, value: data.value } : undefined),
+    set: (_n: string, value: string) => { data.value = value === '' ? undefined : value; },
+    delete: () => { data.value = undefined; },
+    has: () => data.value !== undefined,
+  };
+});
 
 vi.mock('@/lib/prisma', () => ({
   prisma: mocks,
 }));
 
+vi.mock('next/headers', () => ({
+  cookies: vi.fn(async () => cookieStore),
+}));
 
 import { DELETE, PATCH } from '../../src/app/api/projects/[id]/route';
 import { NextRequest } from 'next/server';
+
+// assertProjectAccessible validates UUID shape — use a real UUID fixture.
+const PROJECT_ID = '11111111-1111-1111-1111-111111111111';
+const MISSING_PROJECT_ID = '22222222-2222-2222-2222-222222222222';
 
 // Test CSRF token used by the request builders. The value is
 // arbitrary — the route only checks that the cookie and the
@@ -57,7 +73,7 @@ function req(method: string, headers: Record<string, string> = {}): NextRequest 
     'X-CSRF-Token': CSRF_TOKEN,
     cookie: `markup.csrf=${CSRF_TOKEN}`,
   };
-  return new NextRequest(`https://markup.ashbi.ca/api/projects/proj-1`, {
+  return new NextRequest(`https://markup.ashbi.ca/api/projects/${PROJECT_ID}`, {
     method,
     headers: { 'Content-Type': 'application/json', ...baseHeaders, ...headers },
   });
@@ -68,7 +84,7 @@ function reqWithBody(method: string, body: unknown, headers: Record<string, stri
     'X-CSRF-Token': CSRF_TOKEN,
     cookie: `markup.csrf=${CSRF_TOKEN}`,
   };
-  return new NextRequest(`https://markup.ashbi.ca/api/projects/proj-1`, {
+  return new NextRequest(`https://markup.ashbi.ca/api/projects/${PROJECT_ID}`, {
     method,
     headers: { 'Content-Type': 'application/json', ...baseHeaders, ...headers },
     body: JSON.stringify(body),
@@ -80,8 +96,14 @@ function reqWithBody(method: string, body: unknown, headers: Record<string, stri
 // a different shape override mocks.project.findUnique per-test.
 function setUnscopedProject() {
   mocks.project.findUnique.mockResolvedValue({
-    id: 'proj-1', name: 'Test', domain: 'example.com', teamId: null,
+    id: PROJECT_ID, name: 'Test', domain: 'example.com', teamId: null,
   });
+}
+
+function resetSession() {
+  cookieStore.data.value = 'test-dashboard-session';
+  mocks.session.findUnique.mockResolvedValue(liveSessionRow());
+  mocks.teamMember.findFirst.mockResolvedValue(null);
 }
 
 
@@ -90,18 +112,19 @@ describe('DELETE /api/projects/[id]', () => {
     mocks.project.findUnique.mockReset();
     mocks.project.delete.mockReset();
     mocks.screenshot.findMany.mockReset();
+    resetSession();
   });
 
   it('returns 401 when called from a non-dashboard origin', async () => {
     const res = await DELETE(req('DELETE', {}),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     expect(res.status).toBe(401);
   });
 
   it('returns 404 when the project does not exist', async () => {
     mocks.project.findUnique.mockResolvedValue(null);
     const res = await DELETE(req('DELETE', { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-missing' }) });
+      { params: Promise.resolve({ id: MISSING_PROJECT_ID }) });
     expect(res.status).toBe(404);
   });
 
@@ -120,10 +143,10 @@ describe('DELETE /api/projects/[id]', () => {
       { storageKey: 'abc123.png' },
       { storageKey: 'def456.png' },
     ]);
-    mocks.project.delete.mockResolvedValue({ id: 'proj-1' });
+    mocks.project.delete.mockResolvedValue({ id: PROJECT_ID });
 
     const res = await DELETE(req('DELETE', { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.deleted).toBe(true);
@@ -133,25 +156,25 @@ describe('DELETE /api/projects/[id]', () => {
     // and counts as "skip"). The real behavior on the live host is: the
     // unlink succeeds → count increments. We assert the structure here; the
     // actual count is a function of the file system state, not the test.
-    expect(mocks.project.delete).toHaveBeenCalledWith({ where: { id: 'proj-1' } });
+    expect(mocks.project.delete).toHaveBeenCalledWith({ where: { id: PROJECT_ID } });
     // findMany should have been called with the project id
     expect(mocks.screenshot.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { page: { projectId: 'proj-1' } } })
+      expect.objectContaining({ where: { page: { projectId: PROJECT_ID } } })
     );
   });
 
   it('returns 403 when the project is in a team the caller is not a member of', async () => {
     // Team-scope gate: a project with teamId != null is only
     // accessible to a caller who is a member of that team. The
-    // mock returns a non-null teamId and no session — the gate
-    // falls through to "no caller" and returns 403 (not 404; the
+    // mock returns a non-null teamId and no team membership — the gate
+    // returns 403 (not 404; the
     // API surface distinguishes missing from forbidden, unlike
     // the page surface).
     mocks.project.findUnique.mockResolvedValue({
-      id: 'proj-1', name: 'T', domain: 't.com', teamId: 'team-1',
+      id: PROJECT_ID, name: 'T', domain: 't.com', teamId: 'team-1',
     });
     const res = await DELETE(req('DELETE', { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     expect(res.status).toBe(403);
     expect(mocks.project.delete).not.toHaveBeenCalled();
   });
@@ -161,6 +184,7 @@ describe('PATCH /api/projects/[id]', () => {
   beforeEach(() => {
     mocks.project.findUnique.mockReset();
     mocks.project.update.mockReset();
+    resetSession();
     // Default: project exists in the legacy / unscoped branch so
     // the access check passes. Tests that want to exercise the
     // team-scope gate override the findUnique mock.
@@ -169,18 +193,18 @@ describe('PATCH /api/projects/[id]', () => {
 
   it('returns 401 when called from a non-dashboard origin', async () => {
     const res = await PATCH(reqWithBody('PATCH', { name: 'New' }, {}),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     expect(res.status).toBe(401);
   });
 
   it('renames a project when name is provided', async () => {
     mocks.project.update.mockResolvedValue({
-      id: 'proj-1', name: 'New Name', domain: 'example.com',
+      id: PROJECT_ID, name: 'New Name', domain: 'example.com',
       apiKey: 'mk_xx', createdAt: new Date(), updatedAt: new Date(),
       pages: [], subscribers: [],
     });
     const res = await PATCH(reqWithBody('PATCH', { name: 'New Name' }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.name).toBe('New Name');
@@ -193,12 +217,12 @@ describe('PATCH /api/projects/[id]', () => {
 
   it('regenerates the apiKey when regenerateKey is true', async () => {
     mocks.project.update.mockResolvedValue({
-      id: 'proj-1', name: 'Test', domain: 'example.com',
+      id: PROJECT_ID, name: 'Test', domain: 'example.com',
       apiKey: 'mk_NEWKEY123', createdAt: new Date(), updatedAt: new Date(),
       pages: [], subscribers: [],
     });
     const res = await PATCH(reqWithBody('PATCH', { regenerateKey: true }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     expect(res.status).toBe(200);
     const body = await res.json();
     // The mocked apiKey is what we set; the test below validates the shape
@@ -209,12 +233,12 @@ describe('PATCH /api/projects/[id]', () => {
   it('regenerates the apiKey with mk_ prefix and 40 hex chars (real generation)', async () => {
     // Use a different mock for this one that calls through to the real generateApiKey
     mocks.project.update.mockImplementation(async ({ data }) => ({
-      id: 'proj-1', name: 'Test', domain: 'example.com',
+      id: PROJECT_ID, name: 'Test', domain: 'example.com',
       apiKey: data.apiKey || 'mk_xx', createdAt: new Date(), updatedAt: new Date(),
       pages: [], subscribers: [],
     }));
     const res = await PATCH(reqWithBody('PATCH', { regenerateKey: true }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.apiKey).toMatch(/^mk_[0-9a-f]{40}$/);
@@ -222,12 +246,12 @@ describe('PATCH /api/projects/[id]', () => {
 
   it('handles both name and regenerateKey in the same call', async () => {
     mocks.project.update.mockResolvedValue({
-      id: 'proj-1', name: 'New Name', domain: 'example.com',
+      id: PROJECT_ID, name: 'New Name', domain: 'example.com',
       apiKey: 'mk_NEWKEY456', createdAt: new Date(), updatedAt: new Date(),
       pages: [], subscribers: [],
     });
     const res = await PATCH(reqWithBody('PATCH', { name: 'New Name', regenerateKey: true }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     expect(res.status).toBe(200);
     const call = mocks.project.update.mock.calls[0][0];
     expect(call.data.name).toBe('New Name');
@@ -236,27 +260,27 @@ describe('PATCH /api/projects/[id]', () => {
 
   it('rejects body without name or regenerateKey (no-op is a 400)', async () => {
     const res = await PATCH(reqWithBody('PATCH', {}, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     // Empty body should NOT change anything and is likely a 400 to surface the bug
     expect(res.status).toBe(400);
   });
 
   it('rejects name that is a non-string with 400', async () => {
     const res = await PATCH(reqWithBody('PATCH', { name: 42 }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     expect(res.status).toBe(400);
   });
 
   it('rejects name that is too long with 400 (DoS guard)', async () => {
     const longName = 'x'.repeat(201);
     const res = await PATCH(reqWithBody('PATCH', { name: longName }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     expect(res.status).toBe(400);
   });
 
   it('rejects empty name with 400', async () => {
     const res = await PATCH(reqWithBody('PATCH', { name: '' }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     expect(res.status).toBe(400);
   });
 
@@ -266,7 +290,7 @@ describe('PATCH /api/projects/[id]', () => {
     // metadata. That meant GET /api/audit could leak the new key to anyone
     // with dashboard access. The fix: record `apiKey: 'rotated'` instead.
     mocks.project.update.mockImplementation(async ({ data }: any) => ({
-      id: 'proj-1', name: 'Test', domain: 'example.com',
+      id: PROJECT_ID, name: 'Test', domain: 'example.com',
       apiKey: data.apiKey || 'mk_xx', createdAt: new Date(), updatedAt: new Date(),
       pages: [], subscribers: [],
     }));
@@ -275,7 +299,7 @@ describe('PATCH /api/projects/[id]', () => {
     mocks.auditLog.create.mockClear();
     mocks.auditLog.create.mockResolvedValue({ id: 'audit-log-1' });
     const res = await PATCH(reqWithBody('PATCH', { regenerateKey: true }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     expect(res.status).toBe(200);
     // Drain the microtask queue so the fire-and-forget call has been recorded.
     await new Promise((r) => setTimeout(r, 0));
@@ -303,7 +327,7 @@ describe('PATCH /api/projects/[id]', () => {
 
   it('rejects name=null with 400', async () => {
     const res = await PATCH(reqWithBody('PATCH', { name: null }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toMatch(/string/);
@@ -313,7 +337,7 @@ describe('PATCH /api/projects/[id]', () => {
 
   it('rejects name with a null byte with 400 (defense in depth)', async () => {
     const res = await PATCH(reqWithBody('PATCH', { name: 'x\u0000y' }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toMatch(/null/);
@@ -322,7 +346,7 @@ describe('PATCH /api/projects/[id]', () => {
 
   it('rejects name that is 201 chars (one over the cap) with 400', async () => {
     const res = await PATCH(reqWithBody('PATCH', { name: 'a'.repeat(201) }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toMatch(/200/);
@@ -332,12 +356,12 @@ describe('PATCH /api/projects/[id]', () => {
   it('returns 403 when the project is in a team the caller is not a member of', async () => {
     // Team-scope gate for PATCH: a project with teamId != null
     // is only accessible to a member of that team. The mock
-    // returns a non-null teamId and no session → 403.
+    // returns a non-null teamId and no team membership → 403.
     mocks.project.findUnique.mockResolvedValue({
-      id: 'proj-1', name: 'T', domain: 't.com', teamId: 'team-1',
+      id: PROJECT_ID, name: 'T', domain: 't.com', teamId: 'team-1',
     });
     const res = await PATCH(reqWithBody('PATCH', { name: 'New' }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     expect(res.status).toBe(403);
     expect(mocks.project.update).not.toHaveBeenCalled();
   });

@@ -9,14 +9,32 @@
 // recapture button into an SSRF vector.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { liveSessionRow } from '../helpers/dashboard-auth';
 
 const mocks = vi.hoisted(() => ({
   project: { create: vi.fn() },
   auditLog: { create: vi.fn().mockResolvedValue({ id: 'audit-log-1' }) },
+  session: { findUnique: vi.fn() },
+  teamMember: { findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]) },
 }));
+
+const cookieStore = vi.hoisted(() => {
+  const data: { value?: string } = { value: 'test-dashboard-session' };
+  return {
+    data,
+    get: (name: string) => (data.value !== undefined ? { name, value: data.value } : undefined),
+    set: (_n: string, value: string) => { data.value = value === '' ? undefined : value; },
+    delete: () => { data.value = undefined; },
+    has: () => data.value !== undefined,
+  };
+});
 
 vi.mock('@/lib/prisma', () => ({
   prisma: mocks,
+}));
+
+vi.mock('next/headers', () => ({
+  cookies: vi.fn(async () => cookieStore),
 }));
 
 import { POST } from '../../src/app/api/projects/route';
@@ -32,6 +50,10 @@ function req(body: unknown, headers: Record<string, string> = {}): NextRequest {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  cookieStore.data.value = 'test-dashboard-session';
+  mocks.session.findUnique.mockResolvedValue(liveSessionRow());
+  mocks.teamMember.findFirst.mockResolvedValue(null);
+  mocks.teamMember.findMany.mockResolvedValue([]);
   mocks.project.create.mockImplementation(async ({ data }: any) => ({
     id: 'proj-1',
     name: data.name,

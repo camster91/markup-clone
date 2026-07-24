@@ -21,64 +21,19 @@
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin, generateApiKey } from '@/lib/auth';
+import { requireDashboardSession, generateApiKey } from '@/lib/auth';
 import { audit } from '@/lib/audit';
 import { unlink } from 'fs/promises';
 import { validateProjectName } from '@/lib/validation';
-import { getCallerUser } from '@/lib/teams';
+import { assertProjectAccessible } from '@/lib/project-access';
 
 const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || '/data/screenshots';
-
-async function assertProjectAccessible(projectId: string): Promise<
-  | { ok: true; projectId: string; teamId: string | null }
-  | { ok: false; status: 403 | 404; error: string }
-> {
-  // Two-step lookup: existence first (so missing → 404), then
-  // membership (so visible-but-forbidden → 403). Done in two
-  // queries rather than a join so the 404 vs 403 distinction is
-  // clean and the tests can assert on each call shape
-  // independently. The cost is one extra round-trip on the
-  // happy-path; we eat that for the cleaner semantics.
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    select: { id: true, name: true, domain: true, teamId: true },
-  });
-  if (!project) return { ok: false, status: 404, error: 'Project not found' };
-
-  // Legacy / unscoped project (teamId IS NULL): every dashboard
-  // caller has access. This is the transitional single-project
-  // dashboard behaviour — pre-workspace projects stay visible
-  // until every user is invited to a team.
-  if (project.teamId === null) {
-    return { ok: true, projectId: project.id, teamId: null };
-  }
-
-  const caller = await getCallerUser();
-  if (!caller) {
-    // No session = anonymous dashboard request. The dashboard's
-    // requireDashboardOrigin gate already proves the caller is on
-    // the dashboard origin, but a session-less caller still has no
-    // team memberships → 403. The "legacy" branch above (teamId
-    // null) is the only way a session-less caller reaches a
-    // project.
-    return { ok: false, status: 403, error: 'Not a member of this project\'s team' };
-  }
-
-  const membership = await prisma.teamMember.findFirst({
-    where: { userId: caller.id, teamId: project.teamId },
-    select: { id: true },
-  });
-  if (!membership) {
-    return { ok: false, status: 403, error: 'Not a member of this project\'s team' };
-  }
-  return { ok: true, projectId: project.id, teamId: project.teamId };
-}
 
 export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardSession(req);
   if (authErr) return authErr;
 
   try {
@@ -134,7 +89,7 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardSession(req);
   if (authErr) return authErr;
 
   try {

@@ -114,10 +114,12 @@ export function useRecaptureStatus(
   // than useState because reads are synchronous inside async callbacks
   // and we don't want a re-render when the flag flips.
   const mountedRef = useRef<boolean>(true);
+  const abortRef = useRef<AbortController | null>(null);
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      abortRef.current?.abort();
     };
   }, []);
 
@@ -125,6 +127,9 @@ export function useRecaptureStatus(
     setStatus('starting');
     setError(null);
     setIsStale(false);
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
     try {
       const res = await fetch(`/api/screenshots/${screenshotId}/recapture`, {
         method: 'POST',
@@ -132,6 +137,8 @@ export function useRecaptureStatus(
           'Content-Type': 'application/json',
           ...dashboardHeaders(),
         },
+        credentials: 'same-origin',
+        signal: ac.signal,
         body: '{}',
       });
       if (!res.ok) {
@@ -161,7 +168,7 @@ export function useRecaptureStatus(
         // Bail out of the poll loop if the component unmounted during
         // the 1s sleep. Without this, the rest of the loop body would
         // call setStatus / setError on an unmounted component.
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || ac.signal.aborted) return;
         // At i=30 (30s in) flip the button label to "Still rendering…"
         // so the operator knows the operation is still in flight. The
         // poll itself keeps going up to i=90.
@@ -174,6 +181,8 @@ export function useRecaptureStatus(
             {
               cache: 'no-store',
               headers: dashboardHeaders(),
+              credentials: 'same-origin',
+              signal: ac.signal,
             }
           );
           if (r2.status === 200) {
@@ -193,11 +202,12 @@ export function useRecaptureStatus(
             if (data.capturedAt) lastSince = data.capturedAt;
           }
           // 304: nothing has changed yet, keep polling.
-        } catch {
+        } catch (err) {
+          if (err instanceof DOMException && err.name === 'AbortError') return;
           // Network blip on a single tick — keep polling.
         }
       }
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || ac.signal.aborted) return;
       setStatus(updated ? 'done' : 'error');
       setIsStale(false);
       if (!updated) {
@@ -215,6 +225,7 @@ export function useRecaptureStatus(
         }, DONE_AUTO_CLEAR_MS);
       }
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       if (!mountedRef.current) return;
       setStatus('error');
       setError(err instanceof Error ? err.message : 'Recapture failed');

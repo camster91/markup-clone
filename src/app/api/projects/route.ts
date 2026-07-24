@@ -14,22 +14,19 @@
 // teamId = NULL (legacy behaviour, kept for back-compat with the
 // single-team install).
 //
-// Auth: every handler is gated by requireDashboardOrigin. We do NOT
-// additionally require an active session — the existing dashboard
-// flows (X-Api-Key on widget calls, cookie session for dashboard
-// calls) cover that. The team-scope filter is a "which projects does
-// this caller see" gate, not an "is this caller allowed to call the
-// API at all" gate.
+// Auth: every handler is gated by requireDashboardSession (Origin
+// CSRF + active session cookie). The team-scope filter is a "which
+// projects does this caller see" gate on top of that.
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin, generateApiKey } from '@/lib/auth';
+import { requireDashboardSession, generateApiKey } from '@/lib/auth';
 import { audit } from '@/lib/audit';
 import { validateProjectDomain, validateProjectName, validateUuidParam } from '@/lib/validation';
 import { getCallerUser, getProjectScopeWhere } from '@/lib/teams';
 
 export async function GET(req: Request) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardSession(req);
   if (authErr) return authErr;
 
   // Optional ?since=<ISO> delta polling. When set, only rows whose
@@ -113,7 +110,7 @@ export async function GET(req: Request) {
   // Project has no `include`-able shareToken — it's a top-level
   // scalar. select it explicitly so the dashboard's ShareToggle can
   // see whether a token is active. `shareToken` is dashboard-only
-  // (the route is gated by requireDashboardOrigin) so emitting the
+  // (the route is gated by requireDashboardSession) so emitting the
   // raw token here is fine — only a dashboard user can hit this
   // endpoint, and they need the token to render the share URL.
   //
@@ -148,7 +145,18 @@ export async function GET(req: Request) {
         screenshots: page.screenshots.map((screenshot) => ({
           ...screenshot,
           pins: screenshot.pins.map((pin) => ({
-            ...pin,
+            // Omit elementHTML — DOM snippets can carry PII / markup
+            // and the dashboard list UI never renders them.
+            id: pin.id,
+            xPercent: pin.xPercent,
+            yPercent: pin.yPercent,
+            status: pin.status,
+            elementXPath: pin.elementXPath,
+            authorName: pin.authorName,
+            createdAt: pin.createdAt,
+            updatedAt: pin.updatedAt,
+            screenshotId: pin.screenshotId,
+            comments: pin.comments,
             annotations: (pin.annotations ?? []).map((a) => {
               let path: number[][] = [];
               try {
@@ -177,7 +185,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardSession(req);
   if (authErr) return authErr;
 
   try {

@@ -9,7 +9,7 @@
 // GET /api/projects filter show them to callers with no team
 // memberships until every user has been invited to a team.
 //
-// Auth: every handler is gated by requireDashboardOrigin (the same
+// Auth: every handler is gated by requireDashboardSession (the same
 // gate the other dashboard routes use). No session check at this
 // layer — workspace creation is open to any dashboard caller. A
 // follow-up can add an "operator-only" gate if we want to restrict
@@ -29,12 +29,12 @@
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin } from '@/lib/auth';
+import { requireDashboardSession } from '@/lib/auth';
 import { audit } from '@/lib/audit';
 import { validateWorkspaceName } from '@/lib/validation';
 
 export async function GET(req: Request) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardSession(req);
   if (authErr) return authErr;
 
   const workspaces = await prisma.workspace.findMany({
@@ -63,7 +63,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardSession(req);
   if (authErr) return authErr;
 
   try {

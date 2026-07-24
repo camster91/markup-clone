@@ -2,13 +2,30 @@
 // Verifies auth, limit clamping, and ordering.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { liveSessionRow } from '../helpers/dashboard-auth';
 
 const mocks = vi.hoisted(() => ({
   auditLog: { findMany: vi.fn() },
+  session: { findUnique: vi.fn() },
 }));
+
+const cookieStore = vi.hoisted(() => {
+  const data: { value?: string } = { value: 'test-dashboard-session' };
+  return {
+    data,
+    get: (name: string) => (data.value !== undefined ? { name, value: data.value } : undefined),
+    set: (_n: string, value: string) => { data.value = value === '' ? undefined : value; },
+    delete: () => { data.value = undefined; },
+    has: () => data.value !== undefined,
+  };
+});
 
 vi.mock('@/lib/prisma', () => ({
   prisma: mocks,
+}));
+
+vi.mock('next/headers', () => ({
+  cookies: vi.fn(async () => cookieStore),
 }));
 
 import { GET } from '../../src/app/api/audit/route';
@@ -24,6 +41,8 @@ function req(url: string, headers: Record<string, string> = {}): NextRequest {
 describe('GET /api/audit', () => {
   beforeEach(() => {
     mocks.auditLog.findMany.mockReset();
+    cookieStore.data.value = 'test-dashboard-session';
+    mocks.session.findUnique.mockResolvedValue(liveSessionRow());
   });
 
   it('returns 401 when called from a non-dashboard origin', async () => {

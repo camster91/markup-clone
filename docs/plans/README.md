@@ -14,6 +14,12 @@ guessing from chat history.
 
 ## Current plans
 
+- `docs/plans/2026-07-24-production-security-audit.md` — Full
+  production security / error-handling / performance audit. Critical
+  + High items patched on `cursor/production-security-audit-3b24`
+  (`requireDashboardSession`, SSRF webhook block, login hardening,
+  screenshot image auth, SVG reject, AbortController). Read before
+  any further auth changes.
 - `docs/refactor/2026-06-15-refactor-plan.md` — R0.x structural work,
   P0/P1/P2 prioritized. Most P0 items merged; P1 partially merged in
   the 2026-06-16/17 P1-wave audit cycle. See the R0 audit comment in

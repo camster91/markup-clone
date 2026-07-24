@@ -25,19 +25,17 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { liveSessionRow } from '../helpers/dashboard-auth';
 
 const mocks = vi.hoisted(() => ({
   project: {
     findMany: vi.fn(),
   },
-  // The page calls getCallerUser() to look up the caller's session
-  // before building the team-scope filter. The mock returns null
-  // (no session), which the page treats as "no caller" — the
-  // team-scope helper returns { teamId: null } so the page
-  // fetches every legacy / unscoped project (matches the
-  // transitional single-project dashboard behaviour).
+  // Logged-in operator by default — the page skips the project
+  // query entirely when there is no session (avoids serializing
+  // apiKey into HTML for anonymous visitors).
   session: {
-    findUnique: vi.fn().mockResolvedValue(null),
+    findUnique: vi.fn(),
   },
   // Team membership lookup. Default: no membership. The team
   // scope helper short-circuits to { teamId: null } so the
@@ -48,8 +46,23 @@ const mocks = vi.hoisted(() => ({
   },
 }));
 
+const cookieStore = vi.hoisted(() => {
+  const data: { value?: string } = { value: 'test-dashboard-session' };
+  return {
+    data,
+    get: (name: string) => (data.value !== undefined ? { name, value: data.value } : undefined),
+    set: (_n: string, value: string) => { data.value = value === '' ? undefined : value; },
+    delete: () => { data.value = undefined; },
+    has: () => data.value !== undefined,
+  };
+});
+
 vi.mock('@/lib/prisma', () => ({
   prisma: mocks,
+}));
+
+vi.mock('next/headers', () => ({
+  cookies: vi.fn(async () => cookieStore),
 }));
 
 import DashboardPage from '../../src/app/page';
@@ -70,8 +83,9 @@ function getCircularReplacer(): (key: string, value: unknown) => unknown {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  cookieStore.data.value = 'test-dashboard-session';
+  mocks.session.findUnique.mockResolvedValue(liveSessionRow());
   mocks.project.findMany.mockResolvedValue([]);
-  mocks.session.findUnique.mockResolvedValue(null);
   mocks.teamMember.findFirst.mockResolvedValue(null);
   mocks.teamMember.findMany.mockResolvedValue([]);
 });
@@ -249,6 +263,19 @@ describe('GET / — dashboard home page (RSC refactor)', () => {
     mocks.project.findMany.mockResolvedValue([]);
     const element = await DashboardPage();
     const elementJson = JSON.stringify(element, getCircularReplacer());
+    expect(elementJson).toContain('Create a project below to get a widget snippet');
+  });
+
+  it('skips the project query when there is no session (no apiKey leak)', async () => {
+    cookieStore.data.value = undefined;
+    mocks.session.findUnique.mockResolvedValue(null);
+    mocks.project.findMany.mockResolvedValue([
+      { id: 'proj-1', name: 'Secret', apiKey: 'mk_secret', pages: [], subscribers: [] },
+    ]);
+    const element = await DashboardPage();
+    expect(mocks.project.findMany).not.toHaveBeenCalled();
+    const elementJson = JSON.stringify(element, getCircularReplacer());
+    expect(elementJson).not.toContain('mk_secret');
     expect(elementJson).toContain('Create a project below to get a widget snippet');
   });
 });

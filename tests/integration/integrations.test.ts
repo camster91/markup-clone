@@ -20,6 +20,10 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
+import { liveSessionRow } from '../helpers/dashboard-auth';
+
+const PROJECT_ID = '11111111-1111-1111-1111-111111111111';
+const MISSING_PROJECT_ID = '22222222-2222-2222-2222-222222222222';
 
 // ===== prisma mock (hoisted) =====
 const mocks = vi.hoisted(() => ({
@@ -49,7 +53,20 @@ const mocks = vi.hoisted(() => ({
     deleteMany: vi.fn(),
   },
   audit: vi.fn(),
+  session: { findUnique: vi.fn() },
+  teamMember: { findFirst: vi.fn().mockResolvedValue(null) },
 }));
+
+const cookieStore = vi.hoisted(() => {
+  const data: { value?: string } = { value: 'test-dashboard-session' };
+  return {
+    data,
+    get: (name: string) => (data.value !== undefined ? { name, value: data.value } : undefined),
+    set: (_n: string, value: string) => { data.value = value === '' ? undefined : value; },
+    delete: () => { data.value = undefined; },
+    has: () => data.value !== undefined,
+  };
+});
 
 vi.mock('@/lib/prisma', () => ({
   prisma: mocks,
@@ -57,6 +74,10 @@ vi.mock('@/lib/prisma', () => ({
 
 vi.mock('@/lib/audit', () => ({
   audit: mocks.audit,
+}));
+
+vi.mock('next/headers', () => ({
+  cookies: vi.fn(async () => cookieStore),
 }));
 
 // ===== fs/promises mock (so the pin route doesn't write files) =====
@@ -132,7 +153,7 @@ const SAMPLE_PAYLOAD = {
     authorName: 'Alice',
     createdAt: '2026-06-19T00:00:00.000Z',
   },
-  project: { id: 'proj-1', name: 'My Site', domain: 'example.com' },
+  project: { id: PROJECT_ID, name: 'My Site', domain: 'example.com' },
   path: '/about',
   commentText: 'Please fix the menu',
 };
@@ -158,16 +179,19 @@ function makeFormData(fields: Record<string, string | File>): FormData {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  cookieStore.data.value = 'test-dashboard-session';
+  mocks.session.findUnique.mockResolvedValue(liveSessionRow());
+  mocks.teamMember.findFirst.mockResolvedValue(null);
   // Replace global fetch with a controllable mock. vi.stubGlobal
   // is automatically cleaned up in vitest's afterEach.
   fetchMock.mockReset();
   fetchMock.mockResolvedValue({ ok: true, status: 200, text: async () => '' });
   vi.stubGlobal('fetch', fetchMock);
 
-  // Default project mock (for the integrations POST route's
-  // project-exists check). Tests that need a different return
-  // value override it in the `it` block.
-  mocks.project.findUnique.mockResolvedValue({ id: 'proj-1' });
+  // Default project mock (for assertProjectAccessible + integrations
+  // project-exists check). Unscoped (teamId null) so the session
+  // caller is allowed through.
+  mocks.project.findUnique.mockResolvedValue({ id: PROJECT_ID, teamId: null });
 });
 
 afterEach(() => {
@@ -180,56 +204,68 @@ afterEach(() => {
 describe('POST /api/projects/[id]/integrations', () => {
   it('returns 400 when kind is missing', async () => {
     const res = await IntegrationsPOST(
-      req('https://markup.ashbi.ca/api/projects/proj-1/integrations', {
+      req(`https://markup.ashbi.ca/api/projects/${PROJECT_ID}/integrations`, {
         method: 'POST',
         body: { config: { webhookUrl: 'https://hooks.slack.com/x' } },
       }),
-      { params: Promise.resolve({ id: 'proj-1' }) }
+      { params: Promise.resolve({ id: PROJECT_ID }) }
     );
     expect(res.status).toBe(400);
   });
 
   it('returns 400 when kind is not in the closed set', async () => {
     const res = await IntegrationsPOST(
-      req('https://markup.ashbi.ca/api/projects/proj-1/integrations', {
+      req(`https://markup.ashbi.ca/api/projects/${PROJECT_ID}/integrations`, {
         method: 'POST',
         body: { kind: 'telegram', config: { webhookUrl: 'https://example.com' } },
       }),
-      { params: Promise.resolve({ id: 'proj-1' }) }
+      { params: Promise.resolve({ id: PROJECT_ID }) }
     );
     expect(res.status).toBe(400);
   });
 
   it('returns 400 when slack config is missing webhookUrl', async () => {
     const res = await IntegrationsPOST(
-      req('https://markup.ashbi.ca/api/projects/proj-1/integrations', {
+      req(`https://markup.ashbi.ca/api/projects/${PROJECT_ID}/integrations`, {
         method: 'POST',
         body: { kind: 'slack', config: {} },
       }),
-      { params: Promise.resolve({ id: 'proj-1' }) }
+      { params: Promise.resolve({ id: PROJECT_ID }) }
     );
     expect(res.status).toBe(400);
   });
 
   it('returns 400 when slack webhookUrl is not http(s)', async () => {
     const res = await IntegrationsPOST(
-      req('https://markup.ashbi.ca/api/projects/proj-1/integrations', {
+      req(`https://markup.ashbi.ca/api/projects/${PROJECT_ID}/integrations`, {
         method: 'POST',
         body: { kind: 'slack', config: { webhookUrl: 'file:///etc/passwd' } },
       }),
-      { params: Promise.resolve({ id: 'proj-1' }) }
+      { params: Promise.resolve({ id: PROJECT_ID }) }
     );
     expect(res.status).toBe(400);
+  });
+
+  it('returns 400 when slack webhookUrl targets a private/loopback host (SSRF)', async () => {
+    const res = await IntegrationsPOST(
+      req(`https://markup.ashbi.ca/api/projects/${PROJECT_ID}/integrations`, {
+        method: 'POST',
+        body: { kind: 'slack', config: { webhookUrl: 'http://127.0.0.1/hook' } },
+      }),
+      { params: Promise.resolve({ id: PROJECT_ID }) }
+    );
+    expect(res.status).toBe(400);
+    expect(mocks.integration.create).not.toHaveBeenCalled();
   });
 
   it('returns 404 when the project does not exist', async () => {
     mocks.project.findUnique.mockResolvedValue(null);
     const res = await IntegrationsPOST(
-      req('https://markup.ashbi.ca/api/projects/proj-x/integrations', {
+      req(`https://markup.ashbi.ca/api/projects/${MISSING_PROJECT_ID}/integrations`, {
         method: 'POST',
         body: { kind: 'slack', config: { webhookUrl: 'https://hooks.slack.com/x' } },
       }),
-      { params: Promise.resolve({ id: 'proj-x' }) }
+      { params: Promise.resolve({ id: MISSING_PROJECT_ID }) }
     );
     expect(res.status).toBe(404);
   });
@@ -247,19 +283,19 @@ describe('POST /api/projects/[id]/integrations', () => {
     }));
 
     const res = await IntegrationsPOST(
-      req('https://markup.ashbi.ca/api/projects/proj-1/integrations', {
+      req(`https://markup.ashbi.ca/api/projects/${PROJECT_ID}/integrations`, {
         method: 'POST',
         body: {
           kind: 'slack',
           config: { webhookUrl: 'https://hooks.slack.com/services/X/Y/Z' },
         },
       }),
-      { params: Promise.resolve({ id: 'proj-1' }) }
+      { params: Promise.resolve({ id: PROJECT_ID }) }
     );
     expect(res.status).toBe(201);
     expect(mocks.integration.create).toHaveBeenCalledWith({
       data: {
-        projectId: 'proj-1',
+        projectId: PROJECT_ID,
         kind: 'slack',
         // configJson is a string of the validated config.
         configJson: JSON.stringify({
@@ -279,11 +315,11 @@ describe('POST /api/projects/[id]/integrations', () => {
       createdAt: new Date(),
     }));
     const res = await IntegrationsPOST(
-      req('https://markup.ashbi.ca/api/projects/proj-1/integrations', {
+      req(`https://markup.ashbi.ca/api/projects/${PROJECT_ID}/integrations`, {
         method: 'POST',
         body: { kind: 'discord', config: { webhookUrl: 'https://discord.com/api/webhooks/1/2' } },
       }),
-      { params: Promise.resolve({ id: 'proj-1' }) }
+      { params: Promise.resolve({ id: PROJECT_ID }) }
     );
     expect(res.status).toBe(201);
     const body = await res.json();
@@ -297,7 +333,7 @@ describe('POST /api/projects/[id]/integrations', () => {
       createdAt: new Date(),
     }));
     const res = await IntegrationsPOST(
-      req('https://markup.ashbi.ca/api/projects/proj-1/integrations', {
+      req(`https://markup.ashbi.ca/api/projects/${PROJECT_ID}/integrations`, {
         method: 'POST',
         body: {
           kind: 'webhook',
@@ -307,7 +343,7 @@ describe('POST /api/projects/[id]/integrations', () => {
           },
         },
       }),
-      { params: Promise.resolve({ id: 'proj-1' }) }
+      { params: Promise.resolve({ id: PROJECT_ID }) }
     );
     expect(res.status).toBe(201);
     expect(mocks.integration.create).toHaveBeenCalled();
@@ -320,14 +356,14 @@ describe('POST /api/projects/[id]/integrations', () => {
 
   it('rejects webhook config with non-string header values', async () => {
     const res = await IntegrationsPOST(
-      req('https://markup.ashbi.ca/api/projects/proj-1/integrations', {
+      req(`https://markup.ashbi.ca/api/projects/${PROJECT_ID}/integrations`, {
         method: 'POST',
         body: {
           kind: 'webhook',
           config: { url: 'https://example.com', headers: { 'X-Auth': 42 } },
         },
       }),
-      { params: Promise.resolve({ id: 'proj-1' }) }
+      { params: Promise.resolve({ id: PROJECT_ID }) }
     );
     expect(res.status).toBe(400);
   });
@@ -339,28 +375,28 @@ describe('POST /api/projects/[id]/integrations', () => {
       createdAt: new Date(),
     }));
     await IntegrationsPOST(
-      req('https://markup.ashbi.ca/api/projects/proj-1/integrations', {
+      req(`https://markup.ashbi.ca/api/projects/${PROJECT_ID}/integrations`, {
         method: 'POST',
         body: { kind: 'slack', config: { webhookUrl: 'https://hooks.slack.com/x' } },
       }),
-      { params: Promise.resolve({ id: 'proj-1' }) }
+      { params: Promise.resolve({ id: PROJECT_ID }) }
     );
     expect(mocks.audit).toHaveBeenCalledWith({
-      actor: 'proj-1',
+      actor: PROJECT_ID,
       action: 'integration.create',
-      target: 'proj-1',
+      target: PROJECT_ID,
       metadata: { kind: 'slack' },
     });
   });
 
   it('returns 401 from a non-dashboard origin', async () => {
     const res = await IntegrationsPOST(
-      req('https://markup.ashbi.ca/api/projects/proj-1/integrations', {
+      req(`https://markup.ashbi.ca/api/projects/${PROJECT_ID}/integrations`, {
         method: 'POST',
         body: { kind: 'slack', config: { webhookUrl: 'https://hooks.slack.com/x' } },
         origin: 'https://evil.com',
       }),
-      { params: Promise.resolve({ id: 'proj-1' }) }
+      { params: Promise.resolve({ id: PROJECT_ID }) }
     );
     expect(res.status).toBe(401);
   });
@@ -372,16 +408,16 @@ describe('POST /api/projects/[id]/integrations', () => {
 describe('GET /api/projects/[id]/integrations', () => {
   it('lists every integration for the project', async () => {
     const rows = [
-      { id: 'int-1', projectId: 'proj-1', kind: 'slack', configJson: '{}' },
-      { id: 'int-2', projectId: 'proj-1', kind: 'discord', configJson: '{}' },
+      { id: 'int-1', projectId: PROJECT_ID, kind: 'slack', configJson: '{}' },
+      { id: 'int-2', projectId: PROJECT_ID, kind: 'discord', configJson: '{}' },
     ];
     mocks.integration.findMany.mockResolvedValue(rows);
-    const res = await IntegrationsGET(req('https://markup.ashbi.ca/api/projects/proj-1/integrations'), {
-      params: Promise.resolve({ id: 'proj-1' }),
+    const res = await IntegrationsGET(req(`https://markup.ashbi.ca/api/projects/${PROJECT_ID}/integrations`), {
+      params: Promise.resolve({ id: PROJECT_ID }),
     });
     expect(res.status).toBe(200);
     expect(mocks.integration.findMany).toHaveBeenCalledWith({
-      where: { projectId: 'proj-1' },
+      where: { projectId: PROJECT_ID },
       orderBy: { createdAt: 'asc' },
     });
     const body = await res.json();
@@ -396,14 +432,14 @@ describe('DELETE /api/projects/[id]/integrations/[integrationId]', () => {
   it('removes a single integration, scoped to the project', async () => {
     mocks.integration.deleteMany.mockResolvedValue({ count: 1 });
     const res = await IntegrationDELETE(
-      req('https://markup.ashbi.ca/api/projects/proj-1/integrations/int-1', {
+      req(`https://markup.ashbi.ca/api/projects/${PROJECT_ID}/integrations/int-1`, {
         method: 'DELETE',
       }),
-      { params: Promise.resolve({ id: 'proj-1', integrationId: 'int-1' }) }
+      { params: Promise.resolve({ id: PROJECT_ID, integrationId: 'int-1' }) }
     );
     expect(res.status).toBe(200);
     expect(mocks.integration.deleteMany).toHaveBeenCalledWith({
-      where: { id: 'int-1', projectId: 'proj-1' },
+      where: { id: 'int-1', projectId: PROJECT_ID },
     });
     const body = await res.json();
     expect(body).toEqual({ deleted: true, count: 1 });
@@ -412,10 +448,10 @@ describe('DELETE /api/projects/[id]/integrations/[integrationId]', () => {
   it('returns 200 with count: 0 on a missing id (idempotent)', async () => {
     mocks.integration.deleteMany.mockResolvedValue({ count: 0 });
     const res = await IntegrationDELETE(
-      req('https://markup.ashbi.ca/api/projects/proj-1/integrations/int-missing', {
+      req(`https://markup.ashbi.ca/api/projects/${PROJECT_ID}/integrations/int-missing`, {
         method: 'DELETE',
       }),
-      { params: Promise.resolve({ id: 'proj-1', integrationId: 'int-missing' }) }
+      { params: Promise.resolve({ id: PROJECT_ID, integrationId: 'int-missing' }) }
     );
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -425,15 +461,15 @@ describe('DELETE /api/projects/[id]/integrations/[integrationId]', () => {
   it('emits an audit log entry only on a real delete', async () => {
     mocks.integration.deleteMany.mockResolvedValue({ count: 1 });
     await IntegrationDELETE(
-      req('https://markup.ashbi.ca/api/projects/proj-1/integrations/int-1', {
+      req(`https://markup.ashbi.ca/api/projects/${PROJECT_ID}/integrations/int-1`, {
         method: 'DELETE',
       }),
-      { params: Promise.resolve({ id: 'proj-1', integrationId: 'int-1' }) }
+      { params: Promise.resolve({ id: PROJECT_ID, integrationId: 'int-1' }) }
     );
     expect(mocks.audit).toHaveBeenCalledWith({
-      actor: 'proj-1',
+      actor: PROJECT_ID,
       action: 'integration.remove',
-      target: 'proj-1',
+      target: PROJECT_ID,
       metadata: { integrationId: 'int-1' },
     });
   });
@@ -602,11 +638,11 @@ describe('dispatcher', () => {
 describe('POST /api/projects/[id]/integrations/test', () => {
   it('returns 400 when integrationId is missing', async () => {
     const res = await IntegrationTestPOST(
-      req('https://markup.ashbi.ca/api/projects/proj-1/integrations/test', {
+      req(`https://markup.ashbi.ca/api/projects/${PROJECT_ID}/integrations/test`, {
         method: 'POST',
         body: {},
       }),
-      { params: Promise.resolve({ id: 'proj-1' }) }
+      { params: Promise.resolve({ id: PROJECT_ID }) }
     );
     expect(res.status).toBe(400);
   });
@@ -614,11 +650,11 @@ describe('POST /api/projects/[id]/integrations/test', () => {
   it('returns 404 when the integration does not exist for the project', async () => {
     mocks.integration.findFirst.mockResolvedValue(null);
     const res = await IntegrationTestPOST(
-      req('https://markup.ashbi.ca/api/projects/proj-1/integrations/test', {
+      req(`https://markup.ashbi.ca/api/projects/${PROJECT_ID}/integrations/test`, {
         method: 'POST',
         body: { integrationId: 'int-x' },
       }),
-      { params: Promise.resolve({ id: 'proj-1' }) }
+      { params: Promise.resolve({ id: PROJECT_ID }) }
     );
     expect(res.status).toBe(404);
   });
@@ -626,18 +662,18 @@ describe('POST /api/projects/[id]/integrations/test', () => {
   it('fires the adapter, sets lastSuccessAt, returns ok:true', async () => {
     mocks.integration.findFirst.mockResolvedValue({
       id: 'int-1',
-      projectId: 'proj-1',
+      projectId: PROJECT_ID,
       kind: 'slack',
       configJson: JSON.stringify({ webhookUrl: 'https://hooks.slack.com/x' }),
-      project: { id: 'proj-1', name: 'My Site', domain: 'example.com' },
+      project: { id: PROJECT_ID, name: 'My Site', domain: 'example.com' },
     });
     mocks.integration.update.mockResolvedValue({});
     const res = await IntegrationTestPOST(
-      req('https://markup.ashbi.ca/api/projects/proj-1/integrations/test', {
+      req(`https://markup.ashbi.ca/api/projects/${PROJECT_ID}/integrations/test`, {
         method: 'POST',
         body: { integrationId: 'int-1' },
       }),
-      { params: Promise.resolve({ id: 'proj-1' }) }
+      { params: Promise.resolve({ id: PROJECT_ID }) }
     );
     expect(res.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -657,19 +693,19 @@ describe('POST /api/projects/[id]/integrations/test', () => {
   it('sets lastError on adapter failure and returns ok:false with status 200', async () => {
     mocks.integration.findFirst.mockResolvedValue({
       id: 'int-1',
-      projectId: 'proj-1',
+      projectId: PROJECT_ID,
       kind: 'slack',
       configJson: JSON.stringify({ webhookUrl: 'https://hooks.slack.com/x' }),
-      project: { id: 'proj-1', name: 'My Site', domain: 'example.com' },
+      project: { id: PROJECT_ID, name: 'My Site', domain: 'example.com' },
     });
     mocks.integration.update.mockResolvedValue({});
     fetchMock.mockResolvedValueOnce({ ok: false, status: 500, text: async () => 'oops' });
     const res = await IntegrationTestPOST(
-      req('https://markup.ashbi.ca/api/projects/proj-1/integrations/test', {
+      req(`https://markup.ashbi.ca/api/projects/${PROJECT_ID}/integrations/test`, {
         method: 'POST',
         body: { integrationId: 'int-1' },
       }),
-      { params: Promise.resolve({ id: 'proj-1' }) }
+      { params: Promise.resolve({ id: PROJECT_ID }) }
     );
     expect(res.status).toBe(200); // Always 200 — failure is in the body
     const body = await res.json();

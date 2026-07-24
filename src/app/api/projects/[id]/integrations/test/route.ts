@@ -23,7 +23,8 @@
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin } from '@/lib/auth';
+import { requireDashboardSession } from '@/lib/auth';
+import { assertProjectAccessible } from '@/lib/project-access';
 import { dispatch } from '@/lib/integrations/dispatcher';
 import { isIntegrationKind } from '@/lib/integrations/types';
 import { validateConfig } from '@/lib/integrations/validate';
@@ -33,11 +34,14 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardSession(req);
   if (authErr) return authErr;
 
   try {
     const { id: projectId } = await params;
+    const access = await assertProjectAccessible(projectId);
+    if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
+
     const body = (await req.json()) as { integrationId?: unknown };
     if (typeof body.integrationId !== 'string' || body.integrationId.length === 0) {
       return NextResponse.json({ error: 'integrationId required' }, { status: 400 });

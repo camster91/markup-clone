@@ -18,6 +18,8 @@ export default function ScreenshotView({
    *     for someone who only has the share link).
    *   - The PinThread form is disabled (no new comments).
    *   - Pin status changes (open/resolved) are blocked.
+   *   - The History tab is hidden (history is dashboard-origin
+   *     only; share viewers don't need version history).
    *   - The presence/recapture poll loops and SSE subscription are
    *     still started, but a viewer without a project-scoped
    *     identity can't trigger any writes — the network is
@@ -29,6 +31,12 @@ export default function ScreenshotView({
    * surface.
    */
   readOnly = false,
+  /**
+   * Public share token. When set (share view), appended as
+   * `?share=` on screenshot image URLs so /api/screenshots/[id]/image
+   * can authorize the anonymous viewer without a dashboard Origin.
+   */
+  shareToken = null,
 }: {
   screenshot: ScreenshotWithPins;
   pagePath: string;
@@ -40,6 +48,7 @@ export default function ScreenshotView({
    */
   projectId?: string;
   readOnly?: boolean;
+  shareToken?: string | null;
 }) {
   const [activePinId, setActivePinId] = useState<string | null>(null);
   const [pins, setPins] = useState<Pin[]>(screenshot.pins);
@@ -57,8 +66,14 @@ export default function ScreenshotView({
   // `imageKey` as a refresh signal — every successful recapture bumps
   // imageKey, and the panel re-fetches the version list so the new
   // capture shows up at the top of the grid.
+  //
+  // Share viewers (readOnly) never see the History tab — the
+  // /history route is dashboard-session gated and share viewers
+  // don't need version history.
   const [tab, setTab] = useState<'latest' | 'history'>('latest');
-  const imgUrl = `/api/screenshots/${screenshot.id}/image?v=${imageKey}`;
+  const imgUrl =
+    `/api/screenshots/${screenshot.id}/image?v=${imageKey}` +
+    (shareToken ? `&share=${encodeURIComponent(shareToken)}` : '');
 
   // === Presence (collab card) ============================================
   // We host a per-screenshot usePresence() call so the reviewer
@@ -309,20 +324,22 @@ export default function ScreenshotView({
             >
               Latest
             </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={tab === 'history'}
-              data-testid="tab-history"
-              onClick={() => setTab('history')}
-              className={`px-2 py-1 rounded text-xs font-medium ${
-                tab === 'history'
-                  ? 'bg-white text-gray-900 border border-gray-300'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              History
-            </button>
+            {!readOnly && (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === 'history'}
+                data-testid="tab-history"
+                onClick={() => setTab('history')}
+                className={`px-2 py-1 rounded text-xs font-medium ${
+                  tab === 'history'
+                    ? 'bg-white text-gray-900 border border-gray-300'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                History
+              </button>
+            )}
           </div>
           <span>
             {tab === 'latest'
@@ -459,7 +476,11 @@ export default function ScreenshotView({
         // recapture (which bumps imageKey in the recapture-status
         // hook's onUpdate) causes the panel to re-fetch and show
         // the new version at the top of the grid.
-        <HistoryPanel screenshotId={screenshot.id} refreshKey={imageKey} />
+        <HistoryPanel
+          screenshotId={screenshot.id}
+          refreshKey={imageKey}
+          shareToken={shareToken}
+        />
       )}
     </div>
   );

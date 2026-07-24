@@ -4,19 +4,57 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Mock @prisma/client BEFORE importing auth — auth depends on it via prisma.ts
-vi.mock('@/lib/prisma', () => ({
-  prisma: {
-    project: {
-      findUnique: vi.fn(),
-    },
-  },
+const authMocks = vi.hoisted(() => ({
+  project: { findUnique: vi.fn() },
+  session: { findUnique: vi.fn() },
 }));
 
-import { isDashboardOrigin, requireDashboardOrigin, requireProjectKey, generateApiKey } from '@/lib/auth';
+vi.mock('@/lib/prisma', () => ({
+  prisma: authMocks,
+}));
+
+const cookieStore = vi.hoisted(() => {
+  const data: { value?: string } = { value: undefined };
+  return {
+    data,
+    get: (name: string) =>
+      data.value !== undefined ? { name, value: data.value } : undefined,
+    set: (_n: string, value: string) => {
+      data.value = value === '' ? undefined : value;
+    },
+    delete: () => {
+      data.value = undefined;
+    },
+    has: () => data.value !== undefined,
+  };
+});
+
+vi.mock('next/headers', () => ({
+  cookies: vi.fn(async () => cookieStore),
+}));
+
+import {
+  isDashboardOrigin,
+  requireDashboardOrigin,
+  requireDashboardSession,
+  requireProjectKey,
+  generateApiKey,
+} from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 
 function makeReq(headers: Record<string, string>): Request {
   return new Request('https://markup.ashbi.ca/api/test', { headers });
+}
+
+function liveSession() {
+  return {
+    id: 'session-test-1',
+    userId: 'user-test-1',
+    token: 'test-dashboard-session',
+    expiresAt: new Date(Date.now() + 3600_000),
+    createdAt: new Date(),
+    user: { id: 'user-test-1', email: 'operator@example.com', role: 'operator' },
+  };
 }
 
 describe('isDashboardOrigin', () => {
@@ -94,17 +132,62 @@ describe('requireDashboardOrigin', () => {
   });
 });
 
+describe('requireDashboardSession', () => {
+  beforeEach(() => {
+    process.env.DASHBOARD_HOST = 'markup.ashbi.ca';
+    cookieStore.data.value = 'test-dashboard-session';
+    authMocks.session.findUnique.mockResolvedValue(liveSession());
+  });
+
+  it('returns null when Origin matches and a live session cookie is present', async () => {
+    const res = await requireDashboardSession(makeReq({ origin: 'https://markup.ashbi.ca' }));
+    expect(res).toBeNull();
+  });
+
+  it('returns 401 when Origin is wrong even with a live session', async () => {
+    const res = await requireDashboardSession(makeReq({ origin: 'https://evil.com' }));
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(401);
+  });
+
+  it('returns 401 when Origin matches but there is no session cookie', async () => {
+    cookieStore.data.value = undefined;
+    const res = await requireDashboardSession(makeReq({ origin: 'https://markup.ashbi.ca' }));
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(401);
+  });
+
+  it('returns 401 when Origin matches but the session row is missing', async () => {
+    authMocks.session.findUnique.mockResolvedValue(null);
+    const res = await requireDashboardSession(makeReq({ origin: 'https://markup.ashbi.ca' }));
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(401);
+  });
+});
+
 describe('requireProjectKey', () => {
   const mockFindUnique = prisma.project.findUnique as unknown as ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     process.env.DASHBOARD_HOST = 'markup.ashbi.ca';
     mockFindUnique.mockReset();
+    cookieStore.data.value = undefined;
+    authMocks.session.findUnique.mockResolvedValue(null);
   });
 
-  it('allows dashboard-origin requests without an X-Api-Key', async () => {
+  it('allows dashboard-origin + live session without an X-Api-Key', async () => {
+    cookieStore.data.value = 'test-dashboard-session';
+    authMocks.session.findUnique.mockResolvedValue(liveSession());
     const res = await requireProjectKey(makeReq({ origin: 'https://markup.ashbi.ca' }), 'proj-id');
     expect(res).toBeNull();
+  });
+
+  it('does NOT allow dashboard-origin alone without a session (Origin is forgeable)', async () => {
+    const res = await requireProjectKey(makeReq({ origin: 'https://markup.ashbi.ca' }), 'proj-id');
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(401);
+    const body = await res!.json();
+    expect(body.error).toBe('Missing X-Api-Key');
   });
 
   it('returns 401 if X-Api-Key is missing on a widget-origin call', async () => {

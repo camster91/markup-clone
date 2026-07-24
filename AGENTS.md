@@ -35,10 +35,11 @@ If you're an agent (human or AI), start here. Then read in this order
 - **Deploy:** `scripts/deploy.sh` to `coolify` VPS (Caddy route
   guard, `markup-net` bridge, pg_hba trust rule). See README §"VPS
   deploy flow".
-- **Auth:** `requireProjectKey` (widget) + `requireDashboardOrigin`
-  (dashboard) in `src/lib/auth.ts`. **No session-cookie auth on
-  public API routes.** All `/api/*` write paths are gated by one of
-  these.
+- **Auth:** `requireProjectKey` (widget) + `requireDashboardSession`
+ (dashboard = Origin CSRF + session cookie) in `src/lib/auth.ts`.
+ Widget writes need `X-Api-Key` unless the caller also has a live
+ dashboard session. Do not reintroduce Origin-only gates on
+ dashboard routes — Origin headers are forgeable.
 - **Tests:** Vitest, 259+/259+ passing. `npm test` and `npm run lint`
   are the real local gates; CI on this private repo is on the
   spending-limit plan and may show failures that aren't real.

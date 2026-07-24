@@ -7,24 +7,27 @@
 // button stays clickable after a successful prior delete
 // without a preflight check.
 //
-// Gated by requireDashboardOrigin like every other write
+// Gated by requireDashboardSession like every other write
 // under /api/projects/*. The widget does not (and should
 // not) ever hit this endpoint.
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin } from '@/lib/auth';
+import { requireDashboardSession } from '@/lib/auth';
 import { audit } from '@/lib/audit';
+import { assertProjectAccessible } from '@/lib/project-access';
 
 export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string; integrationId: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardSession(req);
   if (authErr) return authErr;
 
   try {
     const { id: projectId, integrationId } = await params;
+    const access = await assertProjectAccessible(projectId);
+    if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
 
     // Scoped delete: we filter on BOTH projectId and id so a
     // malicious operator can't delete an integration belonging

@@ -26,7 +26,7 @@
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin } from '@/lib/auth';
+import { requireDashboardSession } from '@/lib/auth';
 import { validateScreenshotId, validatePercent } from '@/lib/validation';
 
 // Presence TTL. Anything older than this is "offline" and the GET route
@@ -50,7 +50,7 @@ function requireUuid(value: unknown, name: string): string | null {
 }
 
 export async function POST(req: Request) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardSession(req);
   if (authErr) return authErr;
 
   let body: {
@@ -142,7 +142,7 @@ export async function POST(req: Request) {
 }
 
 export async function GET(req: Request) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardSession(req);
   if (authErr) return authErr;
 
   const url = new URL(req.url);

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { dashboardHeaders } from '@/lib/client-origin';
 
 export default function NewProjectForm() {
   const [name, setName] = useState('');
@@ -12,18 +13,24 @@ export default function NewProjectForm() {
     e.preventDefault();
     setLoading(true);
     setError('');
-    const res = await fetch('/api/projects', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, domain }),
-    });
-    if (res.ok) {
-      window.location.reload();
-    } else {
-      const data = await res.json();
+    try {
+      const res = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...dashboardHeaders() },
+        credentials: 'same-origin',
+        body: JSON.stringify({ name, domain }),
+      });
+      if (res.ok) {
+        window.location.reload();
+        return;
+      }
+      const data = await res.json().catch(() => ({} as { error?: string }));
       setError(data.error || 'Failed to create project');
+    } catch {
+      setError('Failed to create project');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   return (

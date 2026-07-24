@@ -8,6 +8,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { _resetBucket } from '@/lib/rate-limit';
+import { liveSessionRow } from '../helpers/dashboard-auth';
 
 const mocks = vi.hoisted(() => ({
   comment: { create: vi.fn() },
@@ -15,10 +16,26 @@ const mocks = vi.hoisted(() => ({
     findUnique: vi.fn(),
     update: vi.fn(),
   },
+  session: { findUnique: vi.fn() },
 }));
+
+const cookieStore = vi.hoisted(() => {
+  const data: { value?: string } = { value: 'test-dashboard-session' };
+  return {
+    data,
+    get: (name: string) => (data.value !== undefined ? { name, value: data.value } : undefined),
+    set: (_n: string, value: string) => { data.value = value === '' ? undefined : value; },
+    delete: () => { data.value = undefined; },
+    has: () => data.value !== undefined,
+  };
+});
 
 vi.mock('@/lib/prisma', () => ({
   prisma: mocks,
+}));
+
+vi.mock('next/headers', () => ({
+  cookies: vi.fn(async () => cookieStore),
 }));
 
 import { POST } from '../../src/app/api/pins/[id]/comments/route';
@@ -52,6 +69,8 @@ const params = (pinId: string) => ({ params: Promise.resolve({ id: pinId }) });
 
 beforeEach(() => {
   vi.clearAllMocks();
+  cookieStore.data.value = 'test-dashboard-session';
+  mocks.session.findUnique.mockResolvedValue(liveSessionRow());
   // Default DB behaviour: a comment row is created, the pin is not RESOLVED
   // (so we skip the reopen-on-reply update path) — that keeps each loop
   // iteration fast and the assertions on 429 straightforward.

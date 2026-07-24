@@ -1,13 +1,13 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin } from '@/lib/auth';
+import { requireDashboardSession } from '@/lib/auth';
 import { validatePinId } from '@/lib/validation';
 import { audit } from '@/lib/audit';
 
 // DELETE /api/annotations/[id]
 //
 // Delete a single annotation by id. Auth: dashboard-origin only
-// (`requireDashboardOrigin`). The widget has no use case for deleting
+// (`requireDashboardSession`). The widget has no use case for deleting
 // annotations — once submitted, the mark is part of the pin's history
 // and removing it would let a client walk back a comment. The
 // dashboard can remove a single annotation (e.g. a stray mark the
@@ -22,7 +22,7 @@ export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardSession(req);
   if (authErr) return authErr;
 
   try {

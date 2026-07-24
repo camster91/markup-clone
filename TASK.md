@@ -1,7 +1,7 @@
 # TASK.md — markup-clone task board
 
-**Last updated:** 2026-07-23 (initial board, parsed from `git log`
-on `origin/main` HEAD `118c39e`).
+**Last updated:** 2026-07-24 (security audit test updates for
+`requireDashboardSession` + SSRF guards).
 
 **Format:** each item has a status (`shipped`, `ready`, `blocked`,
 `parked`), a one-line description, and the source — git commit SHA
@@ -118,6 +118,12 @@ the merge commit / PR that landed each:
 - Public read-only project share links with revoke (`/api/projects/[id]/share`)
 - Recapture screenshot version history (`model ScreenshotVersion`)
 - PATCH / DELETE 404s on missing records (audit 2026-06-17)
+- **Dashboard session gate (2026-07-24 security audit):** dashboard
+  API routes use `requireDashboardSession` (Origin CSRF +
+  `markup.session` cookie). Origin alone no longer bypasses
+  `requireProjectKey`. Outbound integration URLs pass
+  `assertSafeOutboundUrl` (SSRF). Integration/unit tests updated
+  accordingly (`tests/helpers/dashboard-auth.ts`).
 
 ---
 

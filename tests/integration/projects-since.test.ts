@@ -17,22 +17,34 @@
 // can assert the response shape end-to-end.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { liveSessionRow } from '../helpers/dashboard-auth';
 
 const mocks = vi.hoisted(() => ({
   project: { findMany: vi.fn() },
-  // The route now calls getCallerUser() to scope the result to the
-  // caller's teams. The default mock returns no session, which
-  // collapses to the "no teams" branch — the where clause becomes
-  // { teamId: null } so the test fixtures (which don't have a
-  // teamId column populated) still match. Tests that need a
-  // logged-in caller with team memberships override the session +
-  // teamMember mocks per-test.
-  session: { findUnique: vi.fn().mockResolvedValue(null) },
+  // requireDashboardSession needs a live session. With a session but
+  // zero team memberships, getProjectScopeWhere still returns
+  // { teamId: null } so the fixtures (unscoped projects) match.
+  session: { findUnique: vi.fn() },
   teamMember: { findMany: vi.fn().mockResolvedValue([]) },
 }));
 
+const cookieStore = vi.hoisted(() => {
+  const data: { value?: string } = { value: 'test-dashboard-session' };
+  return {
+    data,
+    get: (name: string) => (data.value !== undefined ? { name, value: data.value } : undefined),
+    set: (_n: string, value: string) => { data.value = value === '' ? undefined : value; },
+    delete: () => { data.value = undefined; },
+    has: () => data.value !== undefined,
+  };
+});
+
 vi.mock('@/lib/prisma', () => ({
   prisma: mocks,
+}));
+
+vi.mock('next/headers', () => ({
+  cookies: vi.fn(async () => cookieStore),
 }));
 
 import { GET } from '../../src/app/api/projects/route';
@@ -158,6 +170,9 @@ const deltaTree = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  cookieStore.data.value = 'test-dashboard-session';
+  mocks.session.findUnique.mockResolvedValue(liveSessionRow());
+  mocks.teamMember.findMany.mockResolvedValue([]);
 });
 
 describe('GET /api/projects — ?since= delta polling', () => {

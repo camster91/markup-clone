@@ -24,10 +24,14 @@
 // the rendered not-found.tsx UI in the success path.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { liveSessionRow } from '../helpers/dashboard-auth';
 
 // Mock prisma BEFORE importing routes. vi.mock is hoisted, so the
 // factory can't reference module-level vars. Use vi.hoisted() to get
 // shared state.
+const PROJECT_ID = '11111111-1111-1111-1111-111111111111';
+const MISSING_PROJECT_ID = '22222222-2222-2222-2222-222222222222';
+
 const mocks = vi.hoisted(() => ({
   project: {
     findUnique: vi.fn(),
@@ -41,7 +45,20 @@ const mocks = vi.hoisted(() => ({
   pin: { delete: vi.fn() },
   subscriber: { findMany: vi.fn(), create: vi.fn(), findUnique: vi.fn(), delete: vi.fn() },
   auditLog: { create: vi.fn().mockResolvedValue({ id: 'audit-log-1' }) },
+  session: { findUnique: vi.fn() },
+  teamMember: { findFirst: vi.fn().mockResolvedValue(null) },
 }));
+
+const cookieStore = vi.hoisted(() => {
+  const data: { value?: string } = { value: 'test-dashboard-session' };
+  return {
+    data,
+    get: (name: string) => (data.value !== undefined ? { name, value: data.value } : undefined),
+    set: (_n: string, value: string) => { data.value = value === '' ? undefined : value; },
+    delete: () => { data.value = undefined; },
+    has: () => data.value !== undefined,
+  };
+});
 
 vi.mock('@/lib/prisma', () => ({
   prisma: mocks,
@@ -63,9 +80,8 @@ vi.mock('next/navigation', () => ({
   },
 }));
 
-// next/headers is used by the share page to read IP / User-Agent.
-// We return a stub so the audit log can record something
-// non-undefined.
+// next/headers is used by the share page to read IP / User-Agent,
+// and by requireAuth (via requireDashboardSession) for the session cookie.
 const headerStore: Record<string, string> = {
   'x-forwarded-for': '203.0.113.42',
   'user-agent': 'vitest-share',
@@ -74,6 +90,7 @@ vi.mock('next/headers', () => ({
   headers: () => Promise.resolve({
     get: (k: string) => headerStore[k.toLowerCase()] ?? null,
   }),
+  cookies: vi.fn(async () => cookieStore),
 }));
 
 import { POST as shareCreate, DELETE as shareDelete } from '../../src/app/api/projects/[id]/share/route';
@@ -95,7 +112,7 @@ function req(method: string, headers: Record<string, string> = {}): NextRequest 
     'X-CSRF-Token': CSRF_TOKEN,
     cookie: `markup.csrf=${CSRF_TOKEN}`,
   };
-  return new NextRequest(`https://markup.ashbi.ca/api/projects/proj-1/share`, {
+  return new NextRequest(`https://markup.ashbi.ca/api/projects/${PROJECT_ID}/share`, {
     method,
     headers: { 'Content-Type': 'application/json', ...baseHeaders, ...headers },
   });
@@ -104,6 +121,9 @@ function req(method: string, headers: Record<string, string> = {}): NextRequest 
 beforeEach(() => {
   vi.clearAllMocks();
   notFoundCalls.length = 0;
+  cookieStore.data.value = 'test-dashboard-session';
+  mocks.session.findUnique.mockResolvedValue(liveSessionRow());
+  mocks.teamMember.findFirst.mockResolvedValue(null);
   mocks.auditLog.create.mockResolvedValue({ id: 'audit-log-1' });
 });
 
@@ -113,7 +133,7 @@ beforeEach(() => {
 describe('POST /api/projects/[id]/share', () => {
   it('returns 401 when called from a non-dashboard origin', async () => {
     const res = await shareCreate(req('POST', {}),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     expect(res.status).toBe(401);
     // The DB must NOT be hit on auth failure.
     expect(mocks.project.findUnique).not.toHaveBeenCalled();
@@ -122,19 +142,19 @@ describe('POST /api/projects/[id]/share', () => {
   it('returns 404 when the project does not exist', async () => {
     mocks.project.findUnique.mockResolvedValue(null);
     const res = await shareCreate(req('POST', { origin: ORIGIN }),
-      { params: Promise.resolve({ id: 'proj-missing' }) });
+      { params: Promise.resolve({ id: MISSING_PROJECT_ID }) });
     expect(res.status).toBe(404);
   });
 
   it('mints a base64url shareToken and returns a shareUrl', async () => {
-    mocks.project.findUnique.mockResolvedValue({ id: 'proj-1', name: 'Test' });
+    mocks.project.findUnique.mockResolvedValue({ id: PROJECT_ID, name: 'Test', teamId: null });
     mocks.project.update.mockImplementation(async ({ where, data }: any) => ({
       id: where.id,
       name: 'Test',
       shareToken: data.shareToken,
     }));
     const res = await shareCreate(req('POST', { origin: ORIGIN }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     expect(res.status).toBe(200);
     const body = await res.json();
     // 32 bytes base64url-encoded = 43 chars (no padding) — accept
@@ -144,7 +164,7 @@ describe('POST /api/projects/[id]/share', () => {
     // The update must have written the same token to the project row.
     expect(mocks.project.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'proj-1' },
+        where: { id: PROJECT_ID },
         data: expect.objectContaining({ shareToken: body.shareToken }),
       })
     );
@@ -153,15 +173,15 @@ describe('POST /api/projects/[id]/share', () => {
   it('rotates an existing token (overwrites the previous one)', async () => {
     // The project already has a token. The route should still issue
     // a fresh one and overwrite it — that's the "Generate" semantics.
-    mocks.project.findUnique.mockResolvedValue({ id: 'proj-1', name: 'Test' });
+    mocks.project.findUnique.mockResolvedValue({ id: PROJECT_ID, name: 'Test', teamId: null });
     mocks.project.update.mockImplementation(async ({ data }: any) => ({
-      id: 'proj-1', name: 'Test', shareToken: data.shareToken,
+      id: PROJECT_ID, name: 'Test', teamId: null, shareToken: data.shareToken,
     }));
     const r1 = await shareCreate(req('POST', { origin: ORIGIN }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     const t1 = (await r1.json()).shareToken;
     const r2 = await shareCreate(req('POST', { origin: ORIGIN }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     const t2 = (await r2.json()).shareToken;
     // Two POSTs in a row should produce distinct tokens with
     // overwhelming probability (256 bits of entropy each).
@@ -174,13 +194,13 @@ describe('POST /api/projects/[id]/share', () => {
     // anyone with /api/audit dashboard access. The fix is the same
     // pattern as the apiKey redaction in PATCH /api/projects/[id]:
     // record a "was created" marker instead.
-    mocks.project.findUnique.mockResolvedValue({ id: 'proj-1', name: 'Test' });
+    mocks.project.findUnique.mockResolvedValue({ id: PROJECT_ID, name: 'Test', teamId: null });
     mocks.project.update.mockImplementation(async ({ data }: any) => ({
-      id: 'proj-1', name: 'Test', shareToken: data.shareToken,
+      id: PROJECT_ID, name: 'Test', teamId: null, shareToken: data.shareToken,
     }));
     mocks.auditLog.create.mockClear();
     const res = await shareCreate(req('POST', { origin: ORIGIN }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     expect(res.status).toBe(200);
     // Drain the microtask queue so the fire-and-forget call lands.
     await new Promise((r) => setTimeout(r, 0));
@@ -205,30 +225,30 @@ describe('DELETE /api/projects/[id]/share', () => {
 
   it('returns 401 when called from a non-dashboard origin', async () => {
     const res = await shareDelete(req('DELETE', {}),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     expect(res.status).toBe(401);
   });
 
   it('returns 404 when the project does not exist', async () => {
     mocks.project.findUnique.mockResolvedValue(null);
     const res = await shareDelete(req('DELETE', { origin: ORIGIN }),
-      { params: Promise.resolve({ id: 'proj-missing' }) });
+      { params: Promise.resolve({ id: MISSING_PROJECT_ID }) });
     expect(res.status).toBe(404);
   });
 
   it('revokes an active token by setting it back to null', async () => {
     mocks.project.findUnique.mockResolvedValue({
-      id: 'proj-1', name: 'Test', shareToken: 'existing-token-xxx',
+      id: PROJECT_ID, name: 'Test', teamId: null, shareToken: 'existing-token-xxx',
     });
     mocks.project.update.mockResolvedValue({});
     const res = await shareDelete(req('DELETE', { origin: ORIGIN }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.revoked).toBe(true);
     expect(mocks.project.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'proj-1' },
+        where: { id: PROJECT_ID },
         data: { shareToken: null },
       })
     );
@@ -236,11 +256,11 @@ describe('DELETE /api/projects/[id]/share', () => {
 
   it('is idempotent — revoking a project with no token returns 200, revoked:false', async () => {
     mocks.project.findUnique.mockResolvedValue({
-      id: 'proj-1', name: 'Test', shareToken: null,
+      id: PROJECT_ID, name: 'Test', teamId: null, shareToken: null,
     });
     // No update should be issued — there's nothing to revoke.
     const res = await shareDelete(req('DELETE', { origin: ORIGIN }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.revoked).toBe(false);
@@ -249,12 +269,12 @@ describe('DELETE /api/projects/[id]/share', () => {
 
   it('logs a project.share.revoke audit entry on a real revoke', async () => {
     mocks.project.findUnique.mockResolvedValue({
-      id: 'proj-1', name: 'Test', shareToken: 'existing-token-xxx',
+      id: PROJECT_ID, name: 'Test', teamId: null, shareToken: 'existing-token-xxx',
     });
     mocks.project.update.mockResolvedValue({});
     mocks.auditLog.create.mockClear();
     const res = await shareDelete(req('DELETE', { origin: ORIGIN }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: PROJECT_ID }) });
     expect(res.status).toBe(200);
     await new Promise((r) => setTimeout(r, 0));
     expect(mocks.auditLog.create).toHaveBeenCalled();

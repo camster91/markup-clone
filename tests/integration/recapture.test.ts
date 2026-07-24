@@ -9,16 +9,30 @@
 // self-throttled across the dashboard.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { liveSessionRow } from '../helpers/dashboard-auth';
 
 const mocks = vi.hoisted(() => ({
   consume: vi.fn().mockReturnValue({ ok: true, remaining: 5 }),
   spawn: vi.fn(),
   audit: vi.fn(),
+  session: { findUnique: vi.fn() },
 }));
+
+const cookieStore = vi.hoisted(() => {
+  const data: { value?: string } = { value: 'test-dashboard-session' };
+  return {
+    data,
+    get: (name: string) => (data.value !== undefined ? { name, value: data.value } : undefined),
+    set: (_n: string, value: string) => { data.value = value === '' ? undefined : value; },
+    delete: () => { data.value = undefined; },
+    has: () => data.value !== undefined,
+  };
+});
 
 vi.mock('@/lib/prisma', () => ({
   prisma: {
     screenshot: { findUnique: vi.fn() },
+    session: mocks.session,
   },
 }));
 
@@ -28,6 +42,10 @@ vi.mock('@/lib/rate-limit', () => ({
 
 vi.mock('@/lib/audit', () => ({
   audit: mocks.audit,
+}));
+
+vi.mock('next/headers', () => ({
+  cookies: vi.fn(async () => cookieStore),
 }));
 
 // Mock child_process.spawn with a fake child that exposes the same API
@@ -84,6 +102,8 @@ import { POST } from '../../src/app/api/screenshots/[id]/recapture/route';
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  cookieStore.data.value = 'test-dashboard-session';
+  mocks.session.findUnique.mockResolvedValue(liveSessionRow());
   mocks.consume.mockReturnValue({ ok: true, remaining: 5 });
   // Default: a successful spawn that exits 0. The exit event fires on
   // the next microtask, by which time the route has already returned

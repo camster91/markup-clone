@@ -13,6 +13,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { _resetBucket } from '@/lib/rate-limit';
+import { liveSessionRow } from '../helpers/dashboard-auth';
 
 const mocks = vi.hoisted(() => ({
   comment: { create: vi.fn() },
@@ -24,13 +25,26 @@ const mocks = vi.hoisted(() => ({
   audit: vi.fn(),
   sendMentionEmail: vi.fn(),
   fetch: vi.fn(),
+  session: { findUnique: vi.fn() },
 }));
+
+const cookieStore = vi.hoisted(() => {
+  const data: { value?: string } = { value: 'test-dashboard-session' };
+  return {
+    data,
+    get: (name: string) => (data.value !== undefined ? { name, value: data.value } : undefined),
+    set: (_n: string, value: string) => { data.value = value === '' ? undefined : value; },
+    delete: () => { data.value = undefined; },
+    has: () => data.value !== undefined,
+  };
+});
 
 vi.mock('@/lib/prisma', () => ({
   prisma: {
     comment: mocks.comment,
     pin: mocks.pin,
     user: mocks.user,
+    session: mocks.session,
   },
 }));
 
@@ -40,6 +54,10 @@ vi.mock('@/lib/audit', () => ({
 
 vi.mock('@/lib/email', () => ({
   sendMentionEmail: mocks.sendMentionEmail,
+}));
+
+vi.mock('next/headers', () => ({
+  cookies: vi.fn(async () => cookieStore),
 }));
 
 // Import after the mocks so the route picks them up.
@@ -97,6 +115,8 @@ function setupStandardMocks(opts: {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  cookieStore.data.value = 'test-dashboard-session';
+  mocks.session.findUnique.mockResolvedValue(liveSessionRow());
   // Provide a default fetch stub so the mention email path (which
   // makes a Mailgun call) doesn't blow up if a test forgets to mock
   // it. The route is fire-and-forget so this is just safety.
