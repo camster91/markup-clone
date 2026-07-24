@@ -1,7 +1,8 @@
 # TASK.md — markup-clone task board
 
-**Last updated:** 2026-07-23 (initial board, parsed from `git log`
-on `origin/main` HEAD `118c39e`).
+**Last updated:** 2026-07-24 (production security audit Critical/High
+patches on `cursor/production-security-audit-4eb8`; see
+`docs/qa/2026-07-24-production-security-audit.md`).
 
 **Format:** each item has a status (`shipped`, `ready`, `blocked`,
 `parked`), a one-line description, and the source — git commit SHA
