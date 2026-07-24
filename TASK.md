@@ -120,7 +120,7 @@ the merge commit / PR that landed each:
 - PATCH / DELETE 404s on missing records (audit 2026-06-17)
 
 ### Production security audit — Critical/High client + media (branch `cursor/production-security-audit-4eb8`)
-- **Status:** shipped (this branch) — commit noted below after push
+- **Status:** shipped · **Commit:** `d1cd056`
 - DashboardPoller delta upsert-by-id (empty delta no longer wipes list)
 - Presence GET always full TTL list (dropped `?since=`)
 - Removed client-side `audit()` from `useRecaptureStatus`
