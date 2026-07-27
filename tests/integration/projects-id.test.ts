@@ -57,7 +57,7 @@ function req(method: string, headers: Record<string, string> = {}): NextRequest 
     'X-CSRF-Token': CSRF_TOKEN,
     cookie: `markup.csrf=${CSRF_TOKEN}`,
   };
-  return new NextRequest(`https://markup.ashbi.ca/api/projects/proj-1`, {
+  return new NextRequest(`https://markup.ashbi.ca/api/projects/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa`, {
     method,
     headers: { 'Content-Type': 'application/json', ...baseHeaders, ...headers },
   });
@@ -68,7 +68,7 @@ function reqWithBody(method: string, body: unknown, headers: Record<string, stri
     'X-CSRF-Token': CSRF_TOKEN,
     cookie: `markup.csrf=${CSRF_TOKEN}`,
   };
-  return new NextRequest(`https://markup.ashbi.ca/api/projects/proj-1`, {
+  return new NextRequest(`https://markup.ashbi.ca/api/projects/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa`, {
     method,
     headers: { 'Content-Type': 'application/json', ...baseHeaders, ...headers },
     body: JSON.stringify(body),
@@ -80,7 +80,7 @@ function reqWithBody(method: string, body: unknown, headers: Record<string, stri
 // a different shape override mocks.project.findUnique per-test.
 function setUnscopedProject() {
   mocks.project.findUnique.mockResolvedValue({
-    id: 'proj-1', name: 'Test', domain: 'example.com', teamId: null,
+    id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', name: 'Test', domain: 'example.com', teamId: null,
   });
 }
 
@@ -94,14 +94,14 @@ describe('DELETE /api/projects/[id]', () => {
 
   it('returns 401 when called from a non-dashboard origin', async () => {
     const res = await DELETE(req('DELETE', {}),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
     expect(res.status).toBe(401);
   });
 
   it('returns 404 when the project does not exist', async () => {
     mocks.project.findUnique.mockResolvedValue(null);
     const res = await DELETE(req('DELETE', { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-missing' }) });
+      { params: Promise.resolve({ id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' }) });
     expect(res.status).toBe(404);
   });
 
@@ -120,10 +120,10 @@ describe('DELETE /api/projects/[id]', () => {
       { storageKey: 'abc123.png' },
       { storageKey: 'def456.png' },
     ]);
-    mocks.project.delete.mockResolvedValue({ id: 'proj-1' });
+    mocks.project.delete.mockResolvedValue({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' });
 
     const res = await DELETE(req('DELETE', { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.deleted).toBe(true);
@@ -133,10 +133,10 @@ describe('DELETE /api/projects/[id]', () => {
     // and counts as "skip"). The real behavior on the live host is: the
     // unlink succeeds → count increments. We assert the structure here; the
     // actual count is a function of the file system state, not the test.
-    expect(mocks.project.delete).toHaveBeenCalledWith({ where: { id: 'proj-1' } });
+    expect(mocks.project.delete).toHaveBeenCalledWith({ where: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' } });
     // findMany should have been called with the project id
     expect(mocks.screenshot.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { page: { projectId: 'proj-1' } } })
+      expect.objectContaining({ where: { page: { projectId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' } } })
     );
   });
 
@@ -148,10 +148,10 @@ describe('DELETE /api/projects/[id]', () => {
     // API surface distinguishes missing from forbidden, unlike
     // the page surface).
     mocks.project.findUnique.mockResolvedValue({
-      id: 'proj-1', name: 'T', domain: 't.com', teamId: 'team-1',
+      id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', name: 'T', domain: 't.com', teamId: 'team-1',
     });
     const res = await DELETE(req('DELETE', { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
     expect(res.status).toBe(403);
     expect(mocks.project.delete).not.toHaveBeenCalled();
   });
@@ -169,18 +169,18 @@ describe('PATCH /api/projects/[id]', () => {
 
   it('returns 401 when called from a non-dashboard origin', async () => {
     const res = await PATCH(reqWithBody('PATCH', { name: 'New' }, {}),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
     expect(res.status).toBe(401);
   });
 
   it('renames a project when name is provided', async () => {
     mocks.project.update.mockResolvedValue({
-      id: 'proj-1', name: 'New Name', domain: 'example.com',
+      id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', name: 'New Name', domain: 'example.com',
       apiKey: 'mk_xx', createdAt: new Date(), updatedAt: new Date(),
       pages: [], subscribers: [],
     });
     const res = await PATCH(reqWithBody('PATCH', { name: 'New Name' }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.name).toBe('New Name');
@@ -193,12 +193,12 @@ describe('PATCH /api/projects/[id]', () => {
 
   it('regenerates the apiKey when regenerateKey is true', async () => {
     mocks.project.update.mockResolvedValue({
-      id: 'proj-1', name: 'Test', domain: 'example.com',
+      id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', name: 'Test', domain: 'example.com',
       apiKey: 'mk_NEWKEY123', createdAt: new Date(), updatedAt: new Date(),
       pages: [], subscribers: [],
     });
     const res = await PATCH(reqWithBody('PATCH', { regenerateKey: true }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
     expect(res.status).toBe(200);
     const body = await res.json();
     // The mocked apiKey is what we set; the test below validates the shape
@@ -209,12 +209,12 @@ describe('PATCH /api/projects/[id]', () => {
   it('regenerates the apiKey with mk_ prefix and 40 hex chars (real generation)', async () => {
     // Use a different mock for this one that calls through to the real generateApiKey
     mocks.project.update.mockImplementation(async ({ data }) => ({
-      id: 'proj-1', name: 'Test', domain: 'example.com',
+      id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', name: 'Test', domain: 'example.com',
       apiKey: data.apiKey || 'mk_xx', createdAt: new Date(), updatedAt: new Date(),
       pages: [], subscribers: [],
     }));
     const res = await PATCH(reqWithBody('PATCH', { regenerateKey: true }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.apiKey).toMatch(/^mk_[0-9a-f]{40}$/);
@@ -222,12 +222,12 @@ describe('PATCH /api/projects/[id]', () => {
 
   it('handles both name and regenerateKey in the same call', async () => {
     mocks.project.update.mockResolvedValue({
-      id: 'proj-1', name: 'New Name', domain: 'example.com',
+      id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', name: 'New Name', domain: 'example.com',
       apiKey: 'mk_NEWKEY456', createdAt: new Date(), updatedAt: new Date(),
       pages: [], subscribers: [],
     });
     const res = await PATCH(reqWithBody('PATCH', { name: 'New Name', regenerateKey: true }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
     expect(res.status).toBe(200);
     const call = mocks.project.update.mock.calls[0][0];
     expect(call.data.name).toBe('New Name');
@@ -236,27 +236,27 @@ describe('PATCH /api/projects/[id]', () => {
 
   it('rejects body without name or regenerateKey (no-op is a 400)', async () => {
     const res = await PATCH(reqWithBody('PATCH', {}, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
     // Empty body should NOT change anything and is likely a 400 to surface the bug
     expect(res.status).toBe(400);
   });
 
   it('rejects name that is a non-string with 400', async () => {
     const res = await PATCH(reqWithBody('PATCH', { name: 42 }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
     expect(res.status).toBe(400);
   });
 
   it('rejects name that is too long with 400 (DoS guard)', async () => {
     const longName = 'x'.repeat(201);
     const res = await PATCH(reqWithBody('PATCH', { name: longName }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
     expect(res.status).toBe(400);
   });
 
   it('rejects empty name with 400', async () => {
     const res = await PATCH(reqWithBody('PATCH', { name: '' }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
     expect(res.status).toBe(400);
   });
 
@@ -266,7 +266,7 @@ describe('PATCH /api/projects/[id]', () => {
     // metadata. That meant GET /api/audit could leak the new key to anyone
     // with dashboard access. The fix: record `apiKey: 'rotated'` instead.
     mocks.project.update.mockImplementation(async ({ data }: any) => ({
-      id: 'proj-1', name: 'Test', domain: 'example.com',
+      id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', name: 'Test', domain: 'example.com',
       apiKey: data.apiKey || 'mk_xx', createdAt: new Date(), updatedAt: new Date(),
       pages: [], subscribers: [],
     }));
@@ -275,7 +275,7 @@ describe('PATCH /api/projects/[id]', () => {
     mocks.auditLog.create.mockClear();
     mocks.auditLog.create.mockResolvedValue({ id: 'audit-log-1' });
     const res = await PATCH(reqWithBody('PATCH', { regenerateKey: true }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
     expect(res.status).toBe(200);
     // Drain the microtask queue so the fire-and-forget call has been recorded.
     await new Promise((r) => setTimeout(r, 0));
@@ -303,7 +303,7 @@ describe('PATCH /api/projects/[id]', () => {
 
   it('rejects name=null with 400', async () => {
     const res = await PATCH(reqWithBody('PATCH', { name: null }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toMatch(/string/);
@@ -313,7 +313,7 @@ describe('PATCH /api/projects/[id]', () => {
 
   it('rejects name with a null byte with 400 (defense in depth)', async () => {
     const res = await PATCH(reqWithBody('PATCH', { name: 'x\u0000y' }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toMatch(/null/);
@@ -322,7 +322,7 @@ describe('PATCH /api/projects/[id]', () => {
 
   it('rejects name that is 201 chars (one over the cap) with 400', async () => {
     const res = await PATCH(reqWithBody('PATCH', { name: 'a'.repeat(201) }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toMatch(/200/);
@@ -334,10 +334,10 @@ describe('PATCH /api/projects/[id]', () => {
     // is only accessible to a member of that team. The mock
     // returns a non-null teamId and no session → 403.
     mocks.project.findUnique.mockResolvedValue({
-      id: 'proj-1', name: 'T', domain: 't.com', teamId: 'team-1',
+      id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', name: 'T', domain: 't.com', teamId: 'team-1',
     });
     const res = await PATCH(reqWithBody('PATCH', { name: 'New' }, { origin: 'https://markup.ashbi.ca' }),
-      { params: Promise.resolve({ id: 'proj-1' }) });
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
     expect(res.status).toBe(403);
     expect(mocks.project.update).not.toHaveBeenCalled();
   });

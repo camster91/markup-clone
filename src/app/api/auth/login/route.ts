@@ -10,10 +10,11 @@
 // check.
 //
 // Body: { email: string, password: string }
-// 200:  { user: { id, email, role }, sessionToken: string }
+// 200:  { user: { id, email, role } }  (sessionToken is cookie-only)
 // 400:  missing/invalid body
 // 401:  wrong email or wrong password (deliberately the same error
 //       and status so an attacker cannot enumerate emails)
+// 429:  rate-limited (per-IP and per-email buckets)
 //
 // Cookie attributes:
 //   - HttpOnly: yes — never exposed to JS (no XSS exfiltration)
@@ -25,9 +26,19 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { SESSION_COOKIE, SESSION_TTL_SECONDS } from '@/lib/auth';
 import { verifyPassword } from '@/lib/password';
+import { consume } from '@/lib/rate-limit';
+import { ensureCsrfCookie } from '@/lib/csrf';
 import { randomBytes } from 'crypto';
 
 export const dynamic = 'force-dynamic';
+
+function clientIp(req: Request): string {
+  return (
+    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+    req.headers.get('x-real-ip') ||
+    'unknown'
+  );
+}
 
 export async function POST(req: Request) {
   let body: { email?: unknown; password?: unknown };
@@ -49,6 +60,26 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'email and password required' }, { status: 400 });
   }
   const email = body.email.toLowerCase();
+
+  // Rate-limit before the password check so a brute-force attempt
+  // burns a token even on wrong passwords. Two buckets: per-IP and
+  // per-email. maxTokens 10 + refillRate 0.1 ≈ 10 bursts then ~1
+  // attempt every 10s.
+  const ip = clientIp(req);
+  const ipLimit = consume(`login:ip:${ip}`, { maxTokens: 10, refillRate: 0.1 });
+  if (!ipLimit.ok) {
+    return NextResponse.json(
+      { error: 'Too many requests' },
+      { status: 429, headers: { 'Retry-After': String(ipLimit.retryAfterSec) } }
+    );
+  }
+  const emailLimit = consume(`login:email:${email}`, { maxTokens: 10, refillRate: 0.1 });
+  if (!emailLimit.ok) {
+    return NextResponse.json(
+      { error: 'Too many requests' },
+      { status: 429, headers: { 'Retry-After': String(emailLimit.retryAfterSec) } }
+    );
+  }
 
   // Look up the user. We do NOT distinguish "no such email" from
   // "wrong password" in the response — the same 401 with the same
@@ -86,14 +117,18 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'failed to create session' }, { status: 500 });
   }
 
+  // Issue a CSRF cookie so subsequent dashboard writes have a
+  // double-submit token available to the client.
+  await ensureCsrfCookie();
+
   // Set the session cookie. SameSite=Strict + HttpOnly + Secure-in-prod
   // is the cookie-attribute trio that the task spec calls for; the
   // Secure flag is gated on NODE_ENV so local dev (http://localhost)
-  // still works.
+  // still works. The session token is cookie-only — never returned in
+  // the JSON body (XSS would otherwise exfiltrate it from the response).
   const res = NextResponse.json(
     {
       user: { id: user.id, email: user.email, role: user.role },
-      sessionToken: session.token,
     },
     { status: 200 }
   );

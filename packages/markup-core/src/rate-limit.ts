@@ -78,6 +78,11 @@ export function consume(
   key: string,
   opts: Partial<RateLimiterOptions> = {}
 ): ConsumeResult {
+  // Every route calls `consume()` directly (not createRateLimiter).
+  // Without starting cleanup here, the Map grows without bound —
+  // one bucket per pinId / screenshotId / origin forever.
+  ensureCleanup();
+
   const { maxTokens, refillRate } = { ...DEFAULT_OPTIONS, ...opts };
   const now = Date.now();
 

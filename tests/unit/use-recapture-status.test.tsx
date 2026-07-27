@@ -31,10 +31,8 @@
 //      would fire a React warning, which we surface as a test failure
 //      via vi.spyOn(console, 'error').
 //
-// We also assert that the hook emits audit entries on the success /
-// failure / spawn-error transitions, since the task body explicitly
-// requires "audit-log emission on success/failure/spawn_error must
-// still happen (call audit() from the hook, not the component)".
+// Audit rows for recapture are written by the server route — the
+// client hook must NOT call audit().
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createRoot } from 'react-dom/client';
@@ -45,14 +43,6 @@ import { useRecaptureStatus, type UseRecaptureStatusResult } from '@/lib/hooks/u
 // Silence the "current testing environment is not configured to support act(...)"
 // warning that React 19 emits when not running inside @testing-library/react.
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-const mocks = vi.hoisted(() => ({
-  audit: vi.fn(),
-}));
-
-vi.mock('@/lib/audit', () => ({
-  audit: mocks.audit,
-}));
 
 const SCREENSHOT_ID = '11111111-1111-1111-1111-111111111111';
 const INITIAL_CAPTURED_AT = '2026-06-14T15:00:00.000Z';
@@ -162,7 +152,6 @@ describe('useRecaptureStatus', () => {
 
   beforeEach(() => {
     originalFetch = global.fetch;
-    mocks.audit.mockReset();
     // Capture any "setState on unmounted" warnings or other React
     // errors so we can fail the test on the abort-on-unmount assertion.
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -238,14 +227,6 @@ describe('useRecaptureStatus', () => {
         height: 721,
         capturedAt: NEW_CAPTURED_AT,
       });
-      // Success audit entry fired.
-      expect(mocks.audit).toHaveBeenCalledWith(
-        expect.objectContaining({
-          action: 'screenshot.recapture',
-          target: SCREENSHOT_ID,
-          metadata: expect.objectContaining({ status: 'ok' }),
-        })
-      );
     } finally {
       hook.unmount();
     }
@@ -280,11 +261,6 @@ describe('useRecaptureStatus', () => {
       expect(hook.current.status).toBe('error');
       expect(hook.current.error).toMatch(/Timed out/i);
       expect(hook.current.isStale).toBe(false);
-      // No success audit on timeout.
-      const okCall = mocks.audit.mock.calls.find(
-        (c) => (c[0] as { metadata?: { status?: string } }).metadata?.status === 'ok'
-      );
-      expect(okCall).toBeUndefined();
     } finally {
       hook.unmount();
     }
@@ -387,7 +363,7 @@ describe('useRecaptureStatus', () => {
     expect(setStateWarnings).toEqual([]);
   });
 
-  it('records an audit entry on spawn_error when the recapture POST fails', async () => {
+  it('sets status=error when the recapture POST fails (no client audit)', async () => {
     global.fetch = makeFetchMock({
       recaptureStatus: 500,
       defaultRecaptureBody: { error: 'spawn exploded' },
@@ -406,13 +382,7 @@ describe('useRecaptureStatus', () => {
       expect(hook.observations.some((o) => o.status === 'error')).toBe(true);
       const lastErrorObservation = [...hook.observations].reverse().find((o) => o.status === 'error');
       expect(lastErrorObservation).toBeDefined();
-      expect(mocks.audit).toHaveBeenCalledWith(
-        expect.objectContaining({
-          action: 'screenshot.recapture',
-          target: SCREENSHOT_ID,
-          metadata: expect.objectContaining({ status: 'spawn_error' }),
-        })
-      );
+      expect(hook.current.error).toMatch(/spawn exploded|HTTP 500/i);
     } finally {
       hook.unmount();
     }

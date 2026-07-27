@@ -1,7 +1,8 @@
 # TASK.md — markup-clone task board
 
-**Last updated:** 2026-07-23 (initial board, parsed from `git log`
-on `origin/main` HEAD `118c39e`).
+**Last updated:** 2026-07-24 (production security audit Critical/High
+patches on `cursor/production-security-audit-4eb8`; see
+`docs/qa/2026-07-24-production-security-audit.md`).
 
 **Format:** each item has a status (`shipped`, `ready`, `blocked`,
 `parked`), a one-line description, and the source — git commit SHA
@@ -118,6 +119,29 @@ the merge commit / PR that landed each:
 - Public read-only project share links with revoke (`/api/projects/[id]/share`)
 - Recapture screenshot version history (`model ScreenshotVersion`)
 - PATCH / DELETE 404s on missing records (audit 2026-06-17)
+
+### Production security audit — Critical/High client + media (branch `cursor/production-security-audit-4eb8`)
+- **Status:** shipped · **Commit:** `0930aef`
+- DashboardPoller delta upsert-by-id (empty delta no longer wipes list)
+- Presence GET always full TTL list (dropped `?since=`)
+- Removed client-side `audit()` from `useRecaptureStatus`
+- Login: cookie-only session token, IP/email rate limit, CSRF cookie
+- `dashboardHeaders()` sends CSRF double-submit header
+- Screenshot `/image` + `/history` gated (dashboard origin OR `?share=`)
+- Home/share pages redact `apiKey` for anonymous / public viewers
+- NewProjectForm try/catch/finally around create fetch
+
+### Production security audit — dashboard API gates (branch `cursor/production-security-audit-4eb8`)
+- **Status:** shipped · **Commit:** `76d22ec`
+- `requireDashboardAuth` + CSRF on dashboard writes across projects,
+  pins, comments, annotations, attachments, workspaces, presence,
+  screenshots recapture
+- `assertProjectAccessible` + `validateProjectId` on project-scoped routes
+- Integration list redacts webhook URLs / headers in `configJson`
+- Outbound integration URLs: `validateOutboundUrlShape` at write time;
+  `assertSafeOutboundUrl` + `redirect: 'error'` before fetch
+- Attachments reject `image/svg+xml` (png/jpeg/gif/webp only)
+- Presence POST derives `userId` from session (ignores client spoof)
 
 ---
 

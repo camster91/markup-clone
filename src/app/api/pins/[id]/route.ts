@@ -1,18 +1,32 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin } from '@/lib/auth';
+import { requireDashboardAuth } from '@/lib/auth';
+import { requireCsrfToken } from '@/lib/csrf';
 import { audit } from '@/lib/audit';
 import { unlink } from 'fs/promises';
 import { validatePinId } from '@/lib/validation';
+import { assertProjectAccessible } from '@/lib/teams';
 
 const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || '/data/screenshots';
+
+async function resolvePinProjectId(pinId: string): Promise<string | null> {
+  const pin = await prisma.pin.findUnique({
+    where: { id: pinId },
+    select: {
+      screenshot: { select: { page: { select: { projectId: true } } } },
+    },
+  });
+  return pin?.screenshot?.page?.projectId ?? null;
+}
 
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardAuth(req);
   if (authErr) return authErr;
+  const csrfErr = requireCsrfToken(req);
+  if (csrfErr) return csrfErr;
 
   try {
     const { id } = await params;
@@ -20,6 +34,16 @@ export async function PATCH(
     if (!idRes.ok) {
       return NextResponse.json({ error: idRes.error }, { status: 400 });
     }
+
+    const projectId = await resolvePinProjectId(id);
+    if (!projectId) {
+      return NextResponse.json({ error: 'Pin not found' }, { status: 404 });
+    }
+    const access = await assertProjectAccessible(projectId);
+    if (!access.ok) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+
     const { status } = await req.json();
     if (status !== 'OPEN' && status !== 'RESOLVED') {
       return NextResponse.json({ error: 'status must be OPEN or RESOLVED' }, { status: 400 });
@@ -39,14 +63,25 @@ export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardAuth(req);
   if (authErr) return authErr;
+  const csrfErr = requireCsrfToken(req);
+  if (csrfErr) return csrfErr;
 
   try {
     const { id } = await params;
     const idRes = validatePinId(id);
     if (!idRes.ok) {
       return NextResponse.json({ error: idRes.error }, { status: 400 });
+    }
+
+    const projectId = await resolvePinProjectId(id);
+    if (!projectId) {
+      return NextResponse.json({ error: 'Pin not found' }, { status: 404 });
+    }
+    const access = await assertProjectAccessible(projectId);
+    if (!access.ok) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
     }
 
     // Find the pin and its screenshot

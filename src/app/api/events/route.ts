@@ -34,7 +34,7 @@
 // worker B — swap the Map for Postgres LISTEN/NOTIFY or Redis pubsub
 // (commented on the pub-sub side; no changes needed here).
 
-import { requireDashboardOrigin } from '@/lib/auth';
+import { requireDashboardAuth } from '@/lib/auth';
 import { subscribe, type LiveEvent } from '@/lib/events';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -78,7 +78,7 @@ const PING_INTERVAL_MS = 25_000;
 const PING_LINE = ': ping\n\n';
 
 export async function GET(req: Request) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardAuth(req);
   if (authErr) return authErr;
 
   const url = new URL(req.url);

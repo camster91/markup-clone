@@ -118,12 +118,19 @@ export default async function Dashboard() {
   // an empty array. The client FeedbackAnnotation type
   // declares `path` as a parsed array — the page is the
   // conversion boundary.
+  //
+  // Secrets (apiKey / shareToken): only included when the
+  // caller has an authenticated session. Anonymous HTML must
+  // not embed project keys — the AuthGate login modal is the
+  // gate; once logged in, a full navigation re-renders with
+  // secrets present for WidgetSnippet / ShareToggle.
+  const includeSecrets = caller !== null;
   const initialData: ProjectWithPages[] = projects.map((p) => ({
     id: p.id,
     name: p.name,
     domain: p.domain,
-    apiKey: p.apiKey,
-    shareToken: p.shareToken,
+    apiKey: includeSecrets ? p.apiKey : null,
+    shareToken: includeSecrets ? p.shareToken : null,
     teamId: p.teamId,
     team: p.team,
     createdAt: p.createdAt.toISOString(),
@@ -216,14 +223,16 @@ export default async function Dashboard() {
               </Link>
             </nav>
           </div>
-          {latest?.apiKey ? (
+          {includeSecrets && latest?.apiKey ? (
             <div className="bg-white px-4 py-2 rounded-lg shadow-sm border border-gray-200">
               <div className="text-sm text-gray-500 mb-1">Widget snippet (latest project):</div>
               <WidgetSnippet apiKey={latest.apiKey} projectId={latest.id} dashboardHost={`https://${dashboardHost}`} />
             </div>
           ) : (
             <div className="bg-white px-4 py-2 rounded-lg shadow-sm border border-gray-200 text-xs text-gray-400">
-              Create a project below to get a widget snippet
+              {includeSecrets
+                ? 'Create a project below to get a widget snippet'
+                : 'Sign in to see the widget snippet'}
             </div>
           )}
         </header>

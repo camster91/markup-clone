@@ -8,11 +8,16 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   deleteMany: vi.fn(),
   audit: vi.fn(),
+  projectFindUnique: vi.fn().mockResolvedValue({
+    id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    teamId: null,
+  }),
 }));
 
 vi.mock('@/lib/prisma', () => ({
   prisma: {
     subscriber: { deleteMany: mocks.deleteMany },
+    project: { findUnique: mocks.projectFindUnique },
   },
 }));
 
@@ -29,7 +34,7 @@ import { NextRequest } from 'next/server';
 const CSRF_TOKEN='***';
 
 function req(origin = 'https://markup.ashbi.ca'): NextRequest {
-  return new NextRequest('https://markup.ashbi.ca/api/projects/proj-1/subscribers/alice%40example.com', {
+  return new NextRequest('https://markup.ashbi.ca/api/projects/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/subscribers/alice%40example.com', {
     method: 'DELETE',
     headers: {
       'Origin': origin,
@@ -47,7 +52,7 @@ beforeEach(() => {
 
 describe('DELETE /api/projects/[id]/subscribers/[email]', () => {
   it('returns { deleted: true, count: 0 } when the email is not a subscriber', async () => {
-    const res = await DELETE(req(), { params: Promise.resolve({ id: 'proj-1', email: 'nobody@example.com' }) });
+    const res = await DELETE(req(), { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', email: 'nobody@example.com' }) });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toEqual({ deleted: true, count: 0 });
@@ -55,7 +60,7 @@ describe('DELETE /api/projects/[id]/subscribers/[email]', () => {
 
   it('returns { deleted: true, count: 1 } when the email was a subscriber', async () => {
     mocks.deleteMany.mockResolvedValue({ count: 1 });
-    const res = await DELETE(req(), { params: Promise.resolve({ id: 'proj-1', email: 'alice@example.com' }) });
+    const res = await DELETE(req(), { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', email: 'alice@example.com' }) });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toEqual({ deleted: true, count: 1 });
@@ -64,12 +69,12 @@ describe('DELETE /api/projects/[id]/subscribers/[email]', () => {
   it('URL-decodes + signs in the email (alice+test@example.com)', async () => {
     // The client encodes + as %2B; the route must see the literal +.
     const r = new NextRequest(
-      'https://markup.ashbi.ca/api/projects/proj-1/subscribers/alice%2Btest%40example.com',
+      'https://markup.ashbi.ca/api/projects/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/subscribers/alice%2Btest%40example.com',
       { method: 'DELETE', headers: { 'Origin': 'https://markup.ashbi.ca', 'X-CSRF-Token': CSRF_TOKEN, cookie: `markup.csrf=${CSRF_TOKEN}` } }
     );
-    await DELETE(r, { params: Promise.resolve({ id: 'proj-1', email: 'alice+test@example.com' }) });
+    await DELETE(r, { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', email: 'alice+test@example.com' }) });
     expect(mocks.deleteMany).toHaveBeenCalledWith({
-      where: { projectId: 'proj-1', email: 'alice+test@example.com' },
+      where: { projectId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', email: 'alice+test@example.com' },
     });
   });
 
@@ -82,28 +87,28 @@ describe('DELETE /api/projects/[id]/subscribers/[email]', () => {
     // error message — but the underlying intent is the same: don't
     // let a path-segment CR/LF reach the DB / audit log.
     const r = new NextRequest(
-      'https://markup.ashbi.ca/api/projects/proj-1/subscribers/alice%0ACc%3Aattacker%40example.com',
+      'https://markup.ashbi.ca/api/projects/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/subscribers/alice%0ACc%3Aattacker%40example.com',
       { method: 'DELETE', headers: { 'Origin': 'https://markup.ashbi.ca', 'X-CSRF-Token': CSRF_TOKEN, cookie: `markup.csrf=${CSRF_TOKEN}` } }
     );
-    const res = await DELETE(r, { params: Promise.resolve({ id: 'proj-1', email: 'alice\nCc:attacker@example.com' }) });
+    const res = await DELETE(r, { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', email: 'alice\nCc:attacker@example.com' }) });
     expect(res.status).toBe(400);
     // And we did NOT call deleteMany (so no DB write).
     expect(mocks.deleteMany).not.toHaveBeenCalled();
   });
 
   it('returns 401 from a non-dashboard origin', async () => {
-    const res = await DELETE(req('https://evil.com'), { params: Promise.resolve({ id: 'proj-1', email: 'alice@example.com' }) });
+    const res = await DELETE(req('https://evil.com'), { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', email: 'alice@example.com' }) });
     expect(res.status).toBe(401);
   });
 
   it('emits a subscriber.remove audit entry with the count', async () => {
     mocks.deleteMany.mockResolvedValue({ count: 1 });
     mocks.audit.mockClear();
-    await DELETE(req(), { params: Promise.resolve({ id: 'proj-1', email: 'alice@example.com' }) });
+    await DELETE(req(), { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', email: 'alice@example.com' }) });
     expect(mocks.audit).toHaveBeenCalledWith({
-      actor: 'proj-1',
+      actor: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
       action: 'subscriber.remove',
-      target: 'proj-1',
+      target: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
       metadata: { email: 'alice@example.com', requested: 'alice@example.com', count: 1 },
     });
   });
@@ -120,14 +125,14 @@ describe('DELETE /api/projects/[id]/subscribers/[email]', () => {
     // After the fix, the route normalizes BEFORE the deleteMany call,
     // so the mock should see the lowercased form.
     mocks.deleteMany.mockResolvedValue({ count: 1 });
-    const res = await DELETE(req(), { params: Promise.resolve({ id: 'proj-1', email: 'Alice@Example.com' }) });
+    const res = await DELETE(req(), { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', email: 'Alice@Example.com' }) });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toEqual({ deleted: true, count: 1 });
     // The key assertion: deleteMany was called with the lowercased form
     // that matches what POST stored.
     expect(mocks.deleteMany).toHaveBeenCalledWith({
-      where: { projectId: 'proj-1', email: 'alice@example.com' },
+      where: { projectId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', email: 'alice@example.com' },
     });
   });
 
@@ -139,11 +144,11 @@ describe('DELETE /api/projects/[id]/subscribers/[email]', () => {
     // later.
     mocks.deleteMany.mockResolvedValue({ count: 1 });
     mocks.audit.mockClear();
-    await DELETE(req(), { params: Promise.resolve({ id: 'proj-1', email: 'Alice@Example.com' }) });
+    await DELETE(req(), { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', email: 'Alice@Example.com' }) });
     expect(mocks.audit).toHaveBeenCalledWith({
-      actor: 'proj-1',
+      actor: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
       action: 'subscriber.remove',
-      target: 'proj-1',
+      target: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
       metadata: {
         email: 'alice@example.com',
         requested: 'Alice@Example.com',
@@ -156,7 +161,7 @@ describe('DELETE /api/projects/[id]/subscribers/[email]', () => {
     // The validator's email-shape regex rejects obvious garbage
     // (missing @, missing domain, etc.). The DELETE route should now
     // return 400 on these instead of forwarding to the DB.
-    const res = await DELETE(req(), { params: Promise.resolve({ id: 'proj-1', email: 'not-an-email' }) });
+    const res = await DELETE(req(), { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', email: 'not-an-email' }) });
     expect(res.status).toBe(400);
     // The DB must NOT be hit on bad input.
     expect(mocks.deleteMany).not.toHaveBeenCalled();

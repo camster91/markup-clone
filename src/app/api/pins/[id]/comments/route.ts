@@ -1,20 +1,30 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin } from '@/lib/auth';
+import { requireDashboardAuth } from '@/lib/auth';
+import { requireCsrfToken } from '@/lib/csrf';
 import { consume } from '@/lib/rate-limit';
-import { validatePinText } from '@/lib/validation';
+import { validatePinText, validatePinId, sanitizeText, LIMITS } from '@/lib/validation';
 import { emit } from '@/lib/events';
 import { audit } from '@/lib/audit';
 import { parseMentions } from '@/lib/mentions';
 import { sendMentionEmail } from '@/lib/email';
 import { parseHost } from '@/lib/origin';
+import { assertProjectAccessible } from '@/lib/teams';
+
+// Closed set of comment authorRole values. Dashboard comments are
+// typically 'reviewer' / 'operator'; widget-originated pin comments
+// use 'client'. Anything else is rejected so a caller can't plant
+// arbitrary role labels into the thread UI.
+const AUTHOR_ROLES = new Set(['operator', 'reviewer', 'client']);
 
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardAuth(req);
   if (authErr) return authErr;
+  const csrfErr = requireCsrfToken(req);
+  if (csrfErr) return csrfErr;
 
   // Rate limit AFTER auth, BEFORE the DB write.
   // 30 tokens / 0.5 per second = 60s sustained per (origin, pinId).
@@ -33,7 +43,46 @@ export async function POST(
 
   try {
     const { id } = await params;
+    const idRes = validatePinId(id);
+    if (!idRes.ok) {
+      return NextResponse.json({ error: idRes.error }, { status: 400 });
+    }
+
+    // Resolve pin → project and enforce team scope before any write.
+    const pinScope = await prisma.pin.findUnique({
+      where: { id },
+      select: {
+        screenshot: { select: { page: { select: { projectId: true } } } },
+      },
+    });
+    const scopedProjectId = pinScope?.screenshot?.page?.projectId ?? null;
+    if (!scopedProjectId) {
+      return NextResponse.json({ error: 'Pin not found' }, { status: 404 });
+    }
+    const access = await assertProjectAccessible(scopedProjectId);
+    if (!access.ok) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+
     const { text, author, authorRole, attachmentIds } = await req.json();
+
+    const authorRaw = typeof author === 'string' && author.length > 0 ? author : 'Reviewer';
+    const authorRes = sanitizeText(authorRaw, LIMITS.AUTHOR_NAME_MAX, 'author');
+    if (!authorRes.ok) {
+      return NextResponse.json({ error: authorRes.error }, { status: 400 });
+    }
+    const authorNormalized = authorRes.value;
+
+    let authorRoleNormalized = 'reviewer';
+    if (authorRole !== undefined && authorRole !== null && authorRole !== '') {
+      if (typeof authorRole !== 'string' || !AUTHOR_ROLES.has(authorRole)) {
+        return NextResponse.json(
+          { error: 'authorRole must be one of: operator, reviewer, client' },
+          { status: 400 }
+        );
+      }
+      authorRoleNormalized = authorRole;
+    }
     // Use the same validator as the pin-create flow (R0.3) so the comment
     // text gets the same length cap, trim, and null-byte rejection. A
     // missing/empty/whitespace-only text is rejected here (it would
@@ -149,9 +198,8 @@ export async function POST(
       data: {
         pinId: id,
         text,
-        author: author || 'Reviewer',
-        authorRole: authorRole || 'reviewer',
-        // Claim the uploaded attachments by linking them to the
+        author: authorNormalized,
+        authorRole: authorRoleNormalized,        // Claim the uploaded attachments by linking them to the
         // new comment. `connect` is the right shape because the
         // Attachment rows already exist — we just add the
         // back-reference. We do NOT re-validate that the

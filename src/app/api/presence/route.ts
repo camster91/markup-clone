@@ -26,8 +26,10 @@
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin } from '@/lib/auth';
+import { requireDashboardAuth, requireAuth } from '@/lib/auth';
+import { requireCsrfToken } from '@/lib/csrf';
 import { validateScreenshotId, validatePercent } from '@/lib/validation';
+import { sanitizeText, LIMITS } from '@/lib/validation';
 
 // Presence TTL. Anything older than this is "offline" and the GET route
 // excludes it. Bumped by the heartbeat on every POST. The dashboard
@@ -36,10 +38,8 @@ import { validateScreenshotId, validatePercent } from '@/lib/validation';
 // enough that closing the tab takes effect within a minute.
 const PRESENCE_TTL_MS = 60_000;
 
-// UUID v4 shape — used for both projectId and userId. Slightly looser
-// than Prisma's UUID column (which is also a 36-char dash-separated
-// hex) but identical in practice. The regex matches both v4 and any
-// future variant — we only care about the shape.
+// UUID v4 shape — used for projectId. Slightly looser than Prisma's
+// UUID column but identical in practice.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function requireUuid(value: unknown, name: string): string | null {
@@ -50,12 +50,25 @@ function requireUuid(value: unknown, name: string): string | null {
 }
 
 export async function POST(req: Request) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardAuth(req);
   if (authErr) return authErr;
+  const csrfErr = requireCsrfToken(req);
+  if (csrfErr) return csrfErr;
+
+  // Identity comes from the session — never trust a client-supplied
+  // userId (spoofing another reviewer's cursor). displayName is
+  // advisory UI-only and may still be accepted from the body when
+  // present (sanitized); it is not persisted on the Presence row.
+  const sessionUser = await requireAuth();
+  if (!sessionUser) {
+    return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+  }
+  const userId = sessionUser.id;
 
   let body: {
     projectId?: unknown;
     userId?: unknown;
+    displayName?: unknown;
     screenshotId?: unknown;
     cursorX?: unknown;
     cursorY?: unknown;
@@ -66,18 +79,25 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 });
   }
 
+  // Optional displayName: sanitize if present; ignored for identity.
+  if (body.displayName !== undefined && body.displayName !== null) {
+    if (typeof body.displayName !== 'string') {
+      return NextResponse.json({ error: 'displayName must be a string' }, { status: 400 });
+    }
+    const nameRes = sanitizeText(body.displayName, LIMITS.AUTHOR_NAME_MAX, 'displayName');
+    if (!nameRes.ok) {
+      return NextResponse.json({ error: nameRes.error }, { status: 400 });
+    }
+    // Intentionally not stored — Presence schema has no displayName
+    // column. Accepting + validating keeps the client contract stable
+    // without inventing a migration in this hardening pass.
+    void nameRes.value;
+  }
+
   // projectId: required, must be a UUID (Prisma's @default(uuid()))
   const projectIdErr = requireUuid(body.projectId, 'projectId');
   if (projectIdErr) return NextResponse.json({ error: projectIdErr }, { status: 400 });
   const projectId = body.projectId as string;
-
-  // userId: required, must be a UUID. The client generates a v4 on
-  // first load and stores it in localStorage. A bad userId usually
-  // means a bug (or someone hand-rolling fetch calls in devtools) —
-  // reject 400 so we don't poison the index with garbage.
-  const userIdErr = requireUuid(body.userId, 'userId');
-  if (userIdErr) return NextResponse.json({ error: userIdErr }, { status: 400 });
-  const userId = body.userId as string;
 
   // screenshotId: optional. If present, must be a UUID. The route
   // intentionally does NOT verify the screenshot belongs to the
@@ -142,7 +162,7 @@ export async function POST(req: Request) {
 }
 
 export async function GET(req: Request) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardAuth(req);
   if (authErr) return authErr;
 
   const url = new URL(req.url);

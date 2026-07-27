@@ -185,13 +185,11 @@ describe('GET / — dashboard home page (RSC refactor)', () => {
     const elementJson = JSON.stringify(element, getCircularReplacer());
 
     // The serialized tree includes <DashboardPoller> with the
-    // full project payload. Asserting on the project name + id
-    // + domain + apiKey is enough to confirm the prop was
-    // threaded: a regression that drops the prop (or wraps it
-    // in a different element) would lose the project name.
+    // project payload. Anonymous callers must NOT receive apiKey
+    // / shareToken in the RSC HTML (secrets only for authed sessions).
     expect(elementJson).toContain('Acme');
     expect(elementJson).toContain('acme.com');
-    expect(elementJson).toContain('mk_abc');
+    expect(elementJson).not.toContain('mk_abc');
     expect(elementJson).toContain('proj-1');
     // The page path also makes it through the include — the
     // client island needs the full path / screenshot / pin
@@ -205,13 +203,11 @@ describe('GET / — dashboard home page (RSC refactor)', () => {
     );
   });
 
-  it('still renders the chrome (WidgetSnippet, NewProjectForm, AuthGate, Workspaces link)', async () => {
+  it('still renders the chrome (NewProjectForm, AuthGate, Workspaces link)', async () => {
     // The RSC refactor must not drop any of the visual
-    // affordances the operator relies on. The widget snippet
-    // is derived from the latest project in the list (the
-    // first row of the orderBy: createdAt desc fetch). The
-    // NewProjectForm / AuthGate / Workspaces link are all
-    // client components that stay as-is.
+    // affordances the operator relies on. With no session the
+    // widget snippet is withheld (apiKey redacted); AuthGate /
+    // NewProjectForm / Workspaces link remain.
     mocks.project.findMany.mockResolvedValue([
       {
         id: 'proj-1',
@@ -229,26 +225,23 @@ describe('GET / — dashboard home page (RSC refactor)', () => {
     ]);
     const element = await DashboardPage();
     const elementJson = JSON.stringify(element, getCircularReplacer());
-    // The widget snippet renders the project's apiKey + id
-    // inside a <code> block. Both must survive the RSC
-    // serialization.
-    expect(elementJson).toContain('mk_abc');
+    // Anonymous: apiKey must not appear in the rendered tree.
+    expect(elementJson).not.toContain('mk_abc');
     expect(elementJson).toContain('proj-1');
+    expect(elementJson).toContain('Sign in to see the widget snippet');
     // The Workspaces link is still in the header.
     expect(elementJson).toContain('/workspaces');
     // The header H1 is still there.
     expect(elementJson).toContain('Visual Feedback');
   });
 
-  it('renders the "create a project" empty state when no projects exist', async () => {
-    // The pre-RSC page already handled the empty case (no
-    // widget snippet card). The RSC refactor must keep that
-    // behaviour: when the list is empty, the snippet card
-    // shows the "Create a project below" placeholder instead
-    // of the snippet itself.
+  it('renders the anonymous widget placeholder when no projects exist', async () => {
+    // When the list is empty and the caller has no session, the
+    // snippet card shows the sign-in placeholder (secrets are
+    // withheld for anonymous callers).
     mocks.project.findMany.mockResolvedValue([]);
     const element = await DashboardPage();
     const elementJson = JSON.stringify(element, getCircularReplacer());
-    expect(elementJson).toContain('Create a project below to get a widget snippet');
+    expect(elementJson).toContain('Sign in to see the widget snippet');
   });
 });

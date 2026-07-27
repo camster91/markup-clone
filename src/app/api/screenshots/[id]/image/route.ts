@@ -1,9 +1,23 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { isDashboardOrigin } from '@/lib/auth';
+import { validateScreenshotId } from '@/lib/validation';
 import { readFile, stat } from 'fs/promises';
 import path from 'path';
 
 const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || '/data/screenshots';
+
+// GET /api/screenshots/[id]/image
+//
+// Serves the PNG for a screenshot (or a specific ScreenshotVersion
+// via ?storageKey=). Auth mirrors /api/attachments/[id]:
+//
+//   1. Dashboard origin (Origin / sec-fetch-site same-origin).
+//   2. ?share=<token> matching the screenshot's project's shareToken.
+//
+// Unauthorized and missing both return 404 so a probe cannot tell
+// whether a screenshot UUID exists. Dashboard responses use a
+// private Cache-Control; share-token responses may stay immutable.
 
 export async function GET(
   req: Request,
@@ -11,8 +25,38 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const ss = await prisma.screenshot.findUnique({ where: { id } });
+    const idRes = validateScreenshotId(id);
+    if (!idRes.ok) return NextResponse.json({ error: idRes.error }, { status: 400 });
+
+    const ss = await prisma.screenshot.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        storageKey: true,
+        capturedAt: true,
+        page: {
+          select: {
+            project: {
+              select: { shareToken: true },
+            },
+          },
+        },
+      },
+    });
     if (!ss) return NextResponse.json({ error: 'not found' }, { status: 404 });
+
+    // === Auth ===========================================================
+    // Dashboard origin OR matching ?share= token. 404 (not 401) on
+    // failure so existence is not leaked to anonymous probes.
+    const dashboard = isDashboardOrigin(req);
+    const url = new URL(req.url);
+    const shareToken = url.searchParams.get('share');
+    const projectShareToken = ss.page?.project?.shareToken ?? null;
+    const shareTokenValid = !!shareToken && shareToken === projectShareToken;
+
+    if (!dashboard && !shareTokenValid) {
+      return NextResponse.json({ error: 'not found' }, { status: 404 });
+    }
 
     // Optional ?storageKey=<key>: serves a specific version's PNG
     // instead of the Screenshot's current "latest pointer". Used by
@@ -28,7 +72,7 @@ export async function GET(
     // can't pass a storageKey belonging to a different screenshot
     // and read someone else's PNG. If the key doesn't match any
     // version, we 404 (defense against probing).
-    const requestedKey = new URL(req.url).searchParams.get('storageKey');
+    const requestedKey = url.searchParams.get('storageKey');
     let storageKey = ss.storageKey;
     let versionCapturedAt: Date | null = null;
     if (requestedKey && requestedKey !== ss.storageKey) {
@@ -67,12 +111,18 @@ export async function GET(
       return new NextResponse(null, { status: 304 });
     }
 
+    // Dashboard: private cache. Share-token viewers: immutable is
+    // fine (the storageKey is content-addressed / versioned).
+    const cacheControl = dashboard
+      ? 'private, max-age=3600'
+      : 'public, max-age=31536000, immutable';
+
     return new NextResponse(buf, {
       status: 200,
       headers: {
         'Content-Type': 'image/png',
         'Content-Length': fileStat.size.toString(),
-        'Cache-Control': 'public, max-age=31536000, immutable',
+        'Cache-Control': cacheControl,
         'ETag': etag,
       },
     });

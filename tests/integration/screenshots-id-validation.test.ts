@@ -78,11 +78,16 @@ beforeEach(() => {
 });
 
 describe('POST /api/screenshots/[id]/recapture — id validation', () => {
+  const CSRF = {
+    'X-CSRF-Token': 'test-csrf-token',
+    cookie: 'markup.csrf=test-csrf-token',
+  };
+
   it('returns 400 on a non-UUID id (NOT 500)', async () => {
     const res = await RECAPTURE(
       new Request('https://markup.ashbi.ca/api/screenshots/not-a-uuid/recapture', {
         method: 'POST',
-        headers: { origin: 'https://markup.ashbi.ca' },
+        headers: { origin: 'https://markup.ashbi.ca', ...CSRF },
       }),
       { params: Promise.resolve({ id: 'not-a-uuid' }) }
     );
@@ -103,7 +108,7 @@ describe('POST /api/screenshots/[id]/recapture — id validation', () => {
     const res = await RECAPTURE(
       new Request('https://markup.ashbi.ca/api/screenshots/garbage/recapture', {
         method: 'POST',
-        headers: { origin: 'https://markup.ashbi.ca' },
+        headers: { origin: 'https://markup.ashbi.ca', ...CSRF },
       }),
       { params: Promise.resolve({ id: 'garbage' }) }
     );

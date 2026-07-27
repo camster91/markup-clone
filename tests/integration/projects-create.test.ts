@@ -22,10 +22,17 @@ vi.mock('@/lib/prisma', () => ({
 import { POST } from '../../src/app/api/projects/route';
 import { NextRequest } from 'next/server';
 
+const CSRF_TOKEN = 'test-csrf-token';
+
 function req(body: unknown, headers: Record<string, string> = {}): NextRequest {
   return new NextRequest('https://markup.ashbi.ca/api/projects', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...headers },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRF-Token': CSRF_TOKEN,
+      cookie: `markup.csrf=${CSRF_TOKEN}`,
+      ...headers,
+    },
     body: JSON.stringify(body),
   });
 }

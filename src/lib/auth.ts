@@ -65,8 +65,37 @@ export function requireDashboardOrigin(req: Request): NextResponse | null {
   return buildAuthErrorResponse();
 }
 
+/**
+ * Hard dashboard gate: Origin allow-list AND an active session cookie.
+ *
+ * `requireDashboardOrigin` alone is forgeable from any HTTP client that
+ * sets `Origin: https://<DASHBOARD_HOST>` — it is a browser CSRF helper,
+ * not authentication. Every dashboard route that reads secrets (apiKey,
+ * shareToken, webhook config) or mutates state MUST use this helper
+ * instead. Widget traffic continues to use `requireProjectKey`.
+ */
+export async function requireDashboardAuth(req: Request): Promise<NextResponse | null> {
+  const originErr = requireDashboardOrigin(req);
+  if (originErr) return originErr;
+  const user = await requireAuth();
+  if (!user) {
+    return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+  }
+  return null;
+}
+
 export async function requireProjectKey(req: Request, projectId: string): Promise<NextResponse | null> {
-  if (isDashboardOriginCore(req)) return null;
+  // Dashboard Origin alone used to short-circuit the API-key check.
+  // That let a forged Origin bypass the widget key entirely. A
+  // dashboard caller must now present a valid session; otherwise we
+  // fall through to the project API key (the widget path).
+  if (isDashboardOriginCore(req)) {
+    const user = await requireAuth();
+    if (user) return null;
+    // Origin looked like the dashboard but no session — do NOT
+    // grant access. Fall through to the API-key check so a
+    // misconfigured embed that only sets Origin still needs the key.
+  }
 
   const provided = req.headers.get('x-api-key');
   if (!provided) return NextResponse.json({ error: 'Missing X-Api-Key' }, { status: 401 });

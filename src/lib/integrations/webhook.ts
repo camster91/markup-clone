@@ -12,6 +12,7 @@
 // the failure on the integration row.
 
 import type { PinPayload, WebhookConfig } from './types';
+import { assertSafeOutboundUrl } from '@/lib/safe-url';
 
 /**
  * Build the request headers for a generic-webhook dispatch.
@@ -40,6 +41,10 @@ export function buildHeaders(config: WebhookConfig): Record<string, string> {
  * records lastError).
  */
 export async function post(config: WebhookConfig, payload: PinPayload): Promise<void> {
+  const safe = await assertSafeOutboundUrl(config.url);
+  if (!safe.ok) {
+    throw new Error(`Webhook URL rejected: ${safe.error}`);
+  }
   const headers = buildHeaders(config);
   // Default Content-Type to application/json if the operator
   // didn't set one. Most JSON receivers expect it; we only
@@ -48,10 +53,11 @@ export async function post(config: WebhookConfig, payload: PinPayload): Promise<
   if (!Object.keys(headers).some((k) => k.toLowerCase() === 'content-type')) {
     headers['Content-Type'] = 'application/json';
   }
-  const res = await fetch(config.url, {
+  const res = await fetch(safe.value, {
     method: 'POST',
     headers,
     body: JSON.stringify(payload),
+    redirect: 'error',
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');

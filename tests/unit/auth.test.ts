@@ -44,8 +44,20 @@ describe('isDashboardOrigin', () => {
     expect(isDashboardOrigin(makeReq({}))).toBe(false);
   });
 
-  it('accepts when sec-fetch-site is same-origin (browser same-origin fetch)', () => {
-    expect(isDashboardOrigin(makeReq({ 'sec-fetch-site': 'same-origin' }))).toBe(true);
+  it('accepts when sec-fetch-site is same-origin AND Host matches dashboard', () => {
+    expect(
+      isDashboardOrigin(
+        makeReq({ 'sec-fetch-site': 'same-origin', host: 'markup.ashbi.ca' })
+      )
+    ).toBe(true);
+  });
+
+  it('rejects sec-fetch-site same-origin when Host does not match dashboard', () => {
+    expect(
+      isDashboardOrigin(
+        makeReq({ 'sec-fetch-site': 'same-origin', host: 'evil.com' })
+      )
+    ).toBe(false);
   });
 
   it('rejects when sec-fetch-site is cross-site (browser cross-origin fetch)', () => {
@@ -102,9 +114,15 @@ describe('requireProjectKey', () => {
     mockFindUnique.mockReset();
   });
 
-  it('allows dashboard-origin requests without an X-Api-Key', async () => {
+  it('does not allow dashboard-origin alone without a session (falls through to API key)', async () => {
+    // Origin is forgeable; without an active session the dashboard
+    // short-circuit must NOT grant access — requireProjectKey falls
+    // through to the X-Api-Key check.
     const res = await requireProjectKey(makeReq({ origin: 'https://markup.ashbi.ca' }), 'proj-id');
-    expect(res).toBeNull();
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(401);
+    const body = await res!.json();
+    expect(body.error).toBe('Missing X-Api-Key');
   });
 
   it('returns 401 if X-Api-Key is missing on a widget-origin call', async () => {

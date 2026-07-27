@@ -3,28 +3,34 @@
 // DELETE — remove a single integration. Idempotent: returns
 // 200 with { deleted: true, count: 1 } on success and
 // { deleted: true, count: 0 } when the id doesn't exist (or
-// doesn't belong to the project). The dashboard's "remove"
-// button stays clickable after a successful prior delete
-// without a preflight check.
-//
-// Gated by requireDashboardOrigin like every other write
-// under /api/projects/*. The widget does not (and should
-// not) ever hit this endpoint.
+// doesn't belong to the project).
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin } from '@/lib/auth';
+import { requireDashboardAuth } from '@/lib/auth';
+import { requireCsrfToken } from '@/lib/csrf';
 import { audit } from '@/lib/audit';
+import { validateProjectId } from '@/lib/validation';
+import { assertProjectAccessible } from '@/lib/teams';
 
 export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string; integrationId: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardAuth(req);
   if (authErr) return authErr;
+  const csrfErr = requireCsrfToken(req);
+  if (csrfErr) return csrfErr;
 
   try {
     const { id: projectId, integrationId } = await params;
+    const idRes = validateProjectId(projectId);
+    if (!idRes.ok) return NextResponse.json({ error: idRes.error }, { status: 400 });
+
+    const access = await assertProjectAccessible(projectId);
+    if (!access.ok) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
 
     // Scoped delete: we filter on BOTH projectId and id so a
     // malicious operator can't delete an integration belonging

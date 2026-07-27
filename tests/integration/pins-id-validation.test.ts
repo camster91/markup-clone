@@ -29,6 +29,12 @@ const mocks = vi.hoisted(() => ({
     delete: vi.fn(),
   },
   screenshot: { findUnique: vi.fn(), delete: vi.fn() },
+  project: {
+    findUnique: vi.fn().mockResolvedValue({
+      id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      teamId: null,
+    }),
+  },
   audit: vi.fn(),
 }));
 
@@ -43,11 +49,17 @@ vi.mock('@/lib/audit', () => ({
 import { PATCH, DELETE } from '../../src/app/api/pins/[id]/route';
 
 const ORIGIN = 'https://markup.ashbi.ca';
+const CSRF_TOKEN = 'test-csrf-token';
 
 function patchReq(id: string, body: unknown): Request {
   return new Request(`https://markup.ashbi.ca/api/pins/${id}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', origin: ORIGIN },
+    headers: {
+      'Content-Type': 'application/json',
+      origin: ORIGIN,
+      'X-CSRF-Token': CSRF_TOKEN,
+      cookie: `markup.csrf=${CSRF_TOKEN}`,
+    },
     body: JSON.stringify(body),
   });
 }
@@ -55,7 +67,11 @@ function patchReq(id: string, body: unknown): Request {
 function deleteReq(id: string): Request {
   return new Request(`https://markup.ashbi.ca/api/pins/${id}`, {
     method: 'DELETE',
-    headers: { origin: ORIGIN },
+    headers: {
+      origin: ORIGIN,
+      'X-CSRF-Token': CSRF_TOKEN,
+      cookie: `markup.csrf=${CSRF_TOKEN}`,
+    },
   });
 }
 

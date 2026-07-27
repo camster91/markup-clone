@@ -25,6 +25,7 @@
 // URL-authenticated. Adding one would 401.
 
 import type { DiscordConfig, PinPayload } from './types';
+import { assertSafeOutboundUrl } from '@/lib/safe-url';
 
 const EMBED_COLOR = 0x3b82f6; // blue-500; matches the dashboard's accent
 
@@ -60,10 +61,15 @@ export function buildDiscordBody(payload: PinPayload) {
  * records lastError).
  */
 export async function post(config: DiscordConfig, payload: PinPayload): Promise<void> {
-  const res = await fetch(config.webhookUrl, {
+  const safe = await assertSafeOutboundUrl(config.webhookUrl);
+  if (!safe.ok) {
+    throw new Error(`Discord webhook URL rejected: ${safe.error}`);
+  }
+  const res = await fetch(safe.value, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(buildDiscordBody(payload)),
+    redirect: 'error',
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');

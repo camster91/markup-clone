@@ -1,29 +1,33 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardOrigin } from '@/lib/auth';
+import { requireDashboardAuth } from '@/lib/auth';
+import { requireCsrfToken } from '@/lib/csrf';
 import { validatePinId } from '@/lib/validation';
 import { audit } from '@/lib/audit';
 
 // DELETE /api/annotations/[id]
 //
-// Delete a single annotation by id. Auth: dashboard-origin only
-// (`requireDashboardOrigin`). The widget has no use case for deleting
-// annotations — once submitted, the mark is part of the pin's history
-// and removing it would let a client walk back a comment. The
-// dashboard can remove a single annotation (e.g. a stray mark the
-// reviewer wants to fix) without nuking the whole pin.
+// Delete a single annotation by id. Auth: requireDashboardAuth + CSRF.
+// The widget has no use case for deleting annotations — once submitted,
+// the mark is part of the pin's history and removing it would let a
+// client walk back a comment. The dashboard can remove a single
+// annotation (e.g. a stray mark the reviewer wants to fix) without
+// nuking the whole pin.
 //
 // Response:
 //   200 { success: true }
 //   400 invalid id (not a UUID)
-//   401 not a dashboard request
+//   401 not authenticated / not dashboard origin
+//   403 invalid CSRF
 //   404 annotation not found
 export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authErr = requireDashboardOrigin(req);
+  const authErr = await requireDashboardAuth(req);
   if (authErr) return authErr;
+  const csrfErr = requireCsrfToken(req);
+  if (csrfErr) return csrfErr;
 
   try {
     const { id } = await params;
