@@ -23,10 +23,7 @@ export default defineConfig({
     },
   },
   test: {
-      environment: 'node', // default; tests can opt into jsdom via /* @vitest-environment jsdom */
-      environmentMatchGlobs: [
-        ['tests/widget/**', 'jsdom'],
-      ],
+    environment: 'node', // default; browser-facing files opt into jsdom via @vitest-environment
     globals: true, // describe/it/expect without imports
     setupFiles: ['./tests/setup.ts'],
     include: ['tests/**/*.test.{ts,tsx}', 'src/**/*.test.{ts,tsx}'],
@@ -34,10 +31,6 @@ export default defineConfig({
     testTimeout: 30_000,
     hookTimeout: 30_000,
     pool: 'forks', // don't share state across files; helps with prisma
-    poolOptions: {
-      forks: {
-        singleFork: true, // run tests serially to avoid prisma contention
-      },
-    },
+    fileParallelism: false, // run test files serially to avoid prisma contention
   },
 });

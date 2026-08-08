@@ -11,18 +11,13 @@
 // Two responsibilities, two intervals:
 //
 // 1) HEARTBEAT (POST /api/presence every 5s)
-//    The hook keeps a stable `userId` in localStorage so the same
-//    reviewer gets the same presence row across page reloads and
-//    tabs. The userId is a v4 UUID, generated once on first load and
-//    read on every subsequent mount. F10 will replace this with the
-//    real session's user id (and add a server-issued JWT to auth the
-//    userId). For now, anyone with the dashboard origin can pose as
-//    anyone — the dashboard origin is trusted (same allow-list as
-//    the rest of the API) and the presence rows are advisory dots.
+//    The hook resolves the dashboard session for its local "you" label;
+//    the server always derives heartbeat identity from that session and
+//    ignores the client userId as an authorization boundary.
 //
 //    The hook also forwards the live cursor as a (cursorX, cursorY)
 //    percentage of the screenshot. The caller passes the current
-//    screenshot id + cursor ref via opts; the hook reads it on
+//    focused screenshot and cursor through one shared activity ref; the hook reads it on
 //    each tick. The POST is debounced by the 5s tick itself — the
 //    route accepts a 60s TTL, so a few missed heartbeats don't drop
 //    the user from the list.
@@ -34,11 +29,10 @@
 //    client after they drop off the server list. Always replacing with
 //    the full TTL window is the simplest correct merge.
 //
-// Why polling and not SSE: F2 will swap the GET poll for an SSE
-// stream. The hook's `presences` + `myUserId` shape is designed to
-// survive that swap — the component consumes the state, not the
-// transport. F2 just needs to call `setPresences(...)` when a delta
-// arrives from the SSE channel.
+// Why presence still polls: the full TTL window is the authoritative
+// way to remove stale users. Project mutations use one SSE stream for
+// their fast path; one bounded presence poll per focused project keeps
+// expiry semantics simple and correct.
 
 import { useEffect, useRef, useState } from 'react';
 import { dashboardHeaders } from '@/lib/client-origin';
@@ -63,17 +57,18 @@ export interface PresenceRow {
   cursorY: number | null;
 }
 
+export interface PresenceActivity {
+  screenshotId: string;
+  x: number | null;
+  y: number | null;
+}
+
 export interface UsePresenceOptions {
   /** Project we're "in" right now. The heartbeat targets this project,
    *  and the poll filters to this project. */
   projectId: string;
-  /** The screenshot the reviewer is currently viewing (if any). null/undefined
-   *  means "no screenshot" (e.g. project is open but no specific image). */
-  screenshotId?: string | null;
-  /** Latest cursor position (0-100 percent of the screenshot bounds). null
-   *  means the cursor is off the image. The hook reads `.current` on every
-   *  tick. */
-  cursorRef?: React.MutableRefObject<{ x: number | null; y: number | null } | null>;
+  /** Shared focused-screenshot activity owned by the project detail. */
+  activityRef?: { current: PresenceActivity | null };
 }
 
 export interface UsePresenceResult {
@@ -137,7 +132,7 @@ function readOrCreateUserId(): string | null {
 }
 
 export function usePresence(opts: UsePresenceOptions): UsePresenceResult {
-  const { projectId, screenshotId = null, cursorRef } = opts;
+  const { projectId, activityRef } = opts;
 
   // myUserId: read from localStorage on first mount. null on the
   // server / SSR pass. We use state (not just a ref) so the first
@@ -208,7 +203,7 @@ export function usePresence(opts: UsePresenceOptions): UsePresenceResult {
 
     const sendHeartbeat = async () => {
       if (cancelled || !mountedRef.current) return;
-      const cursor = cursorRef?.current ?? null;
+      const activity = activityRef?.current ?? null;
       try {
         await fetch('/api/presence', {
           method: 'POST',
@@ -216,11 +211,11 @@ export function usePresence(opts: UsePresenceOptions): UsePresenceResult {
           body: JSON.stringify({
             projectId,
             userId: myUserId,
-            screenshotId: screenshotId ?? null,
+            screenshotId: activity?.screenshotId ?? null,
             // Send null (not the number) when the cursor is off the
             // image so the server stores an explicit "no cursor".
-            cursorX: cursor?.x ?? null,
-            cursorY: cursor?.y ?? null,
+            cursorX: activity?.x ?? null,
+            cursorY: activity?.y ?? null,
           }),
         });
       } catch {
@@ -243,10 +238,9 @@ export function usePresence(opts: UsePresenceOptions): UsePresenceResult {
       cancelled = true;
       clearInterval(id);
     };
-  }, [myUserId, projectId, screenshotId, cursorRef]);
+  }, [myUserId, projectId, activityRef]);
 
-  // GET poll for the "online" list. F2 will swap this for SSE; the
-  // setPresences() call survives the swap.
+  // GET the full authoritative "online" TTL list.
   useEffect(() => {
     if (!projectId) return;
     let cancelled = false;

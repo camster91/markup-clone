@@ -4,6 +4,13 @@
 **Commit:** `62ea8f67503634f7149c55de11b4d74ee09269ff`
 **Status:** Most features production-grade, known gaps explicitly documented.
 
+> **Historical baseline:** this assessment describes commit `62ea8f6` and its
+> June 2026 state. Do not use its test counts or gap list as the current release
+> verdict. The current 2026-08-08 release evidence is recorded in
+> `docs/plans/release-candidate-operational-validation-2026-08-08.md`; its
+> completion evidence distinguishes resolved historical gaps from remaining
+> release gates.
+
 This document is the result of a deliberate QA pass. Every section says what was
 done, what tests cover it, and what's still a known gap. The goal is honesty
 about the deployment posture, not marketing.
@@ -88,9 +95,10 @@ it requires the live service to be up.
 
 ### 6. The deploy pipeline
 
-`scripts/deploy.sh` is idempotent, SHA-tagged, has Caddy route auto-sync +
-Caddy health check + git tree corruption recovery (`.last-sha` marker +
-`LAST_SHA` env override). Verified end-to-end with full Caddyfile wipe.
+`scripts/deploy.sh` is SHA-tagged, has Caddy route auto-sync and a Caddy health
+check. The former marker-based Git-corruption recovery has been removed because
+it could label unverified content. Releases now require an authenticated
+fast-forward pull, a valid commit, and a clean tracked/untracked tree.
 
 ## Known gaps (explicit, not hand-waved)
 
@@ -232,7 +240,7 @@ team being aware of and able to detect the things that will go wrong.**
 
 By that standard:
 - ✅ The correctness story is solid (86 tests + 9-step smoke + visual verify)
-- ✅ The deploy story is solid (idempotent, Caddy-aware, health-checked)
+- ✅ The deploy story is fail-closed, Caddy-aware, and health-checked
 - ⚠️ The security story has a known list of gaps, all documented above
 - ⚠️ The observability story is "look at the container logs" (operator
   is Cam, this is fine for the current single-tenant scope)
@@ -332,3 +340,46 @@ docker update --restart unless-stopped markup-postgres
 ```
 Run this once on the host. After that, postgres recovers automatically
 on host reboot or docker daemon restart.
+
+## 2026-08-08 update — bounded local ingestion capacity measured
+
+Historical gap #5 is closed for the supported single-container local rehearsal.
+The dependency-free `npm run test:load:local` harness exercises the real
+authenticated multipart `POST /api/pins` path, refuses non-loopback/non-Compose
+targets, enforces explicit status and p95 thresholds, and verifies fixture cleanup.
+
+The measured production-mode local run used 24 requests at concurrency 6:
+24/24 HTTP 201, 419ms elapsed, 57.28 requests/second, p50 91ms, p95 157ms,
+and p99 179ms. Cleanup independently verified zero remaining project and
+screenshot rows and zero captured files. This does not establish production,
+100-concurrent-request, multi-replica, or sustained-load capacity; those require
+an explicitly approved staging test and shared rate-limit/realtime infrastructure.
+
+## 2026-08-08 update — widget E2E and cross-browser coverage
+
+Historical gap #8 is closed locally. The E2E fixture now executes the freshly
+built widget instead of silently resolving `/widget.js` from `about:blank`, and
+the flow proves a real PNG multipart upload. That correction exposed and led to
+the repair of a blob-SVG canvas-taint defect that previously dropped screenshots.
+
+Playwright now runs the widget submission, recapture state, and 320px
+keyboard/accessibility journey in Chromium, Firefox, and WebKit. All 9 journeys
+pass with dialog/label semantics, 44px controls, 16px fields, visible/trapped
+focus, Escape/focus return, no overflow, and no browser/request errors. WebKit
+coverage is not physical Safari hardware proof; a real iOS/macOS Safari check
+remains appropriate for an approved release window.
+
+## 2026-08-08 update — immutable rollback provenance
+
+The earlier claim that no prior image was retained is closed by current
+read-only host evidence. The healthy live container and the retained
+`markup-clone:d47ada5bfa0d66be70d4751ce63ddfee07c63da3` tag both resolve to
+`sha256:c077ad33288c5284c16d6c58d11f1bb140dd14167c24502bab0ce81cdc55d891`,
+and the public health endpoint returned HTTP 200 twice during the verification.
+
+Deployment now fails before migrations when the prior tag is mutable,
+malformed, missing, or retargeted, and records the exact tag/image ID in a
+private atomic manifest. It also refuses tracked or untracked source changes so
+an image cannot be labeled with a commit SHA that does not contain its build
+inputs. This proves rollback provenance and retention, not that a production
+rollback has been executed; that disruptive drill remains approval-gated.

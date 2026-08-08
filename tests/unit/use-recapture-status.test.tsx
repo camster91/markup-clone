@@ -356,7 +356,7 @@ describe('useRecaptureStatus', () => {
     // The crucial assertion: no React "set state on an unmounted
     // component" warning fired. The console.error spy captured all
     // console.error calls; filter for that specific warning string.
-    const setStateWarnings = consoleErrorSpy.mock.calls.filter((c) => {
+    const setStateWarnings = (consoleErrorSpy.mock.calls as unknown[][]).filter((c) => {
       const first = String(c[0] ?? '');
       return /setstate.*unmounted|unmounted.*component|can't perform a react state update/i.test(first);
     });

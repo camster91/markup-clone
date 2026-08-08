@@ -10,19 +10,19 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-import { sendSubscriberEmails } from '@/lib/email';
+import { sendProjectNotificationEmails, sendSubscriberEmails } from '@/lib/email';
 
 // We rely on the safe defaults from tests/setup.ts, but be explicit.
 const k = 'M' + 'AILGUN_API_KEY';
 const DEFAULT_API_KEY = 'test_key';
 const DEFAULT_DOMAIN = 'ashbi.ca';
 
-let mockFetch: ReturnType<typeof vi.fn>;
+let mockFetch: ReturnType<typeof vi.fn<typeof fetch>>;
 
 beforeEach(() => {
   process.env[k] = DEFAULT_API_KEY;
   process.env.MAILGUN_DOMAIN = DEFAULT_DOMAIN;
-  mockFetch = vi.fn();
+  mockFetch = vi.fn<typeof fetch>();
   global.fetch = mockFetch;
 });
 
@@ -138,7 +138,7 @@ describe('Mailgun request shape', () => {
     });
 
     const [, options] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
-    const authHeader = options.headers?.['Authorization'] as string;
+    const authHeader = new Headers(options.headers).get('Authorization') ?? '';
     expect(authHeader).toMatch(/^Basic\s+/);
     expect(decodeBasicAuth(authHeader)).toBe(`api:${DEFAULT_API_KEY}`);
   });
@@ -157,7 +157,7 @@ describe('Mailgun request shape', () => {
 
     const [, options] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
     expect(options.method).toBe('POST');
-    expect(options.headers?.['Content-Type']).toBe('application/x-www-form-urlencoded');
+    expect(new Headers(options.headers).get('Content-Type')).toBe('application/x-www-form-urlencoded');
 
     const body = parseFormBody(options.body as string);
     expect(body).toHaveProperty('from');
@@ -328,6 +328,36 @@ describe('DASHBOARD_HOST host interpolation', () => {
         process.env.DASHBOARD_HOST = original;
       }
     }
+  });
+});
+
+describe('role-aware project notification email', () => {
+  it('deduplicates recipients and renders escaped agency-branded project content', async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+      new Response('', { status: 200 })
+    );
+
+    await sendProjectNotificationEmails({
+      recipients: ['Owner@example.com', 'owner@example.com'],
+      brand: { displayName: 'Northstar <Studio>', accentColor: '#4f46e5', accentText: '#ffffff' },
+      projectName: 'Client & Site',
+      title: 'New feedback',
+      message: '<script>alert("x")</script>',
+      actionUrl: 'https://markup.ashbi.ca/projects/project-1?pin=pin-1&next=<unsafe>',
+    });
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    const [, options] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    const body = parseFormBody(options.body as string);
+    expect(body.to).toBe('Owner@example.com');
+    expect(body.subject).toBe('[Northstar <Studio>] New feedback — Client & Site');
+    expect(body.html).toContain('Northstar &lt;Studio&gt;');
+    expect(body.html).toContain('Client &amp; Site');
+    expect(body.html).toContain('&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;');
+    expect(body.html).not.toContain('<script>');
+    expect(body.html).toContain('background-color: #4f46e5');
+    expect(body.html).toContain('color: #ffffff');
+    expect(body.html).toContain('next=&lt;unsafe&gt;');
   });
 });
 

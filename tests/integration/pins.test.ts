@@ -32,6 +32,8 @@ const mocks = vi.hoisted(() => ({
   // explicitly drives it.
   integration: { findMany: vi.fn().mockResolvedValue([]), update: vi.fn() },
   auditLog: { create: vi.fn().mockResolvedValue({ id: 'audit-log-1' }) },
+  sendProjectMemberNotification: vi.fn().mockResolvedValue(undefined),
+  txPinCreate: vi.fn(),
   // Capture the transaction callback so we can drive it from the test.
   $transaction: vi.fn(),
 }));
@@ -60,6 +62,9 @@ vi.mock('@/lib/rate-limit', () => ({
 // Mock email so subscriber lookups don't try to send.
 vi.mock('@/lib/email', () => ({
   sendSubscriberEmails: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('@/lib/project-notification-delivery', () => ({
+  sendProjectMemberNotification: mocks.sendProjectMemberNotification,
 }));
 
 import { POST } from '../../src/app/api/pins/route';
@@ -115,6 +120,7 @@ beforeEach(() => {
     name: 'My Site',
     domain: 'example.com',
     apiKey: 'mk_correctkey123',
+    archivedAt: null,
   });
   mocks.page.upsert.mockResolvedValue({ id: 'page-1', projectId: 'proj-1', path: '/' });
   mocks.subscriber.findMany.mockResolvedValue([]);
@@ -122,13 +128,44 @@ beforeEach(() => {
   mocks.$transaction.mockImplementation(async (cb: (tx: any) => Promise<any>) => {
     const tx = {
       screenshot: { create: vi.fn().mockResolvedValue({ id: 'ss-1', pageId: 'page-1' }) },
-      pin: { create: vi.fn().mockResolvedValue({ id: 'pin-1', comments: [] }) },
+      pin: { create: mocks.txPinCreate.mockResolvedValue({
+        id: 'pin-1',
+        xPercent: 50,
+        yPercent: 50,
+        status: 'OPEN',
+        authorName: 'Client',
+        elementXPath: null,
+        elementHTML: null,
+        createdAt: new Date('2026-08-08T04:00:00.000Z'),
+        comments: [],
+      }) },
+      integration: { findMany: mocks.integration.findMany },
+      integrationEvent: { create: vi.fn().mockResolvedValue({}) },
     };
     return await cb(tx);
   });
 });
 
 describe('POST /api/pins', () => {
+  it('rejects new feedback for an archived site before creating page data', async () => {
+    mocks.project.findUnique.mockResolvedValue({
+      id: 'proj-1', name: 'My Site', domain: 'example.com',
+      apiKey: 'mk_correctkey123', archivedAt: new Date('2026-08-08T12:00:00.000Z'),
+      activeReviewRound: null,
+    });
+    const fd = makeFormData({
+      projectId: 'proj-1', path: '/', xPercent: '50', yPercent: '50',
+      screenshot: makeFile(),
+    });
+    const res = await POST(makeReq(fd));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      code: 'PROJECT_ARCHIVED',
+      error: 'This site is archived and is not accepting new feedback',
+    });
+    expect(mocks.page.upsert).not.toHaveBeenCalled();
+  });
+
   it('returns 400 when projectId is missing', async () => {
     const fd = makeFormData({
       path: '/', xPercent: '50', yPercent: '50',
@@ -247,6 +284,10 @@ describe('POST /api/pins', () => {
     const fd = makeFormData({
       projectId: 'proj-1', path: '/', xPercent: '50', yPercent: '50',
       screenshot: makeFile(), text: 'Fix the button color',
+      pageUrl: 'https://www.example.com/?session=secret#hero',
+      viewportWidth: '1440', viewportHeight: '900', devicePixelRatio: '2',
+      userAgent: 'Mozilla/5.0 Chrome/126.0.0.0 Safari/537.36', platform: 'Win32',
+      selectorCandidatesJson: JSON.stringify(['#hero', '[data-testid="hero"]']),
     });
     const res = await POST(makeReq(fd));
     expect(res.status).toBe(201);
@@ -259,6 +300,116 @@ describe('POST /api/pins', () => {
     const renameCall = fsMocks.rename.mock.calls[0];
     expect(String(renameCall[0])).toBe(writeCall[0]);          // src = temp
     expect(String(renameCall[1])).toMatch(/[0-9a-f-]+\.png$/); // dst = final
+    expect(mocks.txPinCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        pageUrl: 'https://www.example.com/',
+        viewportWidth: 1440,
+        viewportHeight: 900,
+        devicePixelRatio: 2,
+        userAgent: 'Mozilla/5.0 Chrome/126.0.0.0 Safari/537.36',
+        platform: 'Win32',
+        selectorCandidatesJson: JSON.stringify(['#hero', '[data-testid="hero"]']),
+      }),
+    }));
+    expect(mocks.sendProjectMemberNotification).toHaveBeenCalledWith({
+      projectId: 'proj-1',
+      pinId: 'pin-1',
+      event: 'new-pin',
+      title: 'New feedback',
+      message: 'Client added feedback on /: Fix the button color',
+    });
+  });
+
+  it('excludes external-alert addresses from member new-feedback delivery', async () => {
+    mocks.subscriber.findMany.mockResolvedValue([{ email: 'shared@example.com' }]);
+    const fd = makeFormData({
+      projectId: 'proj-1', path: '/', xPercent: '50', yPercent: '50',
+      screenshot: makeFile(), text: 'Shared alert',
+    });
+    const res = await POST(makeReq(fd));
+    await Promise.resolve();
+    expect(res.status).toBe(201);
+    expect(mocks.sendProjectMemberNotification).toHaveBeenCalledWith({
+      projectId: 'proj-1',
+      pinId: 'pin-1',
+      event: 'new-pin',
+      title: 'New feedback',
+      message: 'Client added feedback on /: Shared alert',
+      excludeEmails: ['shared@example.com'],
+    });
+  });
+
+  it('still queues member delivery when the legacy subscriber lookup fails', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    mocks.subscriber.findMany.mockRejectedValue(new Error('subscriber db unavailable'));
+    const fd = makeFormData({
+      projectId: 'proj-1', path: '/', xPercent: '50', yPercent: '50',
+      screenshot: makeFile(), text: 'Member fallback',
+    });
+    const res = await POST(makeReq(fd));
+    await Promise.resolve();
+    expect(res.status).toBe(201);
+    expect(mocks.sendProjectMemberNotification).toHaveBeenCalledWith({
+      projectId: 'proj-1', pinId: 'pin-1', event: 'new-pin', title: 'New feedback',
+      message: 'Client added feedback on /: Member fallback',
+    });
+    consoleError.mockRestore();
+  });
+
+  it('rejects developer context for a different host before writing a page or file', async () => {
+    const fd = makeFormData({
+      projectId: 'proj-1', path: '/', xPercent: '50', yPercent: '50',
+      screenshot: makeFile(), pageUrl: 'https://evil.example/',
+    });
+    const res = await POST(makeReq(fd));
+    expect(res.status).toBe(400);
+    expect(mocks.page.upsert).not.toHaveBeenCalled();
+    expect(fsMocks.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('blocks new pins when the active review round pauses feedback', async () => {
+    mocks.project.findUnique.mockResolvedValue({
+      id: 'proj-1',
+      name: 'My Site',
+      domain: 'example.com',
+      apiKey: 'mk_correctkey123',
+      activeReviewRoundId: 'round-1',
+      activeReviewRound: { id: 'round-1', commentsPaused: true },
+    });
+    const fd = makeFormData({
+      projectId: 'proj-1', path: '/', xPercent: '50', yPercent: '50',
+      screenshot: makeFile(), text: 'A new issue',
+    });
+
+    const res = await POST(makeReq(fd));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: 'New feedback is paused for this review round',
+      code: 'NEW_FEEDBACK_PAUSED',
+    });
+    expect(mocks.page.upsert).not.toHaveBeenCalled();
+    expect(fsMocks.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('associates a new pin with the active review round', async () => {
+    mocks.project.findUnique.mockResolvedValue({
+      id: 'proj-1',
+      name: 'My Site',
+      domain: 'example.com',
+      apiKey: 'mk_correctkey123',
+      activeReviewRoundId: 'round-1',
+      activeReviewRound: { id: 'round-1', commentsPaused: false },
+    });
+    const fd = makeFormData({
+      projectId: 'proj-1', path: '/', xPercent: '50', yPercent: '50',
+      screenshot: makeFile(), text: 'A round-scoped issue',
+    });
+
+    const res = await POST(makeReq(fd));
+    expect(res.status).toBe(201);
+    expect(mocks.txPinCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ reviewRoundId: 'round-1' }),
+    }));
   });
 
   it('on tx failure: cleans up the temp file, no rename happens', async () => {

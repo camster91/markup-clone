@@ -19,6 +19,21 @@ vi.mock('@/lib/prisma', () => ({
   prisma: mocks,
 }));
 
+// Project creation is an administrator flow. Reviewer rejection has its own
+// focused authorization suite, so these validation tests run as an operator.
+vi.mock('@/lib/auth', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/auth')>();
+  return {
+    ...actual,
+    requireDashboardAuth: vi.fn(async (req: Request) => actual.requireDashboardOrigin(req)),
+    requireAuth: vi.fn(async () => ({
+      id: 'operator-1',
+      email: 'operator@example.com',
+      role: 'operator',
+    })),
+  };
+});
+
 import { POST } from '../../src/app/api/projects/route';
 import { NextRequest } from 'next/server';
 

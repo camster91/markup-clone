@@ -14,6 +14,72 @@ guessing from chat history.
 
 ## Current plans
 
+- `docs/plans/cross-browser-widget-and-accessibility-qa-2026-08-08.md` - **Complete
+  locally; production untouched.** Real built-widget PNG capture, recapture,
+  keyboard, focus, overflow, and visual QA across Chromium, Firefox, and WebKit.
+- `docs/plans/local-pin-ingestion-load-rehearsal-2026-08-08.md` - **Complete
+  locally; production untouched.** Reproducible multipart pin-ingestion capacity
+  evidence with loopback enforcement, thresholds, and verified cleanup.
+- `docs/plans/role-aware-notifications-2026-08-08.md` - **Complete locally;
+  production untouched.** Self-service project-member email
+  preferences and role-aware presets for feedback, replies, workflow, assignment,
+  and mention events while preserving external pin alerts.
+- `docs/plans/project-summary-aggregation-2026-08-08.md` - **Complete locally;
+  production untouched.** Replaced overview relation-tree hydration with one
+  authorization-scoped aggregate while preserving the compact role-safe DTO.
+- `docs/plans/collaboration-transport-consolidation-2026-08-08.md` - **Complete
+  locally; production untouched.** One truthful presence heartbeat
+  and one SSE stream per focused project, with no false list-page presence.
+- `docs/plans/managed-public-review-links-2026-08-08.md` - **Complete locally;
+  production untouched.** Expiring/password-protected review
+  links, token-bound HttpOnly media access, secret redaction, and client-safe
+  unlock UX.
+- `docs/plans/release-candidate-operational-validation-2026-08-08.md` - **Local
+  implementation complete; prior-image rollback and production approval pending.**
+  Reusable agency defaults, warning-free builds, guarded backup/restore,
+  operational drills, and local release-candidate proof.
+- `docs/plans/public-developer-api-and-browser-sdk-2026-08-08.md` - **Complete
+  locally; production and npm untouched.** Hash-only scoped developer tokens,
+  versioned read-only issue API, OpenAPI documentation, and a typed browser SDK
+  lifecycle, with clean/upgrade migration and browser verification.
+- `docs/plans/client-site-organization-and-archive-2026-08-08.md` - **Complete
+  locally; production untouched.** Agency/client/site/review-round information
+  architecture and reversible site archiving with active-by-default lists.
+- `docs/plans/workspace-branding-and-client-review-mode-2026-08-08.md` - **Complete
+  locally; production untouched.** Validated agency identity, operator-owned branding,
+  and a simpler role-redacted client/guest project experience.
+- `docs/plans/invitation-claiming-and-agency-roles-2026-08-08.md` - **Complete
+  locally; production untouched.** Expiring hash-only invitations, invite-only account
+  creation, canonical agency/client roles, project-scoped guests, and role-safe
+  team/project UI.
+- `docs/plans/native-github-issue-delivery-2026-08-08.md` - **Completed
+  locally.** Encrypted repository credentials, safe repository
+  verification, deterministic issue handoff, retry deduplication, and retained
+  GitHub issue links; production remains approval-gated.
+- `docs/plans/reliable-integration-delivery-2026-08-08.md` - **Completed
+  locally.** Versioned events, transactional outbox delivery, webhook signing,
+  bounded retries, immutable attempts, and an owner-visible delivery log;
+  production remains approval-gated.
+- `docs/plans/developer-context-packet-2026-08-07.md` - **Completed locally.**
+  Privacy-bounded widget context, server validation, role-safe DTOs, and
+  administrator-only developer context UI; production remains approval-gated.
+- `docs/plans/structured-developer-handoff-2026-08-07.md` - **Completed
+  locally.** Versioned issue payload, safe Markdown adapter, administrator copy
+  action, and exact-pin dashboard deep links; external delivery remains pending.
+- `docs/plans/internal-issue-metadata-2026-08-07.md` - **Completed locally.**
+  Owner-only priority, claimed-team assignee, reusable project tags, combined
+  filters, and role-safe developer-handoff enrichment; production remains
+  approval-gated.
+
+- `docs/plans/review-rounds-workflow-2026-08-07.md` — **Active implementation
+  plan.** Durable review rounds, status, attributable sign-off, and paused-new-pin
+  behavior with role and migration boundaries.
+- `docs/plans/markup-parity-and-agency-advantage-2026-08-07.md` — **Active
+  product definition.** First-party-verified competitor matrix and the ordered
+  agency/developer differentiation slices.
+- `docs/plans/agency-product-release-2026-08-07.md` — **Active release
+  plan.** Security/reliability gates first, then core workflow parity,
+  agency/developer differentiation, and production-readiness evidence.
 - `docs/qa/2026-07-24-production-security-audit.md` — **Current**
   production security / reliability audit. Critical + High items
   patched on `cursor/production-security-audit-4eb8`. Read before
@@ -34,11 +100,10 @@ guessing from chat history.
 
 ## Pending planning
 
-The project lacks a current (post-July 2026) plan for Phase 5 work —
-billing polish, per-site sitemap/OG, analytics, form webhooks, media
-library, template gallery, team seats, GitHub export, generation
-quality. A new plan should be filed here as `phase-5-YYYY-MM-DD.md`
-before any of those features are started.
+The active agency product release plan now governs post-July work.
+Feature-specific design documents should still be added before a
+release gate expands into implementation work that is not specified
+there.
 
 ## Don't
 

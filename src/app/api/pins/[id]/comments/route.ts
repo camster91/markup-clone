@@ -7,8 +7,7 @@ import { validatePinText, validatePinId, sanitizeText, LIMITS } from '@/lib/vali
 import { emit } from '@/lib/events';
 import { audit } from '@/lib/audit';
 import { parseMentions } from '@/lib/mentions';
-import { sendMentionEmail } from '@/lib/email';
-import { parseHost } from '@/lib/origin';
+import { sendProjectMemberNotification } from '@/lib/project-notification-delivery';
 import { assertProjectAccessible } from '@/lib/teams';
 
 // Closed set of comment authorRole values. Dashboard comments are
@@ -171,17 +170,16 @@ export async function POST(
     // We re-validate at comment-create time so a caller can't
     // smuggle in an attachment id that doesn't exist (e.g. a
     // typo, or an id from a different comment thread). The
-    // query is a single IN-list on the unique id column — fast
-    // and doesn't depend on the comment row at all. We do NOT
-    // restrict to "only orphan rows" here; an attachment that
-    // was uploaded with a commentId against an existing
-    // comment can be re-bound by another POST (the cascade on
-    // the original Comment would have removed it, so this is
-    // only meaningful in a flow that produces a deliberate
-    // re-link, which the current UI does not).
+    // query is an IN-list constrained to unbound rows owned by this pin's
+    // project. A bound attachment or an orphan from another project is
+    // intentionally indistinguishable from a missing id.
     if (normalizedAttachmentIds.length > 0) {
       const existing = await prisma.attachment.findMany({
-        where: { id: { in: normalizedAttachmentIds } },
+        where: {
+          id: { in: normalizedAttachmentIds },
+          commentId: null,
+          projectId: scopedProjectId,
+        },
         select: { id: true },
       });
       const found = new Set(existing.map((a) => a.id));
@@ -199,16 +197,11 @@ export async function POST(
         pinId: id,
         text,
         author: authorNormalized,
-        authorRole: authorRoleNormalized,        // Claim the uploaded attachments by linking them to the
+        authorRole: authorRoleNormalized,
+        // Claim the uploaded attachments by linking them to the
         // new comment. `connect` is the right shape because the
-        // Attachment rows already exist — we just add the
-        // back-reference. We do NOT re-validate that the
-        // attachment's existing commentId is null (the row was
-        // created with a commentId at upload time, so this
-        // `connect` on the M-N side is a no-op and the row's
-        // commentId stays as the original). This is correct: the
-        // upload route already bound the attachment to the
-        // comment.
+        // Attachment rows already exist — the scoped lookup above proved
+        // each row is unbound and owned by this project.
         ...(normalizedAttachmentIds.length > 0
           ? { attachments: { connect: normalizedAttachmentIds.map((aid) => ({ id: aid })) } }
           : {}),
@@ -218,36 +211,40 @@ export async function POST(
       },
     });
 
-    // Look up the pin's projectId + screenshotId so we can scope the
-    // new-comment event AND build the per-mention pinUrl link. We
+    // Look up the pin's projectId so we can scope the new-comment event
+    // and member notifications. We
     // could join this into the create above, but the create path is
     // the hot path and a second query is cheap (and the comment row
     // is already written, so the slow path is overshadowed by the
-    // user's send). The projectId + screenshotId are the ONLY fields
+    // user's send). The projectId is the ONLY field
     // we read; we explicitly do NOT select the full pin row (which
     // would include sensitive authorName from previous comments) so
-    // this query has no PII footprint. Project name is also pulled so
-    // the mention email subject has something useful in it.
+    // this query has no PII footprint.
     const pinMeta = await prisma.pin.findUnique({
       where: { id },
       select: {
         screenshot: {
-          select: {
-            id: true,
-            page: { select: { projectId: true, project: { select: { name: true } } } },
-          },
+          select: { page: { select: { projectId: true } } },
         },
       },
     });
     const projectId = pinMeta?.screenshot?.page?.projectId ?? null;
-    const screenshotId = pinMeta?.screenshot?.id ?? null;
-    const projectName = pinMeta?.screenshot?.page?.project?.name ?? 'Project';
 
     // Reopen-on-reply: if the pin was RESOLVED, flip it back to OPEN.
     // This is the reviewer-side signal that more work is needed.
     const pin = await prisma.pin.findUnique({ where: { id }, select: { status: true } });
     if (pin?.status === 'RESOLVED') {
       await prisma.pin.update({ where: { id }, data: { status: 'OPEN' } });
+      if (projectId) {
+        void sendProjectMemberNotification({
+          projectId,
+          pinId: id,
+          event: 'status-change',
+          title: 'Feedback reopened',
+          message: `${comment.author} reopened feedback by replying.`,
+          actorUserId: access.caller.id,
+        });
+      }
     }
 
     // Live update: broadcast a new-comment event so any dashboard
@@ -282,8 +279,8 @@ export async function POST(
             // FeedbackAttachment type — id, kind, size, mimeType,
             // plus the relative url (the dashboard is already
             // dashboard-origin-authenticated, so the GET
-            // /api/attachments/[id] route will accept the request
-            // without a `?share=` token).
+            // /api/attachments/[id] route will accept the session; managed
+            // public reviews use a token-bound HttpOnly cookie).
             attachments: (comment.attachments ?? []).map((a) => ({
               id: a.id,
               kind: a.kind as 'image' | 'voice' | 'video',
@@ -313,11 +310,12 @@ export async function POST(
     // recipient lands on the screenshot view scrolled to the new
     // comment.
     const mentioned = parseMentions(text);
+    let mentionedUserIds: string[] = [];
     if (mentioned.length > 0) {
       try {
         const mentionedUsers = await prisma.user.findMany({
           where: { email: { in: mentioned, mode: 'insensitive' } },
-          select: { email: true },
+          select: { id: true, email: true },
         });
         // Dedup case-insensitively, but PRESERVE the original User
         // email casing. The User row is the source of truth for the
@@ -327,37 +325,35 @@ export async function POST(
         // if the mailbox is case-sensitive).
         const seen = new Set<string>();
         const emailsToSend: string[] = [];
+        const userIdsToNotify: string[] = [];
         for (const u of mentionedUsers) {
           const key = u.email.toLowerCase();
           if (!seen.has(key)) {
             seen.add(key);
             emailsToSend.push(u.email);
+            userIdsToNotify.push(u.id);
           }
         }
+        mentionedUserIds = userIdsToNotify;
         if (emailsToSend.length > 0) {
-          const dashboardOrigin = parseHost(process.env.DASHBOARD_HOST).origin;
-          const pinUrl = screenshotId
-            ? `${dashboardOrigin}/api/screenshots/${screenshotId}/image#comment-${comment.id}`
-            : `${dashboardOrigin}#comment-${comment.id}`;
           // Audit the mention event (one row per batch, not per email —
-          // the list is in the metadata so the operator can see exactly
-          // who was notified).
+          // the matched list is in metadata; final delivery still applies
+          // project membership and each user's mention preference).
           audit({
             actor: comment.author,
             action: 'comment.mention',
             target: comment.id,
             metadata: { pinId: id, emails: emailsToSend },
           });
-          for (const email of emailsToSend) {
-            // Intentionally not awaited. sendMentionEmail has its own
-            // try/catch around the Mailgun call so a single bad email
-            // can't poison the rest of the batch.
-            void sendMentionEmail({
-              to: email,
-              author: comment.author,
-              projectName,
-              commentText: text,
-              pinUrl,
+          if (projectId) {
+            void sendProjectMemberNotification({
+              projectId,
+              pinId: id,
+              event: 'mention',
+              title: 'You were mentioned',
+              message: `${comment.author} mentioned you: ${text}`,
+              actorUserId: access.caller.id,
+              targetUserIds: userIdsToNotify,
             });
           }
         }
@@ -367,6 +363,18 @@ export async function POST(
         // already getting back. Log and move on.
         console.error('[comments] mention dispatch failed:', err);
       }
+    }
+
+    if (projectId) {
+      void sendProjectMemberNotification({
+        projectId,
+        pinId: id,
+        event: 'new-comment',
+        title: 'New thread reply',
+        message: `${comment.author} replied${text ? `: ${text}` : '.'}`,
+        actorUserId: access.caller.id,
+        ...(mentionedUserIds.length > 0 ? { excludeUserIds: mentionedUserIds } : {}),
+      });
     }
 
     return NextResponse.json({ success: true, data: comment }, { status: 201 });

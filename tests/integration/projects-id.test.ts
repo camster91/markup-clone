@@ -34,9 +34,23 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/prisma', () => ({
   prisma: mocks,
 }));
+const authState = vi.hoisted(() => ({
+  user: { id: 'operator-1', email: 'operator@example.com', role: 'operator' },
+}));
+
+// This suite verifies the functional admin route behavior. Reviewer denial is
+// covered separately in project-admin-role-enforcement.test.ts.
+vi.mock('@/lib/auth', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/auth')>();
+  return {
+    ...actual,
+    requireDashboardAuth: vi.fn(async (req: Request) => actual.requireDashboardOrigin(req)),
+    requireAuth: vi.fn(async () => authState.user),
+  };
+});
 
 
-import { DELETE, PATCH } from '../../src/app/api/projects/[id]/route';
+import { DELETE, GET, PATCH } from '../../src/app/api/projects/[id]/route';
 import { NextRequest } from 'next/server';
 
 // Test CSRF token used by the request builders. The value is
@@ -46,6 +60,10 @@ import { NextRequest } from 'next/server';
 // every file sends the same pair to the server, so any
 // mismatch shows up as a real regression rather than a typo.
 const CSRF_TOKEN = 'test-csrf-token';
+
+beforeEach(() => {
+  authState.user = { id: 'operator-1', email: 'operator@example.com', role: 'operator' };
+});
 
 function req(method: string, headers: Record<string, string> = {}): NextRequest {
   // Default headers set BOTH `requireDashboardOrigin` (Origin)
@@ -83,6 +101,35 @@ function setUnscopedProject() {
     id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', name: 'Test', domain: 'example.com', teamId: null,
   });
 }
+
+describe('GET /api/projects/[id]', () => {
+  it('returns the authorized full detail DTO for one project', async () => {
+    mocks.project.findUnique.mockResolvedValue({
+      id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      name: 'Client Site',
+      domain: 'example.com',
+      apiKey: 'mk_detail',
+      shareToken: null,
+      teamId: null,
+      pages: [],
+      subscribers: [],
+    });
+
+    const response = await GET(
+      req('GET', { origin: 'https://markup.ashbi.ca' }),
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) }
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      apiKey: 'mk_detail',
+      canAdmin: true,
+      pages: [],
+    });
+  });
+});
 
 
 describe('DELETE /api/projects/[id]', () => {
@@ -150,6 +197,7 @@ describe('DELETE /api/projects/[id]', () => {
     mocks.project.findUnique.mockResolvedValue({
       id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', name: 'T', domain: 't.com', teamId: 'team-1',
     });
+    authState.user = { id: 'reviewer-1', email: 'reviewer@example.com', role: 'reviewer' };
     const res = await DELETE(req('DELETE', { origin: 'https://markup.ashbi.ca' }),
       { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
     expect(res.status).toBe(403);
@@ -234,7 +282,58 @@ describe('PATCH /api/projects/[id]', () => {
     expect(call.data.apiKey).toMatch(/^mk_[0-9a-f]{40}$/);
   });
 
-  it('rejects body without name or regenerateKey (no-op is a 400)', async () => {
+  it('archives and restores a project idempotently', async () => {
+    const archivedAt = new Date('2026-08-08T12:00:00.000Z');
+    mocks.project.update
+      .mockResolvedValueOnce({
+        id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', name: 'Test', domain: 'example.com',
+        apiKey: 'mk_xx', archivedAt,
+      })
+      .mockResolvedValueOnce({
+        id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', name: 'Test', domain: 'example.com',
+        apiKey: 'mk_xx', archivedAt: null,
+      });
+
+    const archive = await PATCH(
+      reqWithBody('PATCH', { archived: true }, { origin: 'https://markup.ashbi.ca' }),
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) },
+    );
+    expect(archive.status).toBe(200);
+    expect(mocks.project.update.mock.calls[0][0].data.archivedAt).toBeInstanceOf(Date);
+
+    const restore = await PATCH(
+      reqWithBody('PATCH', { archived: false }, { origin: 'https://markup.ashbi.ca' }),
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) },
+    );
+    expect(restore.status).toBe(200);
+    expect(mocks.project.update.mock.calls[1][0].data.archivedAt).toBeNull();
+  });
+
+  it('preserves the original archive timestamp when archiving an already archived project', async () => {
+    const original = new Date('2026-08-07T12:00:00.000Z');
+    mocks.project.findUnique.mockResolvedValue({
+      id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', name: 'Test', domain: 'example.com',
+      teamId: null, archivedAt: original,
+    });
+    mocks.project.update.mockResolvedValue({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', archivedAt: original });
+    const response = await PATCH(
+      reqWithBody('PATCH', { archived: true }, { origin: 'https://markup.ashbi.ca' }),
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) },
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.project.update.mock.calls[0][0].data.archivedAt).toEqual(original);
+  });
+
+  it('rejects a non-boolean archived value', async () => {
+    const res = await PATCH(
+      reqWithBody('PATCH', { archived: 'yes' }, { origin: 'https://markup.ashbi.ca' }),
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) },
+    );
+    expect(res.status).toBe(400);
+    expect(mocks.project.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects body without name, regenerateKey, or archived (no-op is a 400)', async () => {
     const res = await PATCH(reqWithBody('PATCH', {}, { origin: 'https://markup.ashbi.ca' }),
       { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
     // Empty body should NOT change anything and is likely a 400 to surface the bug
@@ -336,6 +435,7 @@ describe('PATCH /api/projects/[id]', () => {
     mocks.project.findUnique.mockResolvedValue({
       id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', name: 'T', domain: 't.com', teamId: 'team-1',
     });
+    authState.user = { id: 'reviewer-1', email: 'reviewer@example.com', role: 'reviewer' };
     const res = await PATCH(reqWithBody('PATCH', { name: 'New' }, { origin: 'https://markup.ashbi.ca' }),
       { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
     expect(res.status).toBe(403);

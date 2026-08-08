@@ -7,6 +7,7 @@
 // success so the server-rendered team list picks up the new row.
 
 import { useState } from 'react';
+import { dashboardHeaders } from '@/lib/client-origin';
 
 export default function NewTeamForm({ workspaceId }: { workspaceId: string }) {
   const [name, setName] = useState('');
@@ -22,7 +23,7 @@ export default function NewTeamForm({ workspaceId }: { workspaceId: string }) {
     try {
       const res = await fetch(`/api/workspaces/${workspaceId}/teams`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...dashboardHeaders() },
         body: JSON.stringify({ name: trimmed }),
       });
       if (!res.ok) {
@@ -44,14 +45,14 @@ export default function NewTeamForm({ workspaceId }: { workspaceId: string }) {
       className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 flex items-end gap-3 flex-wrap"
     >
       <label className="flex-1 min-w-[12rem]">
-        <span className="block text-sm font-medium text-gray-700 mb-1">New team name</span>
+        <span className="block text-sm font-medium text-gray-700 mb-1">New client account</span>
         <input
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
           required
           maxLength={200}
-          placeholder="e.g. Marketing"
+          placeholder="e.g. Acme Corporation"
           className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
       </label>
@@ -60,7 +61,7 @@ export default function NewTeamForm({ workspaceId }: { workspaceId: string }) {
         disabled={submitting || !name.trim()}
         className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        {submitting ? 'Creating…' : 'Create team'}
+        {submitting ? 'Creating…' : 'Create client'}
       </button>
       {error && (
         <div className="basis-full text-sm text-red-600" role="alert">

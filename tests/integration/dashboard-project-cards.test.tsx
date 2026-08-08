@@ -26,57 +26,38 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 import React from 'react';
+
+const presenceHook = vi.hoisted(() => vi.fn(() => ({ myUserId: 'owner-1', others: [] })));
+vi.mock('@/lib/hooks/usePresence', () => ({
+  usePresence: presenceHook,
+  colorForUserId: () => 'bg-blue-500',
+  shortLabelForUserId: () => 'owner',
+}));
+
 import DashboardPoller from '@/components/DashboardPoller';
-import type { ProjectWithPages } from '@/lib/types';
+import type { ProjectSummary } from '@/lib/types';
 
 // Silence the "current testing environment is not configured to
 // support act(...)" warning that React 19 emits when not running
 // inside @testing-library/react.
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const fakeProjects: ProjectWithPages[] = [
+const fakeProjects: ProjectSummary[] = [
   {
     id: 'proj-abc-123',
     name: 'Acme Redesign',
     domain: 'acme.com',
     apiKey: 'mk_abc',
     shareToken: null,
-    pages: [
-      {
-        id: 'page-1',
-        path: '/',
-        screenshots: [
-          {
-            id: 'shot-1',
-            pageId: 'page-1',
-            storageKey: 'a.png',
-            width: 1024,
-            height: 768,
-            capturedAt: '2026-01-02T00:00:00.000Z',
-            pins: [
-              {
-                id: 'pin-1',
-                xPercent: 50,
-                yPercent: 50,
-                status: 'OPEN',
-                createdAt: '2026-01-02T00:00:00.000Z',
-                comments: [],
-                annotations: [],
-              },
-              {
-                id: 'pin-2',
-                xPercent: 25,
-                yPercent: 25,
-                status: 'RESOLVED',
-                createdAt: '2026-01-02T00:00:00.000Z',
-                comments: [],
-                annotations: [],
-              },
-            ],
-          },
-        ],
-      },
-    ],
+    canAdmin: true,
+    teamId: null,
+    team: null,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-02T00:00:00.000Z',
+    totalPages: 1,
+    totalScreenshots: 1,
+    totalPins: 2,
+    openPins: 1,
   },
 ];
 
@@ -86,6 +67,7 @@ describe('DashboardProjects list view — split into per-project pages', () => {
   let originalFetch: typeof global.fetch;
 
   beforeEach(() => {
+    presenceHook.mockClear();
     container = document.createElement('div');
     document.body.appendChild(container);
     originalFetch = global.fetch;
@@ -168,7 +150,41 @@ describe('DashboardProjects list view — split into per-project pages', () => {
     // 2 pins total, 1 open. The compact card shows both numbers.
     expect(text).toContain('2');
     expect(text).toContain('1');
-    // The "Open project →" affordance is the secondary link.
-    expect(text).toMatch(/Open project/);
+    // The "Open site →" affordance is the secondary agency-facing link.
+    expect(text).toMatch(/Open site/);
+  });
+
+  it('does not report the overview user as present in unopened projects', async () => {
+    root = createRoot(container);
+    await act(async () => {
+      root.render(React.createElement(DashboardPoller, { projects: fakeProjects }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(presenceHook).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain('Online now');
+  });
+
+  it('shows reviewer access without rendering project administration controls', async () => {
+    const reviewerProjects = [{
+      ...fakeProjects[0],
+      apiKey: null,
+      shareToken: null,
+      canAdmin: false,
+    }] as ProjectSummary[];
+    root = createRoot(container);
+    await act(async () => {
+      root.render(React.createElement(DashboardPoller, { projects: reviewerProjects }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    const text = container.textContent ?? '';
+    expect(text).toContain('Review access');
+    expect(text).toContain('Open review');
+    expect(text).not.toContain('API Key');
+    expect(text).not.toContain('Public share link');
+    expect(text).not.toContain('Subscribers');
+    expect(text).not.toContain('Outbound integrations');
+    expect(container.querySelector('[aria-label="Site settings"]')).toBeNull();
   });
 });

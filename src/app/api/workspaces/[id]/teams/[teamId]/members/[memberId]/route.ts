@@ -15,6 +15,7 @@ import { prisma } from '@/lib/prisma';
 import { requireDashboardAuth } from '@/lib/auth';
 import { requireCsrfToken } from '@/lib/csrf';
 import { audit } from '@/lib/audit';
+import { assertTeamRole } from '@/lib/teams';
 import { validateTeamRole, validateUuidParam } from '@/lib/validation';
 
 async function findMember(workspaceId: string, teamId: string, memberId: string) {
@@ -45,20 +46,50 @@ export async function PATCH(
     const midRes = validateUuidParam(memberId, 'memberId');
     if (!midRes.ok) return NextResponse.json({ error: midRes.error }, { status: 400 });
 
+    const access = await assertTeamRole(widRes.value, tidRes.value, ['owner']);
+    if (!access.ok) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+
     const body = await req.json();
-    const { role } = body as { role?: unknown };
+    const { role, projectId } = body as { role?: unknown; projectId?: unknown };
     const roleRes = validateTeamRole(role);
     if (!roleRes.ok) return NextResponse.json({ error: roleRes.error }, { status: 400 });
 
     const existing = await findMember(widRes.value, tidRes.value, midRes.value);
     if (!existing) return NextResponse.json({ error: 'Member not found' }, { status: 404 });
 
+    let projectIdValue: string | null = null;
+    if (roleRes.value === 'guest') {
+      const projectRes = validateUuidParam(projectId, 'projectId');
+      if (!projectRes.ok) return NextResponse.json({ error: projectRes.error }, { status: 400 });
+      const project = await prisma.project.findFirst({
+        where: { id: projectRes.value, teamId: tidRes.value },
+        select: { id: true },
+      });
+      if (!project) {
+        return NextResponse.json({ error: 'Guest project must belong to this team' }, { status: 400 });
+      }
+      projectIdValue = project.id;
+    } else if (projectId !== undefined && projectId !== null) {
+      return NextResponse.json({ error: 'Only guests may select a project' }, { status: 400 });
+    }
+
+    if (existing.role === 'owner' && roleRes.value !== 'owner' && existing.userId) {
+      const ownerCount = await prisma.teamMember.count({
+        where: { teamId: tidRes.value, role: 'owner', userId: { not: null } },
+      });
+      if (ownerCount <= 1) {
+        return NextResponse.json({ error: 'A team must keep at least one owner' }, { status: 409 });
+      }
+    }
+
     const member = await prisma.teamMember.update({
       where: { id: midRes.value },
-      data: { role: roleRes.value },
+      data: { role: roleRes.value, projectId: projectIdValue },
     });
     audit({
-      actor: member.id,
+      actor: access.caller.id,
       action: 'team_member.update',
       target: member.id,
       metadata: { teamId: tidRes.value, role: member.role },
@@ -88,12 +119,26 @@ export async function DELETE(
     const midRes = validateUuidParam(memberId, 'memberId');
     if (!midRes.ok) return NextResponse.json({ error: midRes.error }, { status: 400 });
 
+    const access = await assertTeamRole(widRes.value, tidRes.value, ['owner']);
+    if (!access.ok) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+
     const existing = await findMember(widRes.value, tidRes.value, midRes.value);
     if (!existing) return NextResponse.json({ error: 'Member not found' }, { status: 404 });
 
+    if (existing.role === 'owner' && existing.userId) {
+      const ownerCount = await prisma.teamMember.count({
+        where: { teamId: tidRes.value, role: 'owner', userId: { not: null } },
+      });
+      if (ownerCount <= 1) {
+        return NextResponse.json({ error: 'A team must keep at least one owner' }, { status: 409 });
+      }
+    }
+
     await prisma.teamMember.delete({ where: { id: midRes.value } });
     audit({
-      actor: midRes.value,
+      actor: access.caller.id,
       action: 'team_member.remove',
       target: midRes.value,
       metadata: { teamId: tidRes.value, email: existing.email, role: existing.role },

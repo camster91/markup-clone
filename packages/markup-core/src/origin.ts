@@ -13,7 +13,7 @@ const DEFAULT_HOST = 'markup.ashbi.ca';
 const DEFAULT_ORIGIN = `https://${DEFAULT_HOST}`;
 
 export interface OriginInfo {
-  /** Bare hostname, port stripped. Safe for host-equality comparisons. */
+  /** Hostname plus configured port. Safe for Host-header comparisons. */
   host: string;
   /** Scheme + host (+ port, if any). Safe for Origin/Referer headers. */
   origin: string;
@@ -25,7 +25,7 @@ export interface OriginInfo {
  * Accepts three forms:
  *   - undefined / null / ''  → default { markup.ashbi.ca, https://... }
  *   - 'host.example'        → { host: 'host.example', origin: 'https://host.example' }
- *   - 'https://host[:p][/p]' → parsed via `new URL(...)`; host strips any port
+ *   - 'https://host[:p][/p]' → parsed via `new URL(...)`; host preserves the port
  *
  * Throws on a non-empty value that has a scheme but is otherwise an
  * invalid URL (e.g. 'https://[bad') — callers can wrap in try/catch if
@@ -43,8 +43,8 @@ export function parseHost(value: string | undefined | null): OriginInfo {
     return { host: value, origin: `https://${value}` };
   }
 
-  // Full URL: parse with the URL constructor. `hostname` excludes the
-  // port (unlike `host`); that's what we want for host-equality checks.
+  // Full URL: parse with the URL constructor. `host` includes an explicit
+  // non-default port, matching the browser Origin and HTTP Host headers.
   const url = new URL(value);
-  return { host: url.hostname, origin: url.origin };
+  return { host: url.host, origin: url.origin };
 }

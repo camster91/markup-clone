@@ -16,9 +16,14 @@ import { requireDashboardAuth } from '@/lib/auth';
 import { requireCsrfToken } from '@/lib/csrf';
 import { audit } from '@/lib/audit';
 import { validateProjectId } from '@/lib/validation';
-import { assertProjectAccessible } from '@/lib/teams';
-import { isIntegrationKind, type IntegrationKind } from '@/lib/integrations/types';
-import { validateConfig } from '@/lib/integrations/validate';
+import { assertProjectAdmin } from '@/lib/teams';
+import { isIntegrationKind, type GitHubConfig, type IntegrationKind } from '@/lib/integrations/types';
+import { validateConfig, validateStoredConfig } from '@/lib/integrations/validate';
+import { generateWebhookSigningSecret } from '@/lib/integrations/signing';
+import {
+  encryptIntegrationCredential,
+  loadIntegrationEncryptionKey,
+} from '@/lib/integrations/credential-crypto';
 
 /** Mask path segments after the host (token-bearing URLs). */
 function redactUrl(raw: string): string {
@@ -56,11 +61,40 @@ export function redactConfig(kind: string, configJson: string): string {
         }
         cfg.headers = redacted;
       }
+    } else if (kind === 'github') {
+      const validated = validateStoredConfig('github', cfg);
+      return validated.ok ? JSON.stringify(validated.value) : '{}';
     }
     return JSON.stringify(cfg);
   } catch {
     return '{}';
   }
+}
+
+function publicIntegration(integration: {
+  id: string;
+  projectId: string;
+  kind: string;
+  configJson: string;
+  lastSuccessAt: Date | null;
+  lastError: string | null;
+  lastErrorAt: Date | null;
+  createdAt: Date;
+  credentialCiphertext?: string | null;
+}) {
+  const result = {
+    id: integration.id,
+    projectId: integration.projectId,
+    kind: integration.kind,
+    configJson: integration.configJson,
+    lastSuccessAt: integration.lastSuccessAt,
+    lastError: integration.lastError,
+    lastErrorAt: integration.lastErrorAt,
+    createdAt: integration.createdAt,
+  };
+  return integration.kind === 'github'
+    ? { ...result, credentialConfigured: Boolean(integration.credentialCiphertext) }
+    : result;
 }
 
 export async function GET(
@@ -75,7 +109,7 @@ export async function GET(
     const idRes = validateProjectId(projectId);
     if (!idRes.ok) return NextResponse.json({ error: idRes.error }, { status: 400 });
 
-    const access = await assertProjectAccessible(projectId);
+    const access = await assertProjectAdmin(projectId);
     if (!access.ok) {
       return NextResponse.json({ error: access.error }, { status: access.status });
     }
@@ -85,10 +119,12 @@ export async function GET(
       orderBy: { createdAt: 'asc' },
     });
     return NextResponse.json(
-      integrations.map((integration) => ({
-        ...integration,
-        configJson: redactConfig(integration.kind, integration.configJson),
-      }))
+      integrations.map((integration) => {
+        return {
+          ...publicIntegration(integration),
+          configJson: redactConfig(integration.kind, integration.configJson),
+        };
+      })
     );
   } catch (error) {
     console.error('Integration list error:', error);
@@ -110,7 +146,7 @@ export async function POST(
     const idRes = validateProjectId(projectId);
     if (!idRes.ok) return NextResponse.json({ error: idRes.error }, { status: 400 });
 
-    const access = await assertProjectAccessible(projectId);
+    const access = await assertProjectAdmin(projectId);
     if (!access.ok) {
       return NextResponse.json({ error: access.error }, { status: access.status });
     }
@@ -122,7 +158,7 @@ export async function POST(
     //    set is defined exactly once.
     if (!isIntegrationKind(body.kind)) {
       return NextResponse.json(
-        { error: 'kind must be one of: slack, discord, webhook' },
+        { error: 'kind must be one of: slack, discord, webhook, github' },
         { status: 400 }
       );
     }
@@ -136,13 +172,33 @@ export async function POST(
 
     // 3. Insert. We store the config as a JSON string so the
     //    column is a plain TEXT — no Prisma `Json` mapping
-    //    quirks. assertProjectAccessible already confirmed the
+    //    quirks. assertProjectAdmin already confirmed the
     //    project exists and is in scope.
+    const signingSecret = kind === 'webhook' ? generateWebhookSigningSecret() : null;
+    let configToStore: unknown = configRes.value;
+    let credentialCiphertext: string | null = null;
+    if (kind === 'github') {
+      const github = configRes.value as GitHubConfig;
+      try {
+        credentialCiphertext = encryptIntegrationCredential(
+          github.token,
+          loadIntegrationEncryptionKey(),
+        );
+      } catch {
+        return NextResponse.json(
+          { error: 'GitHub credential encryption is not configured' },
+          { status: 503 },
+        );
+      }
+      configToStore = { owner: github.owner, repo: github.repo, labels: github.labels };
+    }
     const integration = await prisma.integration.create({
       data: {
         projectId,
         kind,
-        configJson: JSON.stringify(configRes.value),
+        configJson: JSON.stringify(configToStore),
+        ...(signingSecret ? { signingSecret } : {}),
+        ...(credentialCiphertext ? { credentialCiphertext } : {}),
       },
     });
 
@@ -158,7 +214,11 @@ export async function POST(
       metadata: { kind },
     });
 
-    return NextResponse.json(integration, { status: 201 });
+    const safeIntegration = publicIntegration(integration);
+    return NextResponse.json(
+      signingSecret ? { ...safeIntegration, signingSecret } : safeIntegration,
+      { status: 201 },
+    );
   } catch (error) {
     console.error('Integration create error:', error);
     return NextResponse.json({ error: 'Failed to create integration' }, { status: 500 });

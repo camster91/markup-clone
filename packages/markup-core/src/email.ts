@@ -127,6 +127,77 @@ export async function sendMentionEmail(params: {
   }
 }
 
+/** Send one branded project event to a deduplicated member recipient list. */
+export async function sendProjectNotificationEmails(params: {
+  recipients: string[];
+  brand: { displayName: string; accentColor: string; accentText: string };
+  projectName: string;
+  title: string;
+  message: string;
+  actionUrl: string;
+}) {
+  const apiKey = process.env.MAILGUN_API_KEY;
+  const domain = process.env.MAILGUN_DOMAIN;
+  if (!apiKey || !domain) return;
+
+  const seen = new Set<string>();
+  const recipients: string[] = [];
+  for (const rawEmail of params.recipients) {
+    const email = rawEmail.trim();
+    const key = email.toLowerCase();
+    if (!email || seen.has(key)) continue;
+    seen.add(key);
+    recipients.push(email);
+  }
+  if (recipients.length === 0) return;
+
+  const displayName = params.brand.displayName.replace(/[\r\n]+/g, ' ').trim().slice(0, 120) || 'Visual Feedback';
+  const title = params.title.replace(/[\r\n]+/g, ' ').trim().slice(0, 160) || 'Project update';
+  const projectName = params.projectName.replace(/[\r\n]+/g, ' ').trim().slice(0, 200) || 'Project';
+  const accentColor = /^#[0-9a-f]{6}$/i.test(params.brand.accentColor) ? params.brand.accentColor : '#2563eb';
+  const accentText = /^#[0-9a-f]{6}$/i.test(params.brand.accentText) ? params.brand.accentText : '#ffffff';
+  const subject = `[${displayName}] ${title} — ${projectName}`;
+  const html = `
+<html>
+<body style="font-family: sans-serif; max-width: 600px; margin: auto; color: #111827;">
+  <div style="border-top: 6px solid ${accentColor}; padding: 24px;">
+    <p style="margin: 0 0 8px; color: #6b7280; font-size: 13px;">${escapeHtml(displayName)}</p>
+    <h2 style="margin: 0 0 8px;">${escapeHtml(title)}</h2>
+    <p style="margin: 0 0 20px;"><strong>${escapeHtml(projectName)}</strong></p>
+    <p style="line-height: 1.6;">${escapeHtml(params.message)}</p>
+    <p style="margin-top: 24px;">
+      <a href="${escapeHtml(params.actionUrl)}" style="display: inline-block; background-color: ${accentColor}; color: ${accentText}; padding: 10px 16px; border-radius: 6px; text-decoration: none; font-weight: 600;">Open project review</a>
+    </p>
+  </div>
+</body>
+</html>
+  `.trim();
+
+  for (const to of recipients) {
+    try {
+      const response = await fetch(`https://api.mailgun.net/v3/${domain}/messages`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${Buffer.from(`api:${apiKey}`).toString('base64')}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          from: `feedback@${domain}`,
+          to,
+          subject,
+          html,
+        }),
+      });
+      if (!response.ok) {
+        const body = await response.text();
+        console.error(`[email] Project notification error for ${to}: ${response.status} ${body}`);
+      }
+    } catch (error) {
+      console.error(`[email] Failed to send project notification to ${to}:`, error);
+    }
+  }
+}
+
 function escapeHtml(s: string): string {
   // Order matters: replace `&` first so the `&` in entities like `&lt;`
   // gets re-encoded to `&amp;lt;`. Otherwise the resulting HTML decodes

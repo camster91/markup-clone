@@ -86,13 +86,9 @@ export interface UseLiveEventsOptions {
  *     re-runs this effect's cleanup + start. This double-fires on
  *     transient disconnects; we keep the effect idempotent (the
  *     cleanup always closes the most recent source) so that's safe.
- *   - We do NOT use the `usePresence` (or any other) polling pattern.
- *     SSE is a separate, additive transport. The presence row is
- *     updated by the existing 5s heartbeat + 5s poll; SSE may ALSO
- *     carry a presence-update event (the route would emit it from
- *     the presence POST), but the polling path remains the source
- *     of truth and F2's swap from polling to SSE for presence is a
- *     separate, future change.
+ *   - Presence retains one project-level heartbeat + full TTL poll.
+ *     SSE is the separate mutation fast path; the poll remains the
+ *     source of truth for expiring stale presence rows.
  */
 export function useLiveEvents(opts: UseLiveEventsOptions): void {
   const { projectId, screenshotId = null, onEvent, onReady, onError } = opts;

@@ -22,7 +22,7 @@
 // shape (no 'use client' directive) so a future refactor can't
 // silently re-introduce a client boundary on the page.
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -46,13 +46,31 @@ const mocks = vi.hoisted(() => ({
     findFirst: vi.fn().mockResolvedValue(null),
     findMany: vi.fn().mockResolvedValue([]),
   },
+  $queryRaw: vi.fn(),
+}));
+
+const requestState = vi.hoisted(() => ({
+  sessionToken: null as string | null,
 }));
 
 vi.mock('@/lib/prisma', () => ({
   prisma: mocks,
 }));
 
+vi.mock('next/headers', () => ({
+  cookies: vi.fn(async () => ({
+    get: (name: string) =>
+      name === 'markup.session' && requestState.sessionToken
+        ? { value: requestState.sessionToken }
+        : undefined,
+  })),
+}));
+
+vi.unmock('@/lib/auth');
+
 import DashboardPage from '../../src/app/page';
+
+const ORIGINAL_DASHBOARD_HOST = process.env.DASHBOARD_HOST;
 
 function getCircularReplacer(): (key: string, value: unknown) => unknown {
   const seen = new WeakSet<object>();
@@ -74,7 +92,38 @@ beforeEach(() => {
   mocks.session.findUnique.mockResolvedValue(null);
   mocks.teamMember.findFirst.mockResolvedValue(null);
   mocks.teamMember.findMany.mockResolvedValue([]);
+  mocks.$queryRaw.mockResolvedValue([]);
+  requestState.sessionToken = null;
 });
+
+afterEach(() => {
+  if (ORIGINAL_DASHBOARD_HOST === undefined) delete process.env.DASHBOARD_HOST;
+  else process.env.DASHBOARD_HOST = ORIGINAL_DASHBOARD_HOST;
+});
+
+function authenticate() {
+  requestState.sessionToken = 'session-1';
+  mocks.session.findUnique.mockResolvedValue({
+    token: 'session-1',
+    expiresAt: new Date('2999-01-01T00:00:00Z'),
+    user: { id: 'user-1', email: 'operator@example.com', role: 'operator' },
+  });
+}
+
+function authenticateReviewer() {
+  requestState.sessionToken = 'session-reviewer';
+  mocks.session.findUnique.mockResolvedValue({
+    token: 'session-reviewer',
+    expiresAt: new Date('2999-01-01T00:00:00Z'),
+    user: { id: 'reviewer-1', email: 'reviewer@example.com', role: 'reviewer' },
+  });
+  mocks.teamMember.findMany.mockImplementation(async (args: {
+    where?: { role?: string | { in?: string[] } };
+  }) => typeof args?.where?.role === 'object'
+    ? []
+    : [{ teamId: 'team-1', role: 'client', projectId: null }]
+  );
+}
 
 describe('GET / — dashboard home page (RSC refactor)', () => {
   it('is a server component: the page file has no "use client" directive and no useState import', () => {
@@ -104,6 +153,7 @@ describe('GET / — dashboard home page (RSC refactor)', () => {
     // for the widget snippet). The RSC refactor swaps to
     // findMany because the polling client island needs the full
     // tree as its seed.
+    authenticate();
     mocks.project.findMany.mockResolvedValue([
       {
         id: 'proj-1',
@@ -121,34 +171,20 @@ describe('GET / — dashboard home page (RSC refactor)', () => {
     ]);
     await DashboardPage();
     expect(mocks.project.findMany).toHaveBeenCalled();
-    // The full tree include shape — pages, screenshots, pins,
-    // comments, annotations, subscribers, team. The polling
-    // client island renders from this payload, so the include
-    // shape must match the /api/projects route (or the first
-    // paint and the polled deltas would diverge).
+    mocks.$queryRaw.mockResolvedValue([{
+      projectId: 'proj-1', totalPages: BigInt(0), totalScreenshots: BigInt(0), totalPins: BigInt(0), openPins: BigInt(0),
+    }]);
+    // The list selects no nested review rows; counts come from one scoped aggregate.
     expect(mocks.project.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        include: expect.objectContaining({
-          pages: expect.objectContaining({
-            include: expect.objectContaining({
-              screenshots: expect.objectContaining({
-                include: expect.objectContaining({
-                  pins: expect.objectContaining({
-                    include: expect.objectContaining({
-                      comments: expect.anything(),
-                      annotations: expect.anything(),
-                    }),
-                  }),
-                }),
-              }),
-            }),
-          }),
-          subscribers: true,
+        select: expect.objectContaining({
           team: { select: { id: true, name: true } },
         }),
         orderBy: { createdAt: 'desc' },
       })
     );
+    expect(mocks.project.findMany.mock.calls[0][0].select).not.toHaveProperty('pages');
+    expect(mocks.$queryRaw).toHaveBeenCalledTimes(1);
   });
 
   it('passes the fetched project list to <DashboardPoller> as the `projects` prop', async () => {
@@ -158,6 +194,7 @@ describe('GET / — dashboard home page (RSC refactor)', () => {
     // <DashboardProjects> from there. The first paint must carry
     // the full tree — the operator should see their projects on
     // the first frame, with no loading flash.
+    authenticate();
     const fakeProjectRow = {
       id: 'proj-1',
       name: 'Acme',
@@ -181,21 +218,21 @@ describe('GET / — dashboard home page (RSC refactor)', () => {
       subscribers: [],
     };
     mocks.project.findMany.mockResolvedValue([fakeProjectRow]);
+    mocks.$queryRaw.mockResolvedValue([{
+      projectId: 'proj-1', totalPages: BigInt(1), totalScreenshots: BigInt(0), totalPins: BigInt(0), openPins: BigInt(0),
+    }]);
     const element = await DashboardPage();
     const elementJson = JSON.stringify(element, getCircularReplacer());
 
     // The serialized tree includes <DashboardPoller> with the
-    // project payload. Anonymous callers must NOT receive apiKey
-    // / shareToken in the RSC HTML (secrets only for authed sessions).
+    // authenticated operator's project payload.
     expect(elementJson).toContain('Acme');
     expect(elementJson).toContain('acme.com');
-    expect(elementJson).not.toContain('mk_abc');
+    expect(elementJson).toContain('mk_abc');
     expect(elementJson).toContain('proj-1');
-    // The page path also makes it through the include — the
-    // client island needs the full path / screenshot / pin
-    // tree to render the "N pages · M captures" affordance on
-    // the compact card without a follow-up fetch.
-    expect(elementJson).toContain('"path":"/"');
+    expect(elementJson).toContain('"totalPages":1');
+    expect(elementJson).toContain('"totalScreenshots":0');
+    expect(elementJson).not.toContain('"pages":');
     // The team-scope filter is applied to the where clause —
     // the page MUST not leak projects the caller can't see.
     expect(mocks.project.findMany).toHaveBeenCalledWith(
@@ -203,11 +240,103 @@ describe('GET / — dashboard home page (RSC refactor)', () => {
     );
   });
 
-  it('still renders the chrome (NewProjectForm, AuthGate, Workspaces link)', async () => {
-    // The RSC refactor must not drop any of the visual
-    // affordances the operator relies on. With no session the
-    // widget snippet is withheld (apiKey redacted); AuthGate /
-    // NewProjectForm / Workspaces link remain.
+  it('redacts admin secrets from a reviewer first-paint payload', async () => {
+    authenticateReviewer();
+    mocks.project.findMany.mockResolvedValue([
+      {
+        id: 'proj-review',
+        name: 'Reviewer Project',
+        domain: 'review.example',
+        apiKey: 'mk_reviewer_must_not_receive',
+        shareToken: 'share-reviewer-must-not-receive',
+        teamId: 'team-1',
+        team: { id: 'team-1', name: 'Review Team' },
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+        updatedAt: new Date('2026-01-01T00:00:00Z'),
+        pages: [],
+        subscribers: [{
+          id: 'subscriber-1',
+          projectId: 'proj-review',
+          email: 'private-client@example.com',
+          createdAt: new Date('2026-01-01T00:00:00Z'),
+        }],
+      },
+    ]);
+
+    const element = await DashboardPage();
+    const payload = JSON.stringify(element, getCircularReplacer());
+
+    expect(payload).toContain('Reviewer Project');
+    expect(payload).toContain('"canAdmin":false');
+    expect(payload).not.toContain('mk_reviewer_must_not_receive');
+    expect(payload).not.toContain('share-reviewer-must-not-receive');
+    expect(payload).not.toContain('private-client@example.com');
+  });
+
+  it('gives a team contributor project administration without team-owner powers', async () => {
+    requestState.sessionToken = 'session-contributor';
+    mocks.session.findUnique.mockResolvedValue({
+      token: 'session-contributor',
+      expiresAt: new Date('2999-01-01T00:00:00Z'),
+      user: { id: 'dev-1', email: 'dev@example.com', role: 'reviewer' },
+    });
+    mocks.teamMember.findMany.mockImplementation(async (args: {
+      where?: { role?: string | { in?: string[] } };
+      select?: { role?: boolean };
+    }) => {
+      if (args.where?.role === 'owner') return [];
+      if (typeof args.where?.role === 'object' && args.where.role.in?.includes('contributor')) {
+        return [{ teamId: 'team-1' }];
+      }
+      return [{ teamId: 'team-1', role: 'contributor', projectId: null }];
+    });
+    mocks.project.findMany.mockResolvedValue([{
+      id: 'proj-dev',
+      name: 'Developer Project',
+      domain: 'dev.example',
+      apiKey: 'mk_contributor_can_receive',
+      shareToken: null,
+      teamId: 'team-1',
+      team: { id: 'team-1', name: 'Delivery Team' },
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+      updatedAt: new Date('2026-01-01T00:00:00Z'),
+      pages: [],
+      subscribers: [],
+    }]);
+
+    const element = await DashboardPage();
+    const payload = JSON.stringify(element, getCircularReplacer());
+    expect(payload).toContain('"canAdmin":true');
+    expect(payload).toContain('mk_contributor_can_receive');
+  });
+
+  it('builds the widget URL from a full dashboard origin without duplicating the scheme', async () => {
+    authenticate();
+    process.env.DASHBOARD_HOST = 'http://localhost:3030';
+    mocks.project.findMany.mockResolvedValue([
+      {
+        id: 'proj-1',
+        name: 'Local project',
+        domain: 'example.test',
+        apiKey: 'mk_local',
+        shareToken: null,
+        teamId: null,
+        team: null,
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+        updatedAt: new Date('2026-01-01T00:00:00Z'),
+        pages: [],
+        subscribers: [],
+      },
+    ]);
+
+    const element = await DashboardPage();
+    const elementJson = JSON.stringify(element, getCircularReplacer());
+
+    expect(elementJson).toContain('"dashboardHost":"http://localhost:3030"');
+    expect(elementJson).not.toContain('https://http://');
+  });
+
+  it('does not query or serialize project data for an anonymous caller', async () => {
     mocks.project.findMany.mockResolvedValue([
       {
         id: 'proj-1',
@@ -225,13 +354,12 @@ describe('GET / — dashboard home page (RSC refactor)', () => {
     ]);
     const element = await DashboardPage();
     const elementJson = JSON.stringify(element, getCircularReplacer());
-    // Anonymous: apiKey must not appear in the rendered tree.
+    expect(mocks.project.findMany).not.toHaveBeenCalled();
+    expect(elementJson).not.toContain('Acme');
+    expect(elementJson).not.toContain('acme.com');
+    expect(elementJson).not.toContain('proj-1');
     expect(elementJson).not.toContain('mk_abc');
-    expect(elementJson).toContain('proj-1');
     expect(elementJson).toContain('Sign in to see the widget snippet');
-    // The Workspaces link is still in the header.
-    expect(elementJson).toContain('/workspaces');
-    // The header H1 is still there.
     expect(elementJson).toContain('Visual Feedback');
   });
 
@@ -242,6 +370,7 @@ describe('GET / — dashboard home page (RSC refactor)', () => {
     mocks.project.findMany.mockResolvedValue([]);
     const element = await DashboardPage();
     const elementJson = JSON.stringify(element, getCircularReplacer());
+    expect(mocks.project.findMany).not.toHaveBeenCalled();
     expect(elementJson).toContain('Sign in to see the widget snippet');
   });
 });

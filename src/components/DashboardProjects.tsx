@@ -27,8 +27,8 @@
 //     pin counts at a glance, and dive into a project for the
 //     full screenshot / pin tree.
 //   - The per-project detail is hosted by <ProjectDetail>, which
-//     re-uses the same ScreenshotView / PinThread / usePresence /
-//     useLiveEvents / useRecaptureStatus hooks. The two pages
+//     starts collaboration presence/live events only after the user
+//     enters a project. The two pages
 //     share the same component composition; only the wrapper
 //     changes (list of compact cards vs. single full tree).
 //
@@ -42,16 +42,14 @@ import Link from 'next/link';
 import CopyButton from './CopyButton';
 import ProjectSettings, { ShareToggle, IntegrationsSection } from './ProjectSettings';
 import ProjectSubscribers from './ProjectSubscribers';
-import PresenceList from './PresenceList';
-import { usePresence } from '@/lib/hooks/usePresence';
-import type { ProjectWithPages } from '@/lib/types';
+import type { ProjectSummary } from '@/lib/types';
 
 export default function DashboardProjects({
   projects,
   lastUpdated,
   onProjectUpdated,
 }: {
-  projects: ProjectWithPages[];
+  projects: ProjectSummary[];
   lastUpdated: number | null;
   onProjectUpdated: () => Promise<void> | void;
 }) {
@@ -76,8 +74,8 @@ export default function DashboardProjects({
   if (projects.length === 0) {
     return (
       <div className="bg-white p-12 text-center rounded-xl shadow-sm border border-gray-200">
-        <h3 className="text-lg font-medium text-gray-900">No projects yet</h3>
-        <p className="text-gray-500 mt-2">Create a project above, then install the widget snippet on the client site.</p>
+        <h3 className="text-lg font-medium text-gray-900">No active sites</h3>
+        <p className="text-gray-500 mt-2">Create a site above, or restore completed work from the archive.</p>
       </div>
     );
   }
@@ -104,7 +102,7 @@ export default function DashboardProjects({
 //
 // Compact summary card for the dashboard home page. Shows the
 // project name (as a link to /projects/[id]), domain, pin counts,
-// share-link toggle, presence strip, settings menu, and the
+// share-link toggle, settings menu, and the
 // per-project sub-components (subscribers, integrations) that
 // operators expect to find on the dashboard. The full screenshot
 // / pin / comment tree has been moved to /projects/[id].
@@ -119,38 +117,19 @@ function ProjectListCard({
   project,
   onProjectUpdated,
 }: {
-  project: ProjectWithPages;
+  project: ProjectSummary;
   onProjectUpdated: () => Promise<void> | void;
 }) {
-  // usePresence runs the heartbeat + poll for THIS project. We don't
-  // pass a cursorRef at this level — that's the per-screenshot concern
-  // handled inside <ScreenshotView> on the detail page. The presence
-  // row's cursor fields will simply be null (no cursor) until a
-  // screenshot reports a position via its own usePresence call.
-  // We keep the call here so the "Online now" strip on the home
-  // page reflects who's currently looking at this project — even
-  // when the operator is on the LIST page, not the detail page.
-  const { myUserId, others } = usePresence({ projectId: project.id });
-
-  const totalPins = project.pages.reduce(
-    (acc, p) => acc + p.screenshots.reduce((a, s) => a + s.pins.length, 0),
-    0
-  );
-  const openPins = project.pages.reduce(
-    (acc, p) => acc + p.screenshots.reduce((a, s) => a + s.pins.filter(pn => pn.status === 'OPEN').length, 0),
-    0
-  );
-  const totalScreenshots = project.pages.reduce(
-    (acc, p) => acc + p.screenshots.length,
-    0
-  );
-  const totalPages = project.pages.length;
+  // Presence intentionally starts only after opening this project.
+  // The overview is not a truthful signal that the user is reviewing
+  // every visible site and must not heartbeat into each card.
+  const { totalPins, openPins, totalScreenshots, totalPages } = project;
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
       <div className="bg-gray-900 px-6 py-4">
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div className="min-w-0 flex-1">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0 w-full sm:flex-1">
             {/* The project name is the primary "open this project"
                 affordance. We render it as a <Link> to
                 /projects/[id] so deep-linking + right-click-open-
@@ -165,27 +144,34 @@ function ProjectListCard({
             </Link>
             <p className="text-gray-400 text-sm truncate">{project.domain}</p>
           </div>
-          <div className="flex items-center gap-4 text-sm">
-            <span className="text-gray-300">
-              <span className="font-semibold text-white">{totalPins}</span> total pins
+          <div className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 text-sm sm:w-auto sm:flex-nowrap sm:gap-4">
+            <span className="whitespace-nowrap text-gray-300">
+              <span className="font-semibold text-white">{totalPins}</span> {totalPins === 1 ? 'pin' : 'pins'}
             </span>
-            <span className="text-gray-300">
+            <span className="whitespace-nowrap text-gray-300">
               <span className="font-semibold text-yellow-400">{openPins}</span> open
             </span>
-            <ProjectSettings
-              projectId={project.id}
-              projectName={project.name}
-              onProjectUpdated={onProjectUpdated}
-            />
+            {project.canAdmin ? (
+              <ProjectSettings
+                projectId={project.id}
+                projectName={project.name}
+                archivedAt={project.archivedAt}
+                onProjectUpdated={onProjectUpdated}
+              />
+            ) : (
+              <span className="rounded-full bg-blue-950 px-2 py-1 text-xs text-blue-200">
+                Review access
+              </span>
+            )}
           </div>
         </div>
       </div>
 
-      <div className="px-6 py-3 bg-gray-50 border-b border-gray-200 flex items-center gap-2 text-xs flex-wrap">
+      {project.canAdmin ? <div className="px-6 py-3 bg-gray-50 border-b border-gray-200 flex items-center gap-2 text-xs flex-wrap min-w-0">
         <span className="text-gray-500">API Key:</span>
         {project.apiKey ? (
           <>
-            <code className="bg-white px-2 py-1 rounded border border-gray-200 font-mono">{project.apiKey}</code>
+            <code className="min-w-0 max-w-full break-all whitespace-normal bg-white px-2 py-1 rounded border border-gray-200 font-mono">{project.apiKey}</code>
             <CopyButton text={project.apiKey} />
           </>
         ) : (
@@ -200,10 +186,17 @@ function ProjectListCard({
             href={`/projects/${project.id}`}
             className="text-blue-600 hover:text-blue-800 hover:underline"
           >
-            Open project →
+            Open site →
           </Link>
         </span>
-      </div>
+      </div> : (
+        <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 bg-gray-50 px-6 py-3 text-xs text-gray-500">
+          <span>{totalPages} page{totalPages === 1 ? '' : 's'} · {totalScreenshots} capture{totalScreenshots === 1 ? '' : 's'}</span>
+          <Link href={`/projects/${project.id}`} className="ml-auto font-medium text-blue-700 hover:text-blue-900 hover:underline">
+            Open review →
+          </Link>
+        </div>
+      )}
 
       {/* Public share link toggle. Reads the project's current
           shareToken from the polled project list; on generate/revoke
@@ -211,22 +204,18 @@ function ProjectListCard({
           (or its absence) shows up in the next poll. The shareUrl
           is built from the dashboard's origin so a copied link
           works on the same host the user is currently on. */}
-      <div className="px-6 pt-3 pb-0">
+      {project.canAdmin ? <div className="px-6 pt-3 pb-0">
         <ShareToggle
           projectId={project.id}
           hasShareToken={!!project.shareToken}
-          shareUrl={
-            project.shareToken && typeof window !== 'undefined'
-              ? `${window.location.origin}/share/${project.shareToken}`
-              : null
-          }
+          shareUrl={project.shareToken ? `/share/${project.shareToken}/open` : null}
+          shareExpiresAt={project.shareExpiresAt}
+          sharePasswordProtected={project.sharePasswordProtected}
           onChange={onProjectUpdated}
         />
-      </div>
+      </div> : null}
 
-      <PresenceList myUserId={myUserId} others={others} />
-
-      <ProjectSubscribers projectId={project.id} />
+      {project.canAdmin ? <ProjectSubscribers projectId={project.id} /> : null}
 
       {/* Outbound integrations (Slack / Discord / generic
           webhook). Rendered just below the subscribers block
@@ -240,7 +229,7 @@ function ProjectListCard({
           concerns and force a poll on every integration
           change). The IntegrationsSection component fetches
           its own list on mount. */}
-      <IntegrationsSection projectId={project.id} />
+      {project.canAdmin ? <IntegrationsSection projectId={project.id} /> : null}
     </div>
   );
 }

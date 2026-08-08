@@ -1,11 +1,19 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import type { FeedbackComment } from '@/lib/types';
+import type { FeedbackComment, IssueOptions, Pin } from '@/lib/types';
 import { useLiveEvents } from '@/lib/hooks/useLiveEvents';
 import { MENTION_RE } from '@/lib/mentions';
+import { formatDateTime } from '@/lib/date-format';
+import {
+  buildIssueHandoffV1,
+  renderIssueHandoffMarkdown,
+  type BuildIssueHandoffInput,
+} from '@/lib/issue-handoff';
+import IssueMetadataEditor, { type IssueMetadataUpdate } from './IssueMetadataEditor';
 
-type Pin = { id: string; xPercent: number; yPercent: number; status: string; elementXPath?: string | null; elementHTML?: string | null; createdAt: string; comments: FeedbackComment[] };
+type ThreadPin = Omit<Pin, 'annotations'> & Partial<Pick<Pin, 'annotations'>>;
+type HandoffContext = Omit<BuildIssueHandoffInput, 'dashboardOrigin' | 'pin'>;
 
 /**
  * Render a comment string as a list of React nodes, wrapping every
@@ -53,11 +61,15 @@ export default function PinThread({
   pin,
   projectId,
   readOnly = false,
+  showDeveloperContext = false,
+  issueOptions,
+  handoffContext,
   onClose,
   onStatusChange,
+  onMetadataChange,
   onCommentAdded,
 }: {
-  pin: Pin;
+  pin: ThreadPin;
   /**
    * The project this pin belongs to. Used to scope the SSE subscription
    * so a new-comment event for THIS pin triggers an optimistic append.
@@ -74,13 +86,34 @@ export default function PinThread({
    * history — they just can't add to it.
    */
   readOnly?: boolean;
+  /** Technical capture details are restricted to project administrators. */
+  showDeveloperContext?: boolean;
+  /** Internal workflow choices; presence also gates the editor to administrators. */
+  issueOptions?: IssueOptions;
+  /** Project/page/screenshot identity needed to build the canonical issue payload. */
+  handoffContext?: HandoffContext;
   onClose: () => void;
   onStatusChange: (pinId: string, status: 'OPEN' | 'RESOLVED') => Promise<void>;
+  onMetadataChange?: (pinId: string, update: IssueMetadataUpdate) => Promise<void>;
   onCommentAdded: (pinId: string, comment: FeedbackComment) => void;
 }) {
   const [reply, setReply] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [author, setAuthor] = useState('Reviewer');
+  const [handoffCopyState, setHandoffCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    closeButtonRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
   // === Attachments (paste-then-submit) ===================================
   // pendingAttachments holds the attachmentIds returned by
   // /api/attachments for images the user pasted (or dropped)
@@ -221,6 +254,7 @@ export default function PinThread({
     try {
       const fd = new FormData();
       fd.append('file', file, file.name || 'pasted.png');
+      if (projectId) fd.append('projectId', projectId);
       const res = await fetch('/api/attachments', {
         method: 'POST',
         body: fd,
@@ -326,6 +360,23 @@ export default function PinThread({
     onStatusChange(pin.id, next);
   };
 
+  const copyDeveloperHandoff = async () => {
+    if (!handoffContext) return;
+    setHandoffCopyState('idle');
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+      const payload = buildIssueHandoffV1({
+        ...handoffContext,
+        dashboardOrigin: window.location.origin,
+        pin: { ...pin, annotations: pin.annotations ?? [] },
+      });
+      await navigator.clipboard.writeText(renderIssueHandoffMarkdown(payload));
+      setHandoffCopyState('copied');
+    } catch {
+      setHandoffCopyState('error');
+    }
+  };
+
   return (
     <div className="p-4">
       <div className="flex items-center justify-between mb-3">
@@ -335,8 +386,117 @@ export default function PinThread({
             {pin.status === 'OPEN' ? 'Open' : 'Resolved'}
           </span>
         </div>
-        <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
+        <button
+          ref={closeButtonRef}
+          type="button"
+          onClick={onClose}
+          aria-label="Close comment thread"
+          className="flex min-h-6 min-w-6 items-center justify-center text-gray-500 hover:text-gray-700 text-lg leading-none"
+        >
+          ×
+        </button>
       </div>
+
+      {showDeveloperContext && issueOptions && onMetadataChange ? (
+        <IssueMetadataEditor
+          pin={{ ...pin, annotations: pin.annotations ?? [] }}
+          options={issueOptions}
+          onSave={(update) => onMetadataChange(pin.id, update)}
+        />
+      ) : null}
+
+      {showDeveloperContext && (
+        <details className="mb-4 rounded-lg border border-gray-200 bg-gray-50 text-xs text-gray-700">
+          <summary className="cursor-pointer select-none px-3 py-2 font-medium text-gray-800">
+            Developer context
+          </summary>
+          <div className="space-y-3 border-t border-gray-200 px-3 py-3">
+            {handoffContext && (
+              <div>
+                <button
+                  type="button"
+                  onClick={copyDeveloperHandoff}
+                  className="rounded border border-blue-300 bg-white px-2 py-1 font-medium text-blue-700 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                >
+                  {handoffCopyState === 'copied' ? 'Copied' : 'Copy developer handoff'}
+                </button>
+                <p className="mt-1 text-[11px] text-gray-500">
+                  Copies a privacy-safe Markdown issue.
+                </p>
+                {handoffCopyState === 'error' && (
+                  <p role="alert" className="mt-2 text-red-700">
+                    Clipboard access failed. Check browser permissions and try again.
+                  </p>
+                )}
+              </div>
+            )}
+            {!pin.developerContext ? (
+              <p className="text-gray-500">Not captured for this pin.</p>
+            ) : (
+              <>
+                <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                  <dt className="text-gray-500">Page</dt>
+                  <dd className="min-w-0 break-all">
+                    {pin.developerContext.pageUrl ? (
+                      <a
+                        href={pin.developerContext.pageUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-blue-700 underline decoration-blue-300 underline-offset-2"
+                      >
+                        {pin.developerContext.pageUrl}
+                      </a>
+                    ) : pin.developerContext.route}
+                  </dd>
+                  <dt className="text-gray-500">Route</dt>
+                  <dd className="break-all font-mono">{pin.developerContext.route}</dd>
+                  <dt className="text-gray-500">Viewport</dt>
+                  <dd>
+                    {pin.developerContext.viewport
+                      ? `${pin.developerContext.viewport.width} × ${pin.developerContext.viewport.height}${pin.developerContext.viewport.devicePixelRatio ? ` @ ${pin.developerContext.viewport.devicePixelRatio}x` : ''}`
+                      : 'Unknown'}
+                  </dd>
+                  <dt className="text-gray-500">Environment</dt>
+                  <dd>{pin.developerContext.browser} · {pin.developerContext.platform}</dd>
+                  <dt className="text-gray-500">Screenshot</dt>
+                  <dd>
+                    {pin.developerContext.screenshot.width} × {pin.developerContext.screenshot.height}
+                    {' · '}{formatDateTime(pin.developerContext.screenshot.capturedAt)}
+                  </dd>
+                  <dt className="text-gray-500">Review</dt>
+                  <dd>
+                    {pin.developerContext.reviewRound
+                      ? `Round ${pin.developerContext.reviewRound.number}${pin.developerContext.reviewRound.name ? ` · ${pin.developerContext.reviewRound.name}` : ''}`
+                      : 'No review round'}
+                  </dd>
+                </dl>
+
+                {pin.developerContext.selectors.length > 0 && (
+                  <div>
+                    <p className="mb-1 text-gray-500">Selector candidates</p>
+                    <div className="space-y-1">
+                      {pin.developerContext.selectors.map((selector) => (
+                        <code key={selector} className="block overflow-x-auto rounded bg-gray-900 px-2 py-1 text-[11px] text-gray-100">
+                          {selector}
+                        </code>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {pin.developerContext.elementSnippet && (
+                  <div>
+                    <p className="mb-1 text-gray-500">Element snippet</p>
+                    <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-gray-900 px-2 py-2 text-[11px] text-gray-100">
+                      {pin.developerContext.elementSnippet}
+                    </pre>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </details>
+      )}
 
       <div className="space-y-3 mb-4">
         {pin.comments.map((c) => (
@@ -351,7 +511,7 @@ export default function PinThread({
             <div className="text-xs text-gray-500 mb-1">
               <span className="font-medium text-gray-700">{c.author}</span>
               <span className="ml-1">({c.authorRole})</span>
-              <span className="ml-2">{new Date(c.createdAt).toLocaleString()}</span>
+              <span className="ml-2">{formatDateTime(c.createdAt)}</span>
             </div>
             {/* Highlight @mentions. The split uses the same regex as
                 the server-side parseMentions so what the recipient
@@ -366,8 +526,8 @@ export default function PinThread({
                 carries `attachments: FeedbackAttachment[]` (see
                 src/lib/types.ts). Each attachment has a relative
                 `url` the dashboard fetches from /api/attachments/[id]
-                — the GET route accepts the request from the
-                dashboard origin without a `?share=` token. We
+                — the GET route accepts the authenticated dashboard session
+                or the managed review's HttpOnly access cookie. We
                 only render <img> tags for the 'image' kind in
                 this round; voice / video are reserved for the
                 future and would use <audio> / <video> elements.
@@ -464,11 +624,12 @@ export default function PinThread({
             user can act on it. We clear it on the next paste
             or on submit. */}
         {uploadError && (
-          <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
+          <div role="alert" className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
             {uploadError}
           </div>
         )}
         <textarea
+          aria-label="Reply to this feedback"
           value={reply}
           onChange={e => setReply(e.target.value)}
           onPaste={handlePaste}
@@ -479,6 +640,7 @@ export default function PinThread({
         <div className="flex items-center justify-between gap-2">
           <input
             type="text"
+            aria-label="Your name"
             value={author}
             onChange={e => setAuthor(e.target.value)}
             placeholder="Your name"

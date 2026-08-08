@@ -22,16 +22,21 @@ import { prisma } from './prisma';
 
 export type AuditAction =
   | 'project.create' | 'project.delete' | 'project.update'
-  | 'pin.create' | 'pin.delete' | 'screenshot.recapture'
+  | 'pin.create' | 'pin.update' | 'pin.delete' | 'screenshot.recapture'
   | 'screenshot.history.read'
   | 'subscriber.add' | 'subscriber.remove'
   | 'project.share.create' | 'project.share.revoke' | 'share.view'
   | 'comment.mention'
   | 'integration.create' | 'integration.update' | 'integration.remove'
   | 'integration.test.send' | 'integration.dispatch'
+  | 'integration.delivery.retry'
   | 'workspace.create' | 'workspace.update' | 'workspace.delete'
   | 'team.create' | 'team.update' | 'team.delete'
-  | 'team_member.invite' | 'team_member.remove' | 'team_member.update';
+  | 'team_member.invite' | 'team_member.remove' | 'team_member.update'
+  | 'team_invitation.create' | 'team_invitation.revoke' | 'team_invitation.accept'
+  | 'review_round.create' | 'review_round.update'
+  | 'review_sign_off.create' | 'review_sign_off.withdraw'
+  | 'developer_api_token.create' | 'developer_api_token.revoke';
 
 export interface AuditEntry {
   actor: string;

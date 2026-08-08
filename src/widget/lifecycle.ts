@@ -12,6 +12,13 @@ import { readConfig, type WidgetConfig } from './config';
 let isFeedbackMode = false;
 let booted = false;
 let configRef: WidgetConfig | null = null;
+let toggleButton: HTMLButtonElement | null = null;
+let documentClickHandler: ((event: MouseEvent) => void) | null = null;
+let documentMousemoveHandler: ((event: MouseEvent) => void) | null = null;
+
+function emit(name: string, detail: Record<string, unknown>): void {
+  document.dispatchEvent(new CustomEvent(`markup:${name}`, { detail }));
+}
 
 /** Read by tests / debug; flips when the user clicks the toggle button. */
 export function getIsFeedbackMode(): boolean {
@@ -20,7 +27,7 @@ export function getIsFeedbackMode(): boolean {
 
 /** Test seam: force feedback mode on/off without driving the DOM. */
 export function setIsFeedbackMode(v: boolean): void {
-  isFeedbackMode = v;
+  setFeedbackMode(v);
 }
 
 /** Test seam: read the live widget config (read once at boot). */
@@ -33,11 +40,17 @@ function installToggleHandler(btn: HTMLButtonElement): void {
   btn.addEventListener('click', function (e) {
     e.stopPropagation();
     e.preventDefault();
-    isFeedbackMode = !isFeedbackMode;
-    if (isFeedbackMode) {
+    setFeedbackMode(!isFeedbackMode);
+  });
+}
+
+function setFeedbackMode(next: boolean): void {
+  isFeedbackMode = next;
+  const btn = toggleButton;
+  if (btn) {
+    if (next) {
       btn.style.background = '#DC2626';
-      btn.innerHTML =
-        '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#fff;margin-right:6px;vertical-align:middle;animation:markup-pulse 1.2s infinite"></span>Click anywhere to leave feedback';
+      btn.innerHTML = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#fff;margin-right:6px;vertical-align:middle;animation:markup-pulse 1.2s infinite"></span>Click anywhere to leave feedback';
       if (!document.getElementById('markup-pulse-style')) {
         const style = document.createElement('style');
         style.id = 'markup-pulse-style';
@@ -46,11 +59,24 @@ function installToggleHandler(btn: HTMLButtonElement): void {
       }
     } else {
       btn.style.background = '#0F172A';
-      btn.innerHTML =
-        '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#fff;margin-right:6px;vertical-align:middle"></span>Feedback';
+      btn.innerHTML = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#fff;margin-right:6px;vertical-align:middle"></span>Feedback';
       cleanupAll();
     }
-  });
+  }
+  emit('modechange', { feedbackMode: next });
+}
+
+export function startFeedback(): void {
+  if (!booted) init();
+  if (booted) setFeedbackMode(true);
+}
+
+export function stopFeedback(): void {
+  setFeedbackMode(false);
+}
+
+export function getState(): { ready: boolean; feedbackMode: boolean } {
+  return { ready: booted && configRef !== null, feedbackMode: isFeedbackMode };
 }
 
 function cleanupAll(): void {
@@ -61,9 +87,7 @@ function cleanupAll(): void {
 
 /** Install the global click + mousemove handlers. */
 function installListeners(cfg: WidgetConfig): void {
-  document.addEventListener(
-    'click',
-    function (e) {
+  documentClickHandler = function (e) {
       if (!isFeedbackMode) return;
       const target = e.target as Element;
       if (target && target.closest && target.closest('#markup-toggle')) return;
@@ -90,11 +114,10 @@ function installListeners(cfg: WidgetConfig): void {
         cfg.apiKey,
         cfg.projectId
       );
-    },
-    true
-  );
+    };
+  document.addEventListener('click', documentClickHandler, true);
 
-  document.addEventListener('mousemove', function (e) {
+  documentMousemoveHandler = function (e) {
     if (!isFeedbackMode) return;
     if (getCurrentModal()) return; // don't show outline while modal is open
 
@@ -108,7 +131,8 @@ function installListeners(cfg: WidgetConfig): void {
     el!.style.outline = '2px dashed #FF0055';
     el!.style.outlineOffset = '2px';
     el!.style.transition = 'outline 0.1s';
-  });
+  };
+  document.addEventListener('mousemove', documentMousemoveHandler);
 }
 
 function currentModalOpenAndClickOnPin(target: Element): boolean {
@@ -119,7 +143,6 @@ function currentModalOpenAndClickOnPin(target: Element): boolean {
 /** Boot the widget: read config, render toggle, install listeners. */
 export function init(): void {
   if (booted) return;
-  booted = true;
 
   const cfg = readConfig();
   if (!cfg) {
@@ -135,10 +158,29 @@ export function init(): void {
     return;
   }
   configRef = cfg;
+  booted = true;
 
   const btn = createToggleButton();
+  toggleButton = btn;
   installToggleHandler(btn);
   installListeners(cfg);
+  emit('ready', { ready: true, projectId: cfg.projectId });
+}
+
+export function destroy(): void {
+  document.removeEventListener('DOMContentLoaded', init);
+  if (documentClickHandler) document.removeEventListener('click', documentClickHandler, true);
+  if (documentMousemoveHandler) document.removeEventListener('mousemove', documentMousemoveHandler);
+  documentClickHandler = null;
+  documentMousemoveHandler = null;
+  setFeedbackMode(false);
+  toggleButton?.remove();
+  toggleButton = null;
+  document.getElementById('markup-pulse-style')?.remove();
+  document.getElementById('markup-accessibility-style')?.remove();
+  configRef = null;
+  booted = false;
+  isFeedbackMode = false;
 }
 
 /** DOMContentLoaded boot. The Vite IIFE wraps init() — the host page

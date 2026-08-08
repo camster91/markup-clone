@@ -1,8 +1,7 @@
 # TASK.md — markup-clone task board
 
-**Last updated:** 2026-07-24 (production security audit Critical/High
-patches on `cursor/production-security-audit-4eb8`; see
-`docs/qa/2026-07-24-production-security-audit.md`).
+**Last updated:** 2026-08-08 (role-aware notifications complete locally; see
+`docs/plans/agency-product-release-2026-08-07.md`).
 
 **Format:** each item has a status (`shipped`, `ready`, `blocked`,
 `parked`), a one-line description, and the source — git commit SHA
@@ -15,6 +14,131 @@ for shipped, source-of-truth for the rest.
    Several features the marketing copy / earlier plans mention are
    already on `main` — confirm before re-implementing.
 3. `blocked` items need the listed unblock before they can move.
+
+---
+
+## In progress
+
+### Agency product release — Gate 0 security and correctness
+- **Status:** in-progress · **Source:**
+  `docs/plans/agency-product-release-2026-08-07.md`
+- **Completed slice:** anonymous dashboard/project rendering is closed;
+  project/workspace/team reads are scoped; administration and membership
+  changes enforce operator/team-owner roles; attachment/media access is
+  project-scoped; shared media, hydration, origin handling, dependency audit,
+  local Docker migrations, role-safe project administration, reviewer secret
+  redaction, team-detail navigation, bounded project-list DTOs, and the first
+  accessibility/responsive remediation pass are green.
+- **Completed slice:** first-party MarkUp.io parity matrix and agency/developer
+  product wedge; dashboard/detail polling now exposes an actionable offline retry
+  state without discarding the last good review data.
+- **Completed slice:** detail-page keyboard journey, modal/thread focus return,
+  history retry, announced route loading, semantic main landmarks, accurate
+  product metadata, and live 320/375px browser verification.
+- **Completed slice:** additive review-round/sign-off schema and migration,
+  closed status/transition validation, active-round pin association, and
+  server-enforced pause-new-feedback behavior. Existing comments remain open.
+- **Completed slice:** role-enforced round/status/sign-off APIs, an owner/reviewer
+  review workflow UI, historical-round immutability, and specific paused-feedback
+  guidance in the website widget without discarding the draft.
+- **Completed slice:** authenticated owner/reviewer review-round browser QA at
+  375/320px, plus the reviewer dashboard’s explicit “Open review” entry point.
+- **Completed slice:** privacy-bounded widget context capture and persistence,
+  admin-only developer context UI, reviewer/public redaction, legacy-data-safe
+  migration, and authenticated owner/reviewer QA at 1280/375px. The QA pass also
+  fixed a share-link hydration mismatch.
+- **Completed slice:** deterministic `visual-feedback.issue.v1` payload,
+  injection-safe copyable Markdown, admin-only clipboard workflow, and exact-pin
+  dashboard URLs with owner/reviewer desktop/mobile/keyboard QA.
+- **Completed slice:** owner-only priority, claimed-team assignment, reusable
+  project tags, AND filters, role-safe DTOs, and enriched developer handoff with
+  legacy-data migration and owner/reviewer 1280/375/320 browser QA.
+- **Completed slice:** versioned integration events, transactionally durable
+  delivery, HMAC-signed generic webhooks, bounded automatic retries,
+  dead-letter history, and owner-only manual retry/activity UI with local
+  worker, migration, desktop/mobile, and reviewer-redaction verification.
+- **Completed slice:** native GitHub issue delivery with explicit repository and
+  labels, encrypted repository-scoped credentials, read-only connection tests,
+  deterministic developer handoff, stable-marker retry deduplication, safe
+  external issue links, and owner/reviewer desktop/mobile verification.
+- **Completed slice:** expiring/revocable hash-only invitations, invite acceptance
+  for existing or new accounts, canonical owner/contributor/client/guest roles,
+  project-scoped guest access, last-owner protection, and role-redacted team UI.
+- **Completed slice:** validated operator-owned workspace branding, contrast-safe
+  branded invitations, and a simplified role-redacted client/guest review mode.
+- **Completed slice:** reversible site archive, active-by-default scoped lists,
+  widget archive enforcement, and agency -> client -> site -> review-round
+  information architecture with desktop/mobile browser verification.
+- **Completed slice:** separate hash-only server developer tokens, a documented
+  versioned read-only issue API, and a typed dependency-free browser SDK with
+  explicit widget lifecycle/events, clean/upgrade migration verification, and
+  authenticated desktop/mobile browser QA.
+- **Completed slice:** reusable client-account review defaults, warning-free
+  production builds, PostgreSQL 16-pinned guarded backup/restore with a completed
+  local recovery drill, operational runbooks, fresh 24-migration Linux build,
+  and combined owner/client/API/SDK browser QA.
+- **Completed slice:** expiring and optional-password public review links,
+  token-bound HttpOnly media access, private shared-media caching, no
+  token-bearing media URLs, agency-branded unlock, clean 25-migration install,
+  and desktop/mobile/keyboard browser verification. See
+  `docs/plans/managed-public-review-links-2026-08-08.md`.
+- **Completed slice:** removed false list-page presence and consolidated the
+  focused project to one presence loop and one SSE connection regardless of
+  screenshot count, with shared cursor routing, bounded event refreshes, and
+  authenticated 375px transport-count QA. See
+  `docs/plans/collaboration-transport-consolidation-2026-08-08.md`.
+- **Completed slice:** replaced overview page/screenshot/pin row hydration with
+  a single scoped aggregate while preserving the role-safe project-card DTO. See
+  `docs/plans/project-summary-aggregation-2026-08-08.md`.
+- **Completed slice:** added self-service, role-aware project notification
+  preferences and preference-respecting feedback/reply/workflow/assignment/mention
+  email dispatch while preserving clearly labeled external alerts. See
+  `docs/plans/role-aware-notifications-2026-08-08.md`.
+- **Active slice:** reconcile the content-identical production mode drift on
+  `scripts/prune-screenshots.sh`, exercise the confirmed retained prior SHA image
+  and replace the active self-signed Traefik certificate, exercise the confirmed
+  retained prior SHA image in an approved production rollback window, then make
+  the explicit release decision. Committing, pushing, npm release, host writes,
+  certificate issuance/reload, and production deployment remain approval-gated.
+- **Completed local evidence slice:** added a loopback-only multipart
+  pin-ingestion load rehearsal with explicit latency/error thresholds and
+  verified cleanup. The measured 24-request/concurrency-6 run passed at 157ms
+  p95 with 24/24 HTTP 201 responses. See
+  `docs/plans/local-pin-ingestion-load-rehearsal-2026-08-08.md`.
+- **Completed local evidence slice:** repaired the non-executing widget E2E
+  fixture and the blob-SVG canvas taint that prevented real screenshot uploads;
+  then verified the real built widget, recapture, keyboard/focus, 44px controls,
+  and 320px responsive behavior across Chromium, Firefox, and WebKit. See
+  `docs/plans/cross-browser-widget-and-accessibility-qa-2026-08-08.md`.
+- **Completed local evidence slice:** read-only production inventory confirmed
+  that the healthy live container's immutable source-SHA image is retained.
+  Deploys now fail closed before migrations if that tag is mutable, missing,
+  invalid, or retargeted, and record a private rollback manifest. Dirty release
+  source is also refused so a build cannot be mislabeled with a commit SHA. Six
+  executable contract tests cover the preflight and ordering behavior.
+- The pre-audit checkpoint passed 881 tests with 3 intentional skips,
+  warning-free ESLint, Bash syntax checks, host/Linux production builds, and a
+  matching read-only retained-image plus live-health recheck.
+- **Completed local evidence slice:** audited the full release worktree, excluded
+  test reports from source/image contexts, enforced LF shell scripts, inventoried
+  all API guards and migrations, and replaced suppressed migration errors with
+  atomic fail-fast application. Releases now require an authenticated Git
+  fast-forward and reject tarball/marker provenance. Read-only production checks
+  found Git access healthy and one mode-only dirty-tree blocker; production was
+  not modified.
+- **Completed local evidence slice:** aligned deployment with the verified
+  Traefik edge. The release now skips legacy Caddy processes/config, validates a
+  trusted public certificate before migrations and after startup, retires the
+  obsolete Caddy cron in Traefik mode, and no longer changes tracked script modes.
+  Read-only production verification correctly fails on the current self-signed
+  Markup certificate; no live repair was attempted.
+- **Current final-tree evidence:** 896 tests passed with 3 intentional skips;
+  ESLint is warning-free; Prisma validates; the production dependency audit has
+  zero vulnerabilities; all 26 migrations pass from an empty database; and the
+  host build, exact Linux image build, and isolated image health/hash probe pass.
+- **Release evidence:** failing regression tests before each fix; targeted
+  suites, full Vitest, lint, Prisma validation, production build, and browser
+  QA before Gate 0 is marked shipped.
 
 ---
 

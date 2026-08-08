@@ -19,13 +19,19 @@
 // not worth the staleness.
 
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/prisma';
 import NewWorkspaceForm from '@/components/NewWorkspaceForm';
+import { getCallerUser, getWorkspaceScopeWhere } from '@/lib/teams';
 
 export const dynamic = 'force-dynamic';
 
 export default async function WorkspacesPage() {
+  const caller = await getCallerUser();
+  if (!caller) redirect('/');
+
   const workspaces = await prisma.workspace.findMany({
+    where: getWorkspaceScopeWhere(caller),
     orderBy: { createdAt: 'desc' },
     include: {
       _count: { select: { teams: true } },
@@ -33,7 +39,7 @@ export default async function WorkspacesPage() {
   });
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 sm:p-8">
+    <main className="min-h-screen bg-gray-50 p-4 sm:p-8">
       <div className="max-w-5xl mx-auto">
         <header className="mb-6 flex items-center justify-between flex-wrap gap-4">
           <div>
@@ -44,19 +50,19 @@ export default async function WorkspacesPage() {
               <span aria-hidden="true">←</span>
               <span>Back to dashboard</span>
             </Link>
-            <h1 className="text-2xl font-semibold text-gray-900">Workspaces</h1>
+            <h1 className="text-2xl font-semibold text-gray-900">Agency workspaces</h1>
             <p className="text-gray-500 mt-1 text-sm">
-              Each workspace is an organisation. Inside a workspace, teams own projects.
+              Each workspace is an agency or organisation. Client accounts contain their sites and review rounds.
             </p>
           </div>
         </header>
 
-        <NewWorkspaceForm />
+        {caller.role === 'operator' && <NewWorkspaceForm />}
 
         {workspaces.length === 0 ? (
           <div className="bg-white p-12 text-center rounded-xl shadow-sm border border-gray-200 mt-6">
             <h3 className="text-lg font-medium text-gray-900">No workspaces yet</h3>
-            <p className="text-gray-500 mt-2">Create the first workspace to organise teams and projects.</p>
+            <p className="text-gray-500 mt-2">Create the first workspace to organise clients and sites.</p>
           </div>
         ) : (
           <ul className="mt-6 space-y-3">
@@ -70,7 +76,7 @@ export default async function WorkspacesPage() {
                     <div className="min-w-0 flex-1">
                       <div className="text-lg font-medium text-gray-900 truncate">{w.name}</div>
                       <div className="text-sm text-gray-500 mt-1">
-                        {w._count.teams} team{w._count.teams === 1 ? '' : 's'}
+                        {w._count.teams} client account{w._count.teams === 1 ? '' : 's'}
                       </div>
                     </div>
                     <span className="text-blue-600 text-sm">Open →</span>
@@ -81,6 +87,6 @@ export default async function WorkspacesPage() {
           </ul>
         )}
       </div>
-    </div>
+    </main>
   );
 }

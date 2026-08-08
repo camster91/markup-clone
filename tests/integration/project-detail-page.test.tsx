@@ -44,9 +44,24 @@ const mocks = vi.hoisted(() => ({
   },
 }));
 
+const requestState = vi.hoisted(() => ({
+  sessionToken: 'session-1' as string | null,
+}));
+
 vi.mock('@/lib/prisma', () => ({
   prisma: mocks,
 }));
+
+vi.mock('next/headers', () => ({
+  cookies: vi.fn(async () => ({
+    get: (name: string) =>
+      name === 'markup.session' && requestState.sessionToken
+        ? { value: requestState.sessionToken }
+        : undefined,
+  })),
+}));
+
+vi.unmock('@/lib/auth');
 
 // next/navigation's notFound() throws a special error. We catch
 // and re-throw a sentinel so the test can assert on it without
@@ -104,7 +119,12 @@ beforeEach(() => {
     }
     return null;
   });
-  mocks.session.findUnique.mockResolvedValue(null);
+  requestState.sessionToken = 'session-1';
+  mocks.session.findUnique.mockResolvedValue({
+    token: 'session-1',
+    expiresAt: new Date('2999-01-01T00:00:00Z'),
+    user: { id: 'user-1', email: 'operator@example.com', role: 'operator' },
+  });
   mocks.teamMember.findFirst.mockResolvedValue(null);
 });
 
@@ -210,6 +230,101 @@ describe('GET /projects/[id] — per-project detail page', () => {
     expect(elementJson).toContain('[[10,20],[30,40]]');
     // notFound() must NOT have been called.
     expect(notFoundCalls).toHaveLength(0);
+  });
+
+  it('does not render a legacy unscoped project without a session', async () => {
+    requestState.sessionToken = null;
+    mocks.session.findUnique.mockResolvedValue(null);
+    setFullTree({
+      id: 'proj-private',
+      name: 'Private Client Project',
+      domain: 'private.example',
+      apiKey: 'mk_private',
+      shareToken: null,
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+      updatedAt: new Date('2026-01-01T00:00:00Z'),
+      pages: [],
+    });
+
+    await expect(
+      ProjectDetailPage({ params: Promise.resolve({ id: 'proj-private' }) })
+    ).rejects.toMatchObject({ __notFound: true });
+    expect(notFoundCalls).toHaveLength(1);
+    // Only the narrow access lookup is allowed. The private render tree must
+    // never be queried for an anonymous request.
+    expect(mocks.project.findUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it('redacts admin secrets when a team reviewer opens project detail', async () => {
+    mocks.session.findUnique.mockResolvedValue({
+      token: 'session-1',
+      expiresAt: new Date('2999-01-01T00:00:00Z'),
+      user: { id: 'reviewer-1', email: 'reviewer@example.com', role: 'reviewer' },
+    });
+    mocks.teamMember.findFirst.mockResolvedValue({ id: 'member-1', role: 'reviewer' });
+    mocks.project.findUnique.mockImplementation(async (args: any) => {
+      if (args?.select) return { id: 'proj-review', teamId: 'team-1' };
+      return {
+        id: 'proj-review',
+        name: 'Reviewer Project',
+        domain: 'review.example',
+        apiKey: 'mk_detail_secret',
+        shareToken: 'share-detail-secret',
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+        updatedAt: new Date('2026-01-01T00:00:00Z'),
+        pages: [],
+        subscribers: [{ id: 'sub-1', email: 'private@example.com' }],
+        team: {
+          members: [],
+          workspace: {
+            name: 'Internal Workspace', brandName: 'Northstar Studio', logoUrl: null,
+            accentColor: '#4f46e5', reviewerWelcome: 'Review the latest build with us.',
+          },
+        },
+      };
+    });
+
+    const element = await ProjectDetailPage({ params: Promise.resolve({ id: 'proj-review' }) });
+    const payload = JSON.stringify(element, getCircularReplacer());
+
+    expect(payload).toContain('Reviewer Project');
+    expect(payload).toContain('"canAdmin":false');
+    expect(payload).not.toContain('mk_detail_secret');
+    expect(payload).not.toContain('share-detail-secret');
+    expect(payload).not.toContain('private@example.com');
+    expect(payload).toContain('Northstar Studio');
+    expect(payload).toContain('Review the latest build with us.');
+    expect(payload).toContain('#4f46e5');
+  });
+
+  it('exposes project administration to a team contributor', async () => {
+    mocks.session.findUnique.mockResolvedValue({
+      token: 'session-1',
+      expiresAt: new Date('2999-01-01T00:00:00Z'),
+      user: { id: 'dev-1', email: 'dev@example.com', role: 'reviewer' },
+    });
+    mocks.teamMember.findFirst.mockResolvedValue({
+      id: 'member-dev', role: 'contributor', projectId: null,
+    });
+    mocks.project.findUnique.mockImplementation(async (args: any) => {
+      if (args?.select) return { id: 'proj-dev', teamId: 'team-1' };
+      return {
+        id: 'proj-dev',
+        name: 'Developer Project',
+        domain: 'dev.example',
+        apiKey: 'mk_detail_contributor',
+        shareToken: null,
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+        updatedAt: new Date('2026-01-01T00:00:00Z'),
+        pages: [],
+        subscribers: [],
+      };
+    });
+
+    const element = await ProjectDetailPage({ params: Promise.resolve({ id: 'proj-dev' }) });
+    const payload = JSON.stringify(element, getCircularReplacer());
+    expect(payload).toContain('"canAdmin":true');
+    expect(payload).toContain('mk_detail_contributor');
   });
 
   it('returns 404 (notFound) when the project does not exist', async () => {

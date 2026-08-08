@@ -30,6 +30,20 @@ services:
     networks:
       - markup-net
 
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrator
+    environment:
+      DATABASE_URL: postgresql://markup:markup_dev_pw@postgres:5432/markup_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - markup-net
+    restart: "no"
+
   app:
     build:
       context: .
@@ -37,22 +51,32 @@ services:
     container_name: markup-clone
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://markup:***@postgres:5432/markup_db
-      DASHBOARD_HOST: localhost:3030
+      DATABASE_URL: postgresql://markup:markup_dev_pw@postgres:5432/markup_db
+      DASHBOARD_HOST: http://localhost:3030
+      # Next.js standalone otherwise inherits Docker's container-id HOSTNAME
+      # and does not listen on loopback, causing the in-container healthcheck
+      # to fail even though the published host port responds.
+      HOSTNAME: 0.0.0.0
       PORT: 3000
       SCREENSHOTS_DIR: /data/screenshots
+      DELIVERY_WORKER_SECRET: local_delivery_worker_secret_32_chars
+      # Development-only 32-byte base64url key. Production reads its own value
+      # from the approval-gated .env used by scripts/deploy.sh.
+      INTEGRATION_ENCRYPTION_KEY: BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY
       MAILGUN_API_KEY: ${MAILGUN_API_KEY:-test_disabled}
       MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-example.com}
     volumes:
       # Persist screenshots across container recreations
       - screenshots:/data/screenshots
+      # Disposable/local recovery volume used by the guarded backup scripts
+      - backups:/data/backups
       # Local scripts dir so recapture.sh works in the container
       - ./scripts:/opt/app-scripts:ro
     ports:
       - "${APP_PORT:-3030}:3000"
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     networks:
       - markup-net
     healthcheck:
@@ -65,6 +89,7 @@ services:
 volumes:
   markup_pgdata:
   screenshots:
+  backups:
 
 networks:
   markup-net:

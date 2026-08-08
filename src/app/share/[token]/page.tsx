@@ -29,12 +29,19 @@
 // both should look like 404 to a share-link spammer probing for
 // live URLs.
 
-import { notFound } from 'next/navigation';
-import { headers } from 'next/headers';
+import type { Metadata } from 'next';
+import { notFound, redirect } from 'next/navigation';
+import { cookies, headers } from 'next/headers';
 import { prisma } from '@/lib/prisma';
 import { audit } from '@/lib/audit';
 import ScreenshotView from '@/components/ScreenshotView';
 import type { ScreenshotWithPins } from '@/lib/types';
+import {
+  isShareAccessCookieValid,
+  isShareExpired,
+  shareAccessCookieName,
+} from '@/lib/share-access';
+import { resolveWorkspaceBranding } from '@/lib/branding';
 
 // Read-only share view must always reflect the latest pins/comments
 // from the DB. The dashboard re-polls every 5s, but a public viewer
@@ -42,12 +49,17 @@ import type { ScreenshotWithPins } from '@/lib/types';
 // whole point of the share link is "client is looking at this right
 // now". force-dynamic disables the page-level cache and ISR.
 export const dynamic = 'force-dynamic';
+export const metadata: Metadata = {
+  referrer: 'no-referrer',
+  robots: { index: false, follow: false },
+};
 
 type PageProps = {
   params: Promise<{ token: string }>;
+  searchParams?: Promise<{ error?: string | string[] }>;
 };
 
-export default async function PublicSharePage({ params }: PageProps) {
+export default async function PublicSharePage({ params, searchParams }: PageProps) {
   const { token } = await params;
 
   // Lookup by shareToken. We do the audit-log write BEFORE the
@@ -67,6 +79,21 @@ export default async function PublicSharePage({ params }: PageProps) {
       name: true,
       domain: true,
       shareToken: true,
+      shareExpiresAt: true,
+      sharePasswordHash: true,
+      team: {
+        select: {
+          workspace: {
+            select: {
+              name: true,
+              brandName: true,
+              logoUrl: true,
+              accentColor: true,
+              reviewerWelcome: true,
+            },
+          },
+        },
+      },
       createdAt: true,
       updatedAt: true,
       pages: {
@@ -92,8 +119,6 @@ export default async function PublicSharePage({ params }: PageProps) {
                   xPercent: true,
                   yPercent: true,
                   status: true,
-                  elementXPath: true,
-                  elementHTML: true,
                   createdAt: true,
                   updatedAt: true,
                   comments: {
@@ -105,6 +130,15 @@ export default async function PublicSharePage({ params }: PageProps) {
                       authorRole: true,
                       createdAt: true,
                       updatedAt: true,
+                      attachments: {
+                        orderBy: { createdAt: 'asc' },
+                        select: {
+                          id: true,
+                          kind: true,
+                          mimeType: true,
+                          size: true,
+                        },
+                      },
                     },
                   },
                   // Same shape as /api/projects: include the
@@ -169,6 +203,91 @@ export default async function PublicSharePage({ params }: PageProps) {
     notFound();
   }
 
+  const expiresAt = project.shareExpiresAt ?? null;
+  const passwordHash = project.sharePasswordHash ?? null;
+  const branding = resolveWorkspaceBranding(
+    project.team?.workspace ?? { name: 'Visual Feedback' }
+  );
+  if (isShareExpired(expiresAt)) {
+    notFound();
+  }
+
+  const cookieStore = await cookies();
+  const accessCookie = cookieStore.get(shareAccessCookieName(token))?.value;
+  const hasAccess = isShareAccessCookieValid(token, passwordHash, accessCookie);
+  if (!hasAccess) {
+    if (!passwordHash) {
+      redirect(`/share/${token}/open`);
+    }
+    const query = searchParams ? await searchParams : undefined;
+    const invalidPassword = query?.error === 'invalid';
+    return (
+      <main className="min-h-screen bg-gray-50 p-4 sm:p-8 flex items-center justify-center">
+        <section className="w-full max-w-md overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+          <div className="h-2" style={{ backgroundColor: branding.accentColor }} />
+          <div className="p-6 sm:p-8">
+            <div className="mb-5 flex min-w-0 items-center gap-3">
+              {branding.logoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element -- operator-validated external agency logo.
+                <img src={branding.logoUrl} alt="" className="h-10 max-w-36 object-contain object-left" />
+              ) : (
+                <div
+                  aria-hidden="true"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg font-bold"
+                  style={{ backgroundColor: branding.accentColor, color: branding.accentText }}
+                >
+                  {branding.displayName.slice(0, 1).toUpperCase()}
+                </div>
+              )}
+              <div className="min-w-0">
+                <p className="truncate text-base font-semibold text-gray-950">{branding.displayName}</p>
+                <p className="text-xs text-gray-600">{branding.welcome}</p>
+              </div>
+            </div>
+            <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: branding.accentColor }}>
+              Protected review
+            </p>
+            <h1 className="mt-2 text-2xl font-semibold text-gray-900">{project.name}</h1>
+            <p className="mt-2 text-sm text-gray-600">
+              Enter the password supplied by the agency to open this read-only review.
+            </p>
+            <form className="mt-6 space-y-4" method="post" action={`/share/${token}/open`}>
+            <div>
+              <label htmlFor="share-password" className="block text-sm font-medium text-gray-800">
+                Review password
+              </label>
+              <input
+                id="share-password"
+                name="password"
+                type="password"
+                autoComplete="current-password"
+                minLength={8}
+                maxLength={128}
+                required
+                autoFocus
+                aria-describedby={invalidPassword ? 'share-password-error' : undefined}
+                className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 px-3 py-2 text-base text-gray-900 shadow-sm focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/30"
+              />
+            </div>
+            {invalidPassword && (
+              <p id="share-password-error" role="alert" className="text-sm text-red-700">
+                Incorrect password. Check the password and try again.
+              </p>
+            )}
+              <button
+                type="submit"
+                className="min-h-11 w-full rounded-lg px-4 py-2.5 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-2"
+                style={{ backgroundColor: branding.accentColor, color: branding.accentText }}
+              >
+                Open review
+              </button>
+            </form>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
   // Serialize Date fields to ISO strings before handing the tree to
   // the client ScreenshotView. The component's TypeScript types
   // declare capturedAt / createdAt as strings (because in the
@@ -192,7 +311,7 @@ export default async function PublicSharePage({ params }: PageProps) {
     id: project.id,
     name: project.name,
     domain: project.domain,
-    shareToken: project.shareToken,
+    shareToken: null,
     createdAt: project.createdAt.toISOString(),
     updatedAt: project.updatedAt.toISOString(),
     pages: project.pages.map((page) => ({
@@ -212,8 +331,7 @@ export default async function PublicSharePage({ params }: PageProps) {
           xPercent: pin.xPercent,
           yPercent: pin.yPercent,
           status: pin.status,
-          elementXPath: pin.elementXPath,
-          elementHTML: pin.elementHTML,
+          developerContext: null,
           createdAt: pin.createdAt.toISOString(),
           updatedAt: pin.updatedAt.toISOString(),
           comments: pin.comments.map((comment) => ({
@@ -223,6 +341,13 @@ export default async function PublicSharePage({ params }: PageProps) {
             authorRole: comment.authorRole,
             createdAt: comment.createdAt.toISOString(),
             updatedAt: comment.updatedAt.toISOString(),
+            attachments: comment.attachments.map((attachment) => ({
+              id: attachment.id,
+              kind: attachment.kind as 'image' | 'voice' | 'video',
+              mimeType: attachment.mimeType,
+              size: attachment.size,
+              url: `/api/attachments/${attachment.id}`,
+            })),
           })),
           annotations: (pin.annotations ?? []).map((annotation) => {
             let path: number[][] = [];
@@ -247,16 +372,33 @@ export default async function PublicSharePage({ params }: PageProps) {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 sm:p-8">
+    <main className="min-h-screen bg-gray-50 p-4 sm:p-8">
       <div className="max-w-5xl mx-auto">
         <header className="mb-6">
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 px-6 py-4">
+          <div className="overflow-hidden bg-white rounded-xl shadow-sm border border-gray-200">
+            <div className="h-2" style={{ backgroundColor: branding.accentColor }} />
+            <div className="px-6 py-4">
+              <div className="mb-3 flex min-w-0 items-center gap-3">
+                {branding.logoUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- operator-validated external agency logo.
+                  <img src={branding.logoUrl} alt="" className="h-9 max-w-40 object-contain object-left" />
+                ) : (
+                  <div aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg font-bold" style={{ backgroundColor: branding.accentColor, color: branding.accentText }}>
+                    {branding.displayName.slice(0, 1).toUpperCase()}
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-gray-950">{branding.displayName}</p>
+                  <p className="text-xs text-gray-600">{branding.welcome}</p>
+                </div>
+              </div>
             <div className="flex items-center gap-2 text-xs text-gray-500 uppercase tracking-wider mb-1">
               <span aria-hidden="true">🔗</span>
               <span>Shared visual feedback</span>
             </div>
             <h1 className="text-2xl font-semibold text-gray-900">{serializedProject.name}</h1>
             <p className="text-gray-500 text-sm mt-1">{serializedProject.domain}</p>
+            </div>
           </div>
         </header>
 
@@ -309,6 +451,6 @@ export default async function PublicSharePage({ params }: PageProps) {
           Read-only view — no comments can be added from this link.
         </footer>
       </div>
-    </div>
+    </main>
   );
 }

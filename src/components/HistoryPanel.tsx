@@ -28,7 +28,7 @@
 // versions beyond the cap are not addressable from this UI; the
 // task's explicit limit.
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useId, useRef } from 'react';
 
 export type ScreenshotVersionRow = {
   id: string;
@@ -52,12 +52,18 @@ export default function HistoryPanel({
   const [versions, setVersions] = useState<ScreenshotVersionRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<ScreenshotVersionRow | null>(null);
+  const dialogTitleId = useId();
+  const dialogDescriptionId = useId();
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const openerRef = useRef<HTMLButtonElement | null>(null);
   // Track the last refreshKey we acted on so a back-to-back bump
   // doesn't trigger two fetches (React strict mode + double-bump
   // from the recapture hook's imageKey update).
   const lastFetchedKey = useRef<number>(-1);
 
   const fetchHistory = useCallback(async () => {
+    setError(null);
     try {
       const res = await fetch(`/api/screenshots/${screenshotId}/history`, {
         cache: 'no-store',
@@ -74,6 +80,42 @@ export default function HistoryPanel({
     }
   }, [screenshotId]);
 
+  const closeSelected = useCallback(() => {
+    setSelected(null);
+    queueMicrotask(() => openerRef.current?.focus());
+  }, []);
+
+  useEffect(() => {
+    if (!selected) return;
+    closeButtonRef.current?.focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeSelected();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+
+      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+      if (!focusable?.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selected, closeSelected]);
+
   useEffect(() => {
     if (lastFetchedKey.current === refreshKey) return;
     lastFetchedKey.current = refreshKey;
@@ -82,15 +124,22 @@ export default function HistoryPanel({
 
   if (error) {
     return (
-      <div className="p-4 text-sm text-red-600" role="alert">
-        {error}
+      <div className="p-4 text-sm text-red-700" role="alert">
+        <p>{error}</p>
+        <button
+          type="button"
+          onClick={() => void fetchHistory()}
+          className="mt-2 rounded-md border border-red-300 bg-white px-3 py-1.5 font-medium hover:bg-red-50"
+        >
+          Retry history
+        </button>
       </div>
     );
   }
 
   if (versions === null) {
     return (
-      <div className="p-4 text-sm text-gray-500" data-testid="history-loading">
+      <div className="p-4 text-sm text-gray-500" data-testid="history-loading" role="status" aria-live="polite">
         Loading history…
       </div>
     );
@@ -126,7 +175,10 @@ export default function HistoryPanel({
             <button
               key={v.id}
               type="button"
-              onClick={() => setSelected(v)}
+              onClick={(event) => {
+                openerRef.current = event.currentTarget;
+                setSelected(v);
+              }}
               data-testid={`history-thumb-${v.id}`}
               className="text-left border border-gray-200 rounded-md overflow-hidden bg-white hover:border-blue-400 hover:shadow-md transition focus:outline-none focus:ring-2 focus:ring-blue-300"
               title={`Captured ${new Date(v.capturedAt).toLocaleString()} · ${v.width}×${v.height}px`}
@@ -155,22 +207,29 @@ export default function HistoryPanel({
           className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
           role="dialog"
           aria-modal="true"
-          aria-label="Version full size"
-          onClick={() => setSelected(null)}
+          aria-labelledby={dialogTitleId}
+          aria-describedby={dialogDescriptionId}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) closeSelected();
+          }}
         >
           <div
+            ref={dialogRef}
             className="bg-white rounded-lg max-w-[95vw] max-h-[95vh] overflow-auto shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 text-xs text-gray-600">
-              <span>
+              <h2 id={dialogTitleId} className="font-semibold text-gray-800">Screenshot version</h2>
+              <span id={dialogDescriptionId}>
                 {new Date(selected.capturedAt).toLocaleString()} ·{' '}
                 {selected.width}×{selected.height}px
                 {selected.createdBy !== 'system' && ` · by ${selected.createdBy}`}
               </span>
               <button
+                ref={closeButtonRef}
                 type="button"
-                onClick={() => setSelected(null)}
+                onClick={closeSelected}
+                aria-label="Close screenshot version"
                 className="px-2 py-1 rounded border border-gray-300 hover:bg-gray-100"
               >
                 Close

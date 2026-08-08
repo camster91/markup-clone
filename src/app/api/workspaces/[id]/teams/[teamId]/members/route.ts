@@ -24,12 +24,8 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardAuth } from '@/lib/auth';
 import { requireCsrfToken } from '@/lib/csrf';
-import { audit } from '@/lib/audit';
-import {
-  validateTeamRole,
-  validateTeamMemberEmail,
-  validateUuidParam,
-} from '@/lib/validation';
+import { assertTeamRole } from '@/lib/teams';
+import { validateUuidParam } from '@/lib/validation';
 
 async function findTeam(workspaceId: string, teamId: string) {
   return prisma.team.findFirst({
@@ -50,6 +46,11 @@ export async function GET(
   if (!widRes.ok) return NextResponse.json({ error: widRes.error }, { status: 400 });
   const tidRes = validateUuidParam(teamId, 'teamId');
   if (!tidRes.ok) return NextResponse.json({ error: tidRes.error }, { status: 400 });
+
+  const access = await assertTeamRole(widRes.value, tidRes.value, ['owner']);
+  if (!access.ok) {
+    return NextResponse.json({ error: access.error }, { status: access.status });
+  }
 
   const team = await findTeam(widRes.value, tidRes.value);
   if (!team) return NextResponse.json({ error: 'Team not found' }, { status: 404 });
@@ -93,62 +94,25 @@ export async function POST(
   const csrfErr = requireCsrfToken(req);
   if (csrfErr) return csrfErr;
 
+  const { id, teamId } = await params;
   try {
-    const { id, teamId } = await params;
     const widRes = validateUuidParam(id, 'id');
     if (!widRes.ok) return NextResponse.json({ error: widRes.error }, { status: 400 });
     const tidRes = validateUuidParam(teamId, 'teamId');
     if (!tidRes.ok) return NextResponse.json({ error: tidRes.error }, { status: 400 });
 
+    const access = await assertTeamRole(widRes.value, tidRes.value, ['owner']);
+    if (!access.ok) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+
     const team = await findTeam(widRes.value, tidRes.value);
     if (!team) return NextResponse.json({ error: 'Team not found' }, { status: 404 });
 
-    const body = await req.json();
-    const { email, role, userId } = body as {
-      email?: unknown;
-      role?: unknown;
-      userId?: unknown;
-    };
-    const emailRes = validateTeamMemberEmail(email);
-    if (!emailRes.ok) return NextResponse.json({ error: emailRes.error }, { status: 400 });
-
-    // Role is optional; default 'reviewer'. Validate when supplied.
-    let roleValue: 'owner' | 'reviewer' = 'reviewer';
-    if (role !== undefined) {
-      const roleRes = validateTeamRole(role);
-      if (!roleRes.ok) return NextResponse.json({ error: roleRes.error }, { status: 400 });
-      roleValue = roleRes.value;
-    }
-
-    // userId is optional. When supplied, validate UUID + verify
-    // the user exists. We don't auto-link by email (e.g. set userId
-    // = the matching User's id when one is found); the explicit
-    // userId is the only accepted linkage. A follow-up "claim
-    // invite" flow can back-fill the userId when the user signs up.
-    let userIdValue: string | null = null;
-    if (userId !== undefined && userId !== null) {
-      const uidRes = validateUuidParam(userId, 'userId');
-      if (!uidRes.ok) return NextResponse.json({ error: uidRes.error }, { status: 400 });
-      const user = await prisma.user.findUnique({ where: { id: uidRes.value }, select: { id: true } });
-      if (!user) return NextResponse.json({ error: 'userId not found' }, { status: 400 });
-      userIdValue = user.id;
-    }
-
-    const member = await prisma.teamMember.create({
-      data: {
-        teamId: tidRes.value,
-        userId: userIdValue,
-        role: roleValue,
-        email: emailRes.value,
-      },
-    });
-    audit({
-      actor: member.id,
-      action: 'team_member.invite',
-      target: member.id,
-      metadata: { teamId: tidRes.value, email: member.email, role: member.role, userId: userIdValue },
-    });
-    return NextResponse.json(member, { status: 201 });
+    return NextResponse.json(
+      { error: 'Use the managed invitation endpoint to add members' },
+      { status: 409 },
+    );
   } catch (error) {
     console.error('TeamMember invite error:', error);
     return NextResponse.json({ error: 'Failed to invite team member' }, { status: 500 });

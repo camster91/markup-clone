@@ -6,17 +6,15 @@
 // the workspace / team split, and a back-fill migration would silently
 // reassign the whole install to a single team. We deliberately leave
 // those projects with teamId = NULL ("legacy / unscoped") and let the
-// GET /api/projects filter show them to callers with no team
+// project scope show them to authenticated callers with no team
 // memberships until every user has been invited to a team.
 //
-// Auth: every handler is gated by requireDashboardOrigin (the same
-// gate the other dashboard routes use). No session check at this
-// layer — workspace creation is open to any dashboard caller. A
-// follow-up can add an "operator-only" gate if we want to restrict
-// org creation to admins.
+// Auth: every handler requires the dashboard session. Lists are scoped
+// to workspaces visible to the caller; workspace creation and mutation
+// are restricted to global operators.
 //
 // Contract:
-//   GET  /api/workspaces         — every workspace (with team counts)
+//   GET  /api/workspaces         — visible workspaces (with team counts)
 //   POST /api/workspaces         — create a workspace, name required
 //   PATCH /api/workspaces/[id]   — rename a workspace
 //   DELETE /api/workspaces/[id]  — remove a workspace (Cascades to
@@ -33,12 +31,19 @@ import { requireDashboardAuth } from '@/lib/auth';
 import { requireCsrfToken } from '@/lib/csrf';
 import { audit } from '@/lib/audit';
 import { validateWorkspaceName } from '@/lib/validation';
+import { assertOperator, getCallerUser, getWorkspaceScopeWhere } from '@/lib/teams';
 
 export async function GET(req: Request) {
   const authErr = await requireDashboardAuth(req);
   if (authErr) return authErr;
 
+  const caller = await getCallerUser();
+  if (!caller) {
+    return NextResponse.json({ error: 'Authentication required' }, { status: 403 });
+  }
+
   const workspaces = await prisma.workspace.findMany({
+    where: getWorkspaceScopeWhere(caller),
     orderBy: { createdAt: 'desc' },
     include: {
       // Project counts aren't included here — the dashboard's
@@ -68,6 +73,11 @@ export async function POST(req: Request) {
   if (authErr) return authErr;
   const csrfErr = requireCsrfToken(req);
   if (csrfErr) return csrfErr;
+
+  const access = await assertOperator();
+  if (!access.ok) {
+    return NextResponse.json({ error: access.error }, { status: access.status });
+  }
 
   try {
     const body = await req.json();

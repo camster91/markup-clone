@@ -47,10 +47,27 @@ vi.mock('@/lib/prisma', () => ({
   prisma: mocks,
 }));
 
+// Share creation/revocation is an administrative operation. These tests cover
+// its functional behavior under a global operator; reviewer denial has its
+// own focused regression suite.
+vi.mock('@/lib/auth', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/auth')>();
+  return {
+    ...actual,
+    requireDashboardAuth: vi.fn(async (req: Request) => actual.requireDashboardOrigin(req)),
+    requireAuth: vi.fn(async () => ({
+      id: 'operator-1',
+      email: 'operator@example.com',
+      role: 'operator',
+    })),
+  };
+});
+
 // next/navigation's notFound() throws a special error. We catch
 // and re-throw a sentinel so the test can assert on it without
 // importing the next-internal symbol.
 const notFoundCalls: unknown[] = [];
+const redirectCalls: string[] = [];
 vi.mock('next/navigation', () => ({
   notFound: () => {
     notFoundCalls.push(true);
@@ -59,6 +76,12 @@ vi.mock('next/navigation', () => ({
     // not-found.tsx. We just throw a plain Error with a marker.
     const err = new Error('NEXT_NOT_FOUND');
     (err as Error & { __notFound: boolean }).__notFound = true;
+    throw err;
+  },
+  redirect: (location: string) => {
+    redirectCalls.push(location);
+    const err = new Error('NEXT_REDIRECT');
+    (err as Error & { __redirect?: string }).__redirect = location;
     throw err;
   },
 }));
@@ -70,15 +93,25 @@ const headerStore: Record<string, string> = {
   'x-forwarded-for': '203.0.113.42',
   'user-agent': 'vitest-share',
 };
+const cookieValues = new Map<string, string>();
 vi.mock('next/headers', () => ({
   headers: () => Promise.resolve({
     get: (k: string) => headerStore[k.toLowerCase()] ?? null,
+  }),
+  cookies: () => Promise.resolve({
+    get: (name: string) => cookieValues.has(name)
+      ? { name, value: cookieValues.get(name) }
+      : undefined,
   }),
 }));
 
 import { POST as shareCreate, DELETE as shareDelete } from '../../src/app/api/projects/[id]/share/route';
 import SharePage from '../../src/app/share/[token]/page';
 import { NextRequest } from 'next/server';
+import {
+  createShareAccessValue,
+  shareAccessCookieName,
+} from '@/lib/share-access';
 
 const ORIGIN = 'https://markup.ashbi.ca';
 
@@ -101,9 +134,28 @@ function req(method: string, headers: Record<string, string> = {}): NextRequest 
   });
 }
 
+function reqWithBody(body: unknown): NextRequest {
+  return new NextRequest(`https://markup.ashbi.ca/api/projects/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/share`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      origin: ORIGIN,
+      'X-CSRF-Token': CSRF_TOKEN,
+      cookie: `markup.csrf=${CSRF_TOKEN}`,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   notFoundCalls.length = 0;
+  redirectCalls.length = 0;
+  cookieValues.clear();
+  cookieValues.set(
+    shareAccessCookieName('good-token'),
+    createShareAccessValue('good-token', null)
+  );
   mocks.auditLog.create.mockResolvedValue({ id: 'audit-log-1' });
   // assertProjectAccessible reads teamId; null = legacy / unscoped.
   mocks.project.findUnique.mockResolvedValue({
@@ -147,7 +199,7 @@ describe('POST /api/projects/[id]/share', () => {
     // 32 bytes base64url-encoded = 43 chars (no padding) — accept
     // any URL-safe base64url with that length.
     expect(body.shareToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(body.shareUrl).toMatch(/^https?:\/\/[^/]+\/share\/[A-Za-z0-9_-]{43}$/);
+    expect(body.shareUrl).toMatch(/^https?:\/\/[^/]+\/share\/[A-Za-z0-9_-]{43}\/open$/);
     // The update must have written the same token to the project row.
     expect(mocks.project.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -155,6 +207,86 @@ describe('POST /api/projects/[id]/share', () => {
         data: expect.objectContaining({ shareToken: body.shareToken }),
       })
     );
+  });
+
+  it('builds the copyable URL from DASHBOARD_HOST behind the container proxy', async () => {
+    const previous = process.env.DASHBOARD_HOST;
+    process.env.DASHBOARD_HOST = 'http://localhost:3030';
+    try {
+      mocks.project.findUnique.mockResolvedValue({
+        id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', name: 'Test', teamId: null,
+      });
+      mocks.project.update.mockImplementation(async ({ data }: any) => ({
+        id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        name: 'Test',
+        shareToken: data.shareToken,
+        shareExpiresAt: null,
+        sharePasswordHash: null,
+      }));
+      const internal = new NextRequest(
+        'http://0.0.0.0:3000/api/projects/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/share',
+        {
+          method: 'POST',
+          headers: {
+            origin: 'http://localhost:3030',
+            'X-CSRF-Token': CSRF_TOKEN,
+            cookie: `markup.csrf=${CSRF_TOKEN}`,
+          },
+        }
+      );
+      const response = await shareCreate(internal, {
+        params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }),
+      });
+      expect(response.status).toBe(200);
+      expect((await response.json()).shareUrl).toMatch(
+        /^http:\/\/localhost:3030\/share\/[A-Za-z0-9_-]{43}\/open$/
+      );
+    } finally {
+      process.env.DASHBOARD_HOST = previous;
+    }
+  });
+
+  it('stores a hash-only password and bounded expiry without returning the hash', async () => {
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    mocks.project.findUnique.mockResolvedValue({
+      id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', name: 'Test', teamId: null,
+    });
+    mocks.project.update.mockImplementation(async ({ where, data }: any) => ({
+      id: where.id,
+      name: 'Test',
+      shareToken: data.shareToken,
+      shareExpiresAt: data.shareExpiresAt,
+      sharePasswordHash: data.sharePasswordHash,
+    }));
+
+    const response = await shareCreate(reqWithBody({
+      expiresAt,
+      password: 'Client review 2026',
+    }), { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual(expect.objectContaining({
+      expiresAt,
+      passwordProtected: true,
+    }));
+    expect(body.shareUrl).toMatch(/\/share\/[A-Za-z0-9_-]{43}\/open$/);
+    expect(JSON.stringify(body)).not.toContain('scrypt$');
+
+    const update = mocks.project.update.mock.calls[0][0].data;
+    expect(update.shareExpiresAt).toEqual(new Date(expiresAt));
+    expect(update.sharePasswordHash).toMatch(/^scrypt\$/);
+    expect(update.sharePasswordHash).not.toContain('Client review 2026');
+  });
+
+  it('rejects an expired setting before rotating the token', async () => {
+    const response = await shareCreate(reqWithBody({
+      expiresAt: '2020-01-01T00:00:00.000Z',
+    }), { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'expiry must be in the future' });
+    expect(mocks.project.update).not.toHaveBeenCalled();
   });
 
   it('rotates an existing token (overwrites the previous one)', async () => {
@@ -239,7 +371,7 @@ describe('DELETE /api/projects/[id]/share', () => {
     expect(mocks.project.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' },
-        data: { shareToken: null },
+        data: { shareToken: null, shareExpiresAt: null, sharePasswordHash: null },
       })
     );
   });
@@ -285,6 +417,11 @@ describe('DELETE /api/projects/[id]/share', () => {
 describe('GET /share/[token]', () => {
   beforeEach(() => {
     mocks.project.findUnique.mockReset();
+    cookieValues.clear();
+    cookieValues.set(
+      shareAccessCookieName('good-token'),
+      createShareAccessValue('good-token', null)
+    );
   });
 
   it('returns 404 (notFound) when the token does not match any project', async () => {
@@ -329,10 +466,21 @@ describe('GET /share/[token]', () => {
                   screenshotId: 'shot-1',
                   xPercent: 50,
                   yPercent: 50,
-                  elementXPath: null,
-                  elementHTML: null,
+                  elementXPath: '#private-selector',
+                  elementHTML: '<button data-token="private">Buy</button>',
+                  pageUrl: 'https://acme.com/?token=private',
+                  viewportWidth: 1440,
+                  viewportHeight: 900,
+                  devicePixelRatio: 2,
+                  userAgent: 'PrivateBrowser/1',
+                  platform: 'PrivatePlatform',
+                  selectorCandidatesJson: '["#private-selector"]',
                   authorName: 'Client',
                   status: 'OPEN',
+                  priority: 'URGENT',
+                  assigneeId: 'private-assignee-id',
+                  assignee: { id: 'private-assignee-id', email: 'private-dev@acme.com' },
+                  tags: [{ tag: { id: 'private-tag-id', name: 'Internal Escalation', key: 'internal escalation' } }],
                   createdAt: new Date('2026-01-02T00:00:00Z'),
                   updatedAt: new Date('2026-01-02T00:00:00Z'),
                   comments: [
@@ -344,6 +492,12 @@ describe('GET /share/[token]', () => {
                       text: 'Move the button left',
                       createdAt: new Date('2026-01-02T00:00:00Z'),
                       updatedAt: new Date('2026-01-02T00:00:00Z'),
+                      attachments: [{
+                        id: 'attachment-1',
+                        kind: 'image',
+                        mimeType: 'image/png',
+                        size: 321,
+                      }],
                     },
                   ],
                 },
@@ -361,8 +515,120 @@ describe('GET /share/[token]', () => {
     const html = JSON.stringify(element);
     expect(html).toContain('Acme Redesign');
     expect(html).toContain('acme.com');
+    expect(html).not.toContain('good-token');
+    expect(html).toContain('/api/attachments/attachment-1');
+    expect(html).not.toContain('private-selector');
+    expect(html).not.toContain('PrivateBrowser');
+    expect(html).not.toContain('PrivatePlatform');
+    expect(html).not.toContain('data-token');
+    expect(html).not.toContain('URGENT');
+    expect(html).not.toContain('private-dev@acme.com');
+    expect(html).not.toContain('Internal Escalation');
+    expect(mocks.project.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          pages: expect.objectContaining({
+            select: expect.objectContaining({
+              screenshots: expect.objectContaining({
+                select: expect.objectContaining({
+                  pins: expect.objectContaining({
+                    select: expect.objectContaining({
+                      comments: expect.objectContaining({
+                        select: expect.objectContaining({ attachments: expect.any(Object) }),
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          }),
+        }),
+      })
+    );
+    const pinSelect = mocks.project.findUnique.mock.calls[0][0].select.pages.select.screenshots.select.pins.select;
+    expect(pinSelect).not.toHaveProperty('elementXPath');
+    expect(pinSelect).not.toHaveProperty('elementHTML');
+    expect(pinSelect).not.toHaveProperty('pageUrl');
+    expect(pinSelect).not.toHaveProperty('userAgent');
+    expect(pinSelect).not.toHaveProperty('priority');
+    expect(pinSelect).not.toHaveProperty('assignee');
+    expect(pinSelect).not.toHaveProperty('tags');
     // notFound() must NOT have been called.
     expect(notFoundCalls).toHaveLength(0);
+  });
+
+  it('shows only the password gate until the token-bound cookie is present', async () => {
+    cookieValues.clear();
+    mocks.project.findUnique.mockResolvedValue({
+      id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      name: 'Protected Acme Review',
+      domain: 'acme.com',
+      shareToken: 'good-token',
+      shareExpiresAt: new Date('2026-08-15T00:00:00.000Z'),
+      sharePasswordHash: 'scrypt$protected',
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+      updatedAt: new Date('2026-01-01T00:00:00Z'),
+      pages: [{ id: 'must-not-render' }],
+    });
+
+    const element = await SharePage({
+      params: Promise.resolve({ token: 'good-token' }),
+      searchParams: Promise.resolve({ error: 'invalid' }),
+    });
+    const html = JSON.stringify(element);
+    expect(html).toContain('Protected review');
+    expect(html).toContain('Incorrect password');
+    expect(html).toContain('/share/good-token/open');
+    expect(html).not.toContain('must-not-render');
+    expect(html).not.toContain('scrypt$protected');
+  });
+
+  it('applies validated agency branding to the protected client gate', async () => {
+    cookieValues.clear();
+    mocks.project.findUnique.mockResolvedValue({
+      id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      name: 'Acme Redesign',
+      domain: 'acme.com',
+      shareToken: 'good-token',
+      shareExpiresAt: null,
+      sharePasswordHash: 'scrypt$protected',
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+      updatedAt: new Date('2026-01-01T00:00:00Z'),
+      pages: [],
+      team: {
+        workspace: {
+          name: 'Agency Workspace',
+          brandName: 'Northstar Studio',
+          logoUrl: null,
+          accentColor: '#facc15',
+          reviewerWelcome: 'Welcome to your delivery review.',
+        },
+      },
+    });
+
+    const element = await SharePage({ params: Promise.resolve({ token: 'good-token' }) });
+    const html = JSON.stringify(element);
+    expect(html).toContain('Northstar Studio');
+    expect(html).toContain('Welcome to your delivery review.');
+    expect(html).toContain('#facc15');
+    expect(html).toContain('#111827');
+    expect(mocks.project.findUnique.mock.calls[0][0].select.team).toBeDefined();
+  });
+
+  it('returns the same not-found response when a matching token is expired', async () => {
+    mocks.project.findUnique.mockResolvedValue({
+      id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      name: 'Expired',
+      domain: 'acme.com',
+      shareToken: 'good-token',
+      shareExpiresAt: new Date('2020-01-01T00:00:00.000Z'),
+      sharePasswordHash: null,
+      createdAt: new Date('2020-01-01T00:00:00Z'),
+      updatedAt: new Date('2020-01-01T00:00:00Z'),
+      pages: [],
+    });
+    await expect(SharePage({ params: Promise.resolve({ token: 'good-token' }) }))
+      .rejects.toMatchObject({ __notFound: true });
   });
 
   it('logs a share.view audit entry on every load (including bad-token probes)', async () => {

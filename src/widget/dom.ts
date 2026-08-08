@@ -9,6 +9,15 @@ let lastHoveredEl: HTMLElement | null = null;
 
 /** Append the floating Feedback toggle to the document body. */
 export function createToggleButton(): HTMLButtonElement {
+  if (!document.getElementById('markup-accessibility-style')) {
+    const style = document.createElement('style');
+    style.id = 'markup-accessibility-style';
+    style.textContent =
+      '#markup-toggle:focus-visible,[data-markup-dialog] button:focus-visible,' +
+      '[data-markup-dialog] input:focus-visible,[data-markup-dialog] textarea:focus-visible{' +
+      'outline:3px solid #2563EB !important;outline-offset:2px !important}';
+    document.head.appendChild(style);
+  }
   const btn = document.createElement('button');
   btn.id = 'markup-toggle';
   btn.type = 'button';
@@ -18,7 +27,7 @@ export function createToggleButton(): HTMLButtonElement {
   btn.innerHTML =
     '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#fff;margin-right:6px;vertical-align:middle"></span>Feedback';
   btn.style.cssText =
-    'position:fixed;bottom:20px;right:20px;z-index:2147483646;padding:10px 16px;background:#0F172A;color:#fff;border:none;border-radius:24px;cursor:pointer;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px;font-weight:600;box-shadow:0 4px 12px rgba(0,0,0,0.2);transition:background 0.15s';
+    'position:fixed;bottom:20px;right:20px;z-index:2147483646;min-width:44px;min-height:44px;padding:10px 16px;background:#0F172A;color:#fff;border:none;border-radius:24px;cursor:pointer;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px;font-weight:600;box-shadow:0 4px 12px rgba(0,0,0,0.2);transition:background 0.15s';
 
   // The click handler reads/writes the lifecycle module's isFeedbackMode.
   // We don't import lifecycle.ts here to avoid a circular import: lifecycle

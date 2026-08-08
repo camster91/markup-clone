@@ -1,7 +1,7 @@
 // playwright.config.ts
 //
 // e2e configuration for the markup-clone dashboard. The vitest suite
-// (440+ tests under tests/**) is the unit/integration layer; this
+// (875+ tests under tests/**) is the unit/integration layer; this
 // config is the e2e layer — a small number of full-browser flows
 // that JSDOM cannot cover: the real DOM, real `elementFromPoint`,
 // real Fetch in a real <script> context, and the actual ScreenshotView
@@ -32,10 +32,10 @@
 //    the operator sets PLAYWRIGHT_DEV when they want dev mode.
 //
 // 4. Don't run `npx playwright install` from this config: the
-//    chromium binary download is an operator step that depends on
+//    browser binary downloads are an operator step that depends on
 //    network/cache, and the env we run the tests in is offline by
 //    design. The README's "Running e2e tests" section documents the
-//    one-time `npx playwright install chromium` step.
+//    one-time `npx playwright install chromium firefox webkit` step.
 //
 // 5. `testIgnore` on the vitest files is belt-and-suspenders. The
 //    vitest `include` glob already excludes .spec.ts files, but if
@@ -88,6 +88,14 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'firefox',
+      use: { ...devices['Desktop Firefox'] },
+    },
+    {
+      name: 'webkit',
+      use: { ...devices['Desktop Safari'] },
     },
   ],
   webServer: {

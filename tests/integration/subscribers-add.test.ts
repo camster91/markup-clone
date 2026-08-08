@@ -19,6 +19,19 @@ vi.mock('@/lib/prisma', () => ({
   },
 }));
 
+vi.mock('@/lib/auth', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/auth')>();
+  return {
+    ...actual,
+    requireDashboardAuth: vi.fn(async (req: Request) => actual.requireDashboardOrigin(req)),
+    requireAuth: vi.fn(async () => ({
+      id: 'operator-1',
+      email: 'operator@example.com',
+      role: 'operator',
+    })),
+  };
+});
+
 vi.mock('@/lib/audit', () => ({
   audit: mocks.audit,
 }));

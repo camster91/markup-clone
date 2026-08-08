@@ -42,6 +42,9 @@ export const LIMITS = {
   // a workspace rename can't smuggle in a giant string and balloon
   // the dashboard HTML.
   WORKSPACE_NAME_MAX: 200,
+  BRAND_NAME_MAX: 120,
+  BRAND_LOGO_URL_MAX: 2_048,
+  REVIEWER_WELCOME_MAX: 280,
   TEAM_NAME_MAX: 200,
   TEAM_MEMBER_EMAIL_MAX: 320,
 } as const;
@@ -314,7 +317,7 @@ export function validateAnnotationKind(value: unknown): ValidationResult<Annotat
 // Closed set of TeamMember.role. Free-form string at the DB level
 // (so we can add a new role in a single edit without a migration);
 // the API + UI enforce membership in this set.
-export const TEAM_ROLES = ['owner', 'reviewer'] as const;
+export const TEAM_ROLES = ['owner', 'contributor', 'client', 'guest'] as const;
 export type TeamRole = (typeof TEAM_ROLES)[number];
 
 export function validateTeamRole(value: unknown): ValidationResult<TeamRole> {
@@ -337,6 +340,56 @@ export function validateWorkspaceName(value: unknown): ValidationResult<string> 
   }
   if (value.includes('\x00')) return { ok: false, error: 'name must not contain null bytes' };
   return { ok: true, value };
+}
+
+function optionalTrimmedString(
+  value: unknown,
+  field: string,
+  max: number,
+): ValidationResult<string | null> {
+  if (value === null || value === '') return { ok: true, value: null };
+  if (typeof value !== 'string') return { ok: false, error: `${field} must be a string or null` };
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return { ok: true, value: null };
+  if (trimmed.length > max) return { ok: false, error: `${field} must be ≤${max} chars` };
+  if (trimmed.includes('\0')) return { ok: false, error: `${field} contains invalid characters` };
+  return { ok: true, value: trimmed };
+}
+
+export function validateBrandName(value: unknown): ValidationResult<string | null> {
+  return optionalTrimmedString(value, 'brandName', LIMITS.BRAND_NAME_MAX);
+}
+
+export function validateReviewerWelcome(value: unknown): ValidationResult<string | null> {
+  return optionalTrimmedString(value, 'reviewerWelcome', LIMITS.REVIEWER_WELCOME_MAX);
+}
+
+export function validateBrandAccentColor(value: unknown): ValidationResult<string | null> {
+  const normalized = optionalTrimmedString(value, 'accentColor', 7);
+  if (!normalized.ok || normalized.value === null) return normalized;
+  const color = normalized.value.toLowerCase();
+  if (!/^#[0-9a-f]{6}$/.test(color)) {
+    return { ok: false, error: 'accentColor must be a six-digit hex color' };
+  }
+  return { ok: true, value: color };
+}
+
+export function validateBrandLogoUrl(value: unknown): ValidationResult<string | null> {
+  const normalized = optionalTrimmedString(value, 'logoUrl', LIMITS.BRAND_LOGO_URL_MAX);
+  if (!normalized.ok || normalized.value === null) return normalized;
+  let url: URL;
+  try {
+    url = new URL(normalized.value);
+  } catch {
+    return { ok: false, error: 'logoUrl must be a valid HTTPS URL' };
+  }
+  if (url.protocol !== 'https:' || url.username || url.password) {
+    return { ok: false, error: 'logoUrl must be a public HTTPS URL without credentials' };
+  }
+  if (/\.(?:svg|svgz|xml)$/i.test(url.pathname)) {
+    return { ok: false, error: 'logoUrl must use a raster image format' };
+  }
+  return { ok: true, value: url.toString() };
 }
 
 /** Validates a team name. Identical shape to the workspace validator;

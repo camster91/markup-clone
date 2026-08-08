@@ -1,0 +1,52 @@
+openapi: 3.1.0
+info:
+  title: Ashbi Visual Feedback API
+  version: 1.0.0
+paths:
+  /api/v1/projects/{projectId}/issues:
+    get:
+      operationId: listProjectIssues
+      security:
+        - developerBearer: []
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string, format: uuid } }
+        - { name: status, in: query, schema: { type: string, enum: [OPEN, RESOLVED] } }
+        - { name: priority, in: query, schema: { type: string, enum: [NONE, LOW, MEDIUM, HIGH, URGENT] } }
+        - { name: assigneeId, in: query, schema: { type: string, format: uuid } }
+        - { name: tagId, in: query, schema: { type: string, format: uuid } }
+        - { name: reviewRoundId, in: query, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Bounded visual-feedback.issue.v1 payloads
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [apiVersion, data, pagination]
+                properties:
+                  apiVersion: { const: v1 }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        schema: { const: visual-feedback.issue.v1 }
+                  pagination:
+                    type: object
+                    properties:
+                      limit: { type: integer }
+                      nextCursor: { type: [string, "null"], format: uuid }
+        "400": { $ref: "#/components/responses/ApiError" }
+        "401": { $ref: "#/components/responses/ApiError" }
+        "429": { $ref: "#/components/responses/ApiError" }
+components:
+  securitySchemes:
+    developerBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: mkv1 project token
+  responses:
+    ApiError:
+      description: Machine-readable error

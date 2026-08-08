@@ -13,7 +13,24 @@ import {
   validateEmail,
   validateSubscriberEmail,
   validatePinText,
+  validateTeamRole,
 } from '../../src/lib/validation';
+
+describe('validateTeamRole', () => {
+  it.each(['owner', 'contributor', 'client', 'guest'])(
+    'accepts canonical agency role %s',
+    (role) => {
+      expect(validateTeamRole(role)).toEqual({ ok: true, value: role });
+    },
+  );
+
+  it('rejects the legacy reviewer label for new writes', () => {
+    expect(validateTeamRole('reviewer')).toEqual({
+      ok: false,
+      error: 'role must be one of: owner, contributor, client, guest',
+    });
+  });
+});
 
 describe('LIMITS', () => {
   it('exports the expected constants', () => {
@@ -65,6 +82,7 @@ describe('validatePagePath', () => {
     const longPath = '/' + 'a'.repeat(LIMITS.PATH_MAX + 1);
     const r = validatePagePath(longPath);
     expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('expected validation failure');
     expect(r.error).toContain('≤');
   });
 
@@ -101,6 +119,7 @@ describe('validatePercent', () => {
   it('rejects NaN', () => {
     const r = validatePercent(NaN, 'xPercent');
     expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('expected validation failure');
     expect(r.error).toContain('finite');
   });
 
@@ -134,6 +153,7 @@ describe('sanitizeText', () => {
   it('rejects text longer than max', () => {
     const r = sanitizeText('x'.repeat(101), 100, 'text');
     expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('expected validation failure');
     expect(r.error).toContain('100');
   });
 
@@ -241,6 +261,7 @@ describe('validateProjectName', () => {
     // domain next to the name, so the spoof doesn't reach a victim.
     const r = validateProjectName('paypal\u202Egpj.exe');
     expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error('expected validation success');
     expect(r.value).toBe('paypal\u202Egpj.exe');
   });
 
@@ -249,6 +270,7 @@ describe('validateProjectName', () => {
     // rendering. Rejecting them would break valid project names.
     const r = validateProjectName('hello\u200Bworld');
     expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error('expected validation success');
     expect(r.value).toBe('hello\u200Bworld');
   });
 
@@ -259,6 +281,7 @@ describe('validateProjectName', () => {
     // reaches the DB / filesystem layer.
     const r = validateProjectName('hello\u0000world');
     expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('expected validation failure');
     expect(r.error).toBe('name must not contain null bytes');
   });
 });

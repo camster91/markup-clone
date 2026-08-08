@@ -15,7 +15,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 import React from 'react';
 import DashboardPoller from '@/components/DashboardPoller';
-import type { ProjectWithPages } from '@/lib/types';
+import type { ProjectSummary } from '@/lib/types';
 
 // Silence the "current testing environment is not configured to support act(...)"
 // warning that React 19 emits when not running inside @testing-library/react.
@@ -23,14 +23,23 @@ import type { ProjectWithPages } from '@/lib/types';
 
 // Minimal project payload — the component only needs a non-empty list to
 // render the timestamp span.
-const fakeProjects: ProjectWithPages[] = [
+const fakeProjects: ProjectSummary[] = [
   {
     id: 'proj-1',
     name: 'Test',
     domain: 'example.com',
     apiKey: 'k',
-    pages: [],
-  } as unknown as ProjectWithPages,
+    shareToken: null,
+    canAdmin: true,
+    teamId: null,
+    team: null,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    totalPages: 0,
+    totalScreenshots: 0,
+    totalPins: 0,
+    openPins: 0,
+  },
 ];
 
 describe('DashboardPoller timestamp', () => {

@@ -56,11 +56,55 @@ export interface DiscordConfig {
   webhookUrl: string;
 }
 
-/** Generic webhook config. `headers` is optional and lets an
- *  operator attach a signature / API-key header. */
+/** Generic webhook config. `headers` is optional and lets an operator attach
+ * receiver-specific authentication. System signature headers are reserved. */
 export interface WebhookConfig {
   url: string;
   headers?: Record<string, string>;
+}
+
+/** Secret-free GitHub repository selection persisted in configJson. */
+export interface GitHubStoredConfig {
+  owner: string;
+  repo: string;
+  labels: string[];
+}
+
+/** Runtime GitHub config after the encrypted credential is opened in memory. */
+export interface GitHubConfig extends GitHubStoredConfig {
+  token: string;
+}
+
+import type { PinCreatedEventV1 } from './events';
+
+/** Exact data required to perform one durable, reproducible delivery attempt. */
+export interface IntegrationDeliveryPayload {
+  event: PinCreatedEventV1;
+  payloadJson: string;
+  deliveryId: string;
+  signingSecret: string | null;
+  /** Unix timestamp in whole seconds, fixed for this attempt. */
+  timestamp: string;
+}
+
+/** Translate the v1 developer-focused event into the original channel card. */
+export function pinPayloadFromEvent(event: PinCreatedEventV1): PinPayload {
+  const issue = event.data.issue;
+  const firstComment = issue.comments[0];
+  return {
+    pin: {
+      id: issue.pin.id,
+      screenshotId: issue.screenshot.id,
+      xPercent: issue.pin.coordinates.xPercent,
+      yPercent: issue.pin.coordinates.yPercent,
+      status: issue.pin.status,
+      authorName: firstComment?.author ?? 'Client',
+      createdAt: issue.pin.createdAt,
+    },
+    project: issue.project,
+    path: issue.page.path,
+    commentText: firstComment?.text ?? '',
+  };
 }
 
 /**
@@ -71,11 +115,12 @@ export interface WebhookConfig {
 export type IntegrationConfig =
   | { kind: 'slack'; config: SlackConfig }
   | { kind: 'discord'; config: DiscordConfig }
-  | { kind: 'webhook'; config: WebhookConfig };
+  | { kind: 'webhook'; config: WebhookConfig }
+  | { kind: 'github'; config: GitHubConfig };
 
 /** Closed set of supported kinds. Used by the API to validate
  *  the incoming `kind` field on POST. */
-export const INTEGRATION_KINDS = ['slack', 'discord', 'webhook'] as const;
+export const INTEGRATION_KINDS = ['slack', 'discord', 'webhook', 'github'] as const;
 export type IntegrationKind = (typeof INTEGRATION_KINDS)[number];
 
 export function isIntegrationKind(v: unknown): v is IntegrationKind {

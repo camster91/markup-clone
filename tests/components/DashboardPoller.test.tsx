@@ -30,41 +30,51 @@ import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 import React from 'react';
 import DashboardPoller from '@/components/DashboardPoller';
-import type { ProjectWithPages } from '@/lib/types';
+import type { ProjectSummary } from '@/lib/types';
 
 // Silence the "current testing environment is not configured to
 // support act(...)" warning that React 19 emits when not running
 // inside @testing-library/react.
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const fakeProjectsV1: ProjectWithPages[] = [
+const summaryDefaults = {
+  shareToken: null,
+  canAdmin: true,
+  teamId: null,
+  team: null,
+  createdAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: '2026-01-01T00:00:00.000Z',
+  totalPages: 0,
+  totalScreenshots: 0,
+  totalPins: 0,
+  openPins: 0,
+} as const;
+
+const fakeProjectsV1: ProjectSummary[] = [
   {
+    ...summaryDefaults,
     id: 'proj-1',
     name: 'Original',
     domain: 'orig.com',
     apiKey: 'mk_1',
-    shareToken: null,
-    pages: [],
-  } as unknown as ProjectWithPages,
+  },
 ];
 
-const fakeProjectsV2: ProjectWithPages[] = [
+const fakeProjectsV2: ProjectSummary[] = [
   {
+    ...summaryDefaults,
     id: 'proj-1',
     name: 'Renamed',
     domain: 'orig.com',
     apiKey: 'mk_1',
-    shareToken: null,
-    pages: [],
-  } as unknown as ProjectWithPages,
+  },
   {
+    ...summaryDefaults,
     id: 'proj-2',
     name: 'Newly Added',
     domain: 'new.com',
     apiKey: 'mk_2',
-    shareToken: null,
-    pages: [],
-  } as unknown as ProjectWithPages,
+  },
 ];
 
 // Filter the fetch mock down to DashboardPoller's own
@@ -138,7 +148,7 @@ describe('DashboardPoller — client island', () => {
     // hitting /api/projects/proj-1/integrations, etc.) — we
     // only assert on the polling island's own /api/projects
     // call (no /:id suffix, optionally with ?since=).
-    const projectsCalls = fetchMock.mock.calls.filter((call) => {
+    const projectsCalls = (fetchMock.mock.calls as unknown[][]).filter((call) => {
       if (typeof call[0] !== 'string') return false;
       // Match /api/projects or /api/projects?... but NOT
       // /api/projects/<id>/integrations or other sub-routes.
@@ -224,14 +234,7 @@ describe('DashboardPoller — client island', () => {
     });
   });
 
-  it('uses the ?since= cursor on the second tick onward (first tick is the full fetch)', async () => {
-    // The /api/projects route accepts ?since=<ISO> for delta
-    // polling. The polling island passes `lastSuccessfulPoll
-    // - 1000` as the cursor on subsequent ticks; the first
-    // tick is the full fetch (no cursor). The 1s overlap is
-    // critical: two rows updated in the same millisecond
-    // would otherwise race past the cursor and the second
-    // one would never come back.
+  it('uses the compact full-list endpoint on every tick', async () => {
     //
     // Other components make their own fetches independently
     // of the 5s tick — we filter on URL to isolate the
@@ -255,15 +258,32 @@ describe('DashboardPoller — client island', () => {
     expect(projectsCalls).toHaveLength(1);
     expect(projectsCalls[0]?.[0]).toBe('/api/projects');
 
-    // Second tick: with ?since=<ISO> cursor. The cursor is
-    // the last successful poll timestamp - 1000ms.
+    // The response is now a bounded summary, so a full refresh is cheap and
+    // correctly reflects nested pin changes and project deletion.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
     projectsCalls = projectsPollCalls(fetchMock);
     expect(projectsCalls).toHaveLength(2);
-    const secondUrl = projectsCalls[1]?.[0] as string;
-    expect(secondUrl).toMatch(/^\/api\/projects\?since=/);
+    expect(projectsCalls[1]?.[0]).toBe('/api/projects');
+  });
+
+  it('removes a project when a later full-list poll no longer returns it', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify([]), { status: 200 })
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+    vi.useFakeTimers();
+    root = createRoot(container);
+    await act(async () => {
+      root.render(React.createElement(DashboardPoller, { projects: fakeProjectsV1 }));
+    });
+    expect(container.textContent ?? '').toContain('Original');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(container.textContent ?? '').not.toContain('Original');
   });
 
   it('keeps the rendered tree on a non-2xx response (no crash, no drop)', async () => {
@@ -288,6 +308,11 @@ describe('DashboardPoller — client island', () => {
     // The original tree is still on screen — the 500 didn't
     // clear it.
     expect(container.textContent ?? '').toContain('Original');
+    expect(container.textContent ?? '').toContain('Updates paused');
+    expect(container.querySelector('[role="status"]')).not.toBeNull();
+    expect(Array.from(container.querySelectorAll('button')).some(
+      (button) => button.textContent === 'Retry now'
+    )).toBe(true);
   });
 
   it('keeps the rendered tree on a network error (no crash, no drop)', async () => {
@@ -311,5 +336,35 @@ describe('DashboardPoller — client island', () => {
 
     // The original tree is still on screen.
     expect(container.textContent ?? '').toContain('Original');
+    expect(container.textContent ?? '').toContain('Updates paused');
+  });
+
+  it('clears the polling warning after a successful retry', async () => {
+    global.fetch = vi.fn(async () => new Response('server error', { status: 500 })) as unknown as typeof fetch;
+
+    vi.useFakeTimers();
+    root = createRoot(container);
+    await act(async () => {
+      root.render(React.createElement(DashboardPoller, { projects: fakeProjectsV1 }));
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(container.textContent ?? '').toContain('Updates paused');
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL) =>
+      input === '/api/projects'
+        ? new Response(JSON.stringify(fakeProjectsV2), { status: 200 })
+        : new Response('{}', { status: 200 })
+    ) as unknown as typeof fetch;
+
+    const retry = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Retry now'
+    );
+    expect(retry).toBeDefined();
+    await act(async () => retry?.click());
+
+    expect(container.textContent ?? '').not.toContain('Updates paused');
+    expect(container.textContent ?? '').toContain('Newly Added');
   });
 });

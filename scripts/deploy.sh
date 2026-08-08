@@ -1,22 +1,18 @@
 #!/usr/bin/env bash
 # Deploy markup-clone to the Ashbi fleet VPS.
-# Source: local tarball pushed from the dev machine (or git pull if available).
+# Source: the host's authenticated Git checkout.
 # Idempotent: safe to re-run.
 #
-# Usage:
-#   # From the dev machine: push the tarball, then run on the host
-#   tar --exclude='.next' --exclude='node_modules' --exclude='.git/objects/pack' -czf /tmp/markup-clone.tgz -C /Users/.../markup-clone .
-#   scp /tmp/markup-clone.tgz coolify:/root/markup-clone.tgz
-#   ssh coolify "bash /root/markup-clone/scripts/deploy.sh"
+# Usage: ssh coolify "cd /root/markup-clone && git pull --ff-only && bash scripts/deploy.sh"
 #
 # Required on the host (created by an earlier deploy):
 #   /root/markup-clone/.env      - DATABASE_URL, MUP_API_KEY-equivalent, MATON_*, etc.
-#   /opt/caddy/Caddyfile         - Caddy route for markup.ashbi.ca
+#   /opt/traefik/dynamic/routers.yml or legacy Caddy route for markup.ashbi.ca
 #   /data/screenshots            - bind-mounted to the container at /data/screenshots
 #   /data/markup-clone/postgres  - the markup-postgres volume (or external volume name)
 #
 # What this script does, in order:
-#   1. Detect source: tarball at /root/markup-clone.tgz (mtime) or git pull
+#   1. Fast-forward the authenticated Git checkout and verify it is clean
 #   2. Apply any pending Prisma migrations to the live DB
 #   3. Build the new Docker image with the full 40-char SHA tag
 #   4. Recreate the markup-clone container (preserves env via --env-file, volume via -v)
@@ -33,9 +29,10 @@ APP_CONTAINER="markup-clone"
 PG_CONTAINER="markup-postgres"
 PG_NET="markup-net"
 HOST_PORT="${HOST_PORT:-3030}"
+PUBLIC_HOSTNAME="${PUBLIC_HOSTNAME:-markup.ashbi.ca}"
 LOG="/var/log/markup-deploy.log"
 SCREENSHOTS_DIR="/data/screenshots"
-TARBALL="/root/markup-clone.tgz"
+BACKUPS_DIR="/data/markup-clone/backups"
 
 # --- Pre-flight: kill orphan caddy processes from prior debug sessions ---
 #
@@ -146,11 +143,19 @@ mkdir -p "$(dirname "$LOG")"
 log() { echo "[$(date -Iseconds)] $*" | tee -a "$LOG"; }
 fail() { log "FAIL: $*"; exit 1; }
 
-# Run the orphan-caddy guard BEFORE we touch the tarball, build the
+# Run the orphan-caddy guard BEFORE we refresh source, build the
 # image, or do anything else. If the systemd caddy is going to fail
 # to bind :443 because of an orphan, we want to know now — not 4
 # minutes into a deploy.
-cleanup_caddy_orphans
+[ -f "$APP_DIR/scripts/edge-proxy-preflight.sh" ] \
+  || fail "missing edge-proxy-preflight.sh"
+EDGE_PROXY=$(bash "$APP_DIR/scripts/edge-proxy-preflight.sh" detect)
+log "Detected edge proxy: $EDGE_PROXY"
+if [ "$EDGE_PROXY" = "caddy" ]; then
+  cleanup_caddy_orphans
+else
+  log "Traefik owns public ingress; skipping legacy Caddy process cleanup"
+fi
 
 # Ensure the postgres container exists and is running before we try to talk
 # to it. Three branches, in order:
@@ -271,69 +276,54 @@ docker network connect "${PG_NET}" "${PG_CONTAINER}" 2>/dev/null || true
 # authoritative one for the app container.
 
 
-# --- 1. Detect source and refresh the working tree ---
+# --- 1. Refresh and verify the release working tree ---
 cd "$APP_DIR"
 git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
 
-# Optional: dev machine can pass LAST_SHA=<sha> env to bypass the .last-sha
-# file dependency (which is gitignored, so it doesn't survive a tarball push).
-if [ -n "${LAST_SHA:-}" ]; then
-  log "WARN: using LAST_SHA env override: $LAST_SHA"
-  echo -n "$LAST_SHA" > "$APP_DIR/.last-sha"
+[ -d "$APP_DIR/.git" ] || fail "release checkout is not a Git repository"
+log "Source: git pull --ff-only"
+if ! git pull --ff-only 2>&1 | tee -a "$LOG"; then
+  fail "git pull --ff-only failed; refusing to build stale source"
 fi
 
-if [ -f "$TARBALL" ] && [ "$TARBALL" -nt "$APP_DIR/.git/HEAD" ]; then
-  log "Source: tarball at $TARBALL (newer than git HEAD)"
-  # Clear out everything except .env and .git, then untar
-  # Keep .git so the resulting HEAD commit matches what we just untarred.
-  # (If the tarball excludes .git, fallback to git pull below.)
-  find "$APP_DIR" -mindepth 1 -maxdepth 1 \
-    ! -name '.env' ! -name 'node_modules' ! -name '.next' ! -name '.git' \
-    -exec rm -rf {} +
-  tar -xzf "$TARBALL" -C "$APP_DIR"
-  # Tarballs pushed from the macOS dev machine preserve the developer's
-  # local UID/GID (501:games) into file ownership, which leaves the
-  # extracted tree as 501:games on this Linux host. `docker build` and
-  # the container run don't care about host ownership, but ad-hoc
-  # operator SSH work (reading /root/markup-clone/{Dockerfile,prisma/*})
-  # and any host-level tooling that walks the tree do. Reset to
-  # root:root so files match the rest of /root.
-  chown -R root:root "$APP_DIR"
-  # Restore executable bit on scripts/ (tar preserves mtime but not +x by default)
-  if [ -d "$APP_DIR/scripts" ]; then
-    chmod +x "$APP_DIR/scripts/"*.sh 2>/dev/null || true
-  fi
-  # Consume the tarball so the next deploy without a fresh push uses git pull
-  rm -f "$TARBALL"
-  log "Tarball consumed"
-elif [ -d "$APP_DIR/.git" ]; then
-  log "Source: git pull (optional, will continue with current tree on failure)"
-  if ! git pull --ff-only 2>&1 | tee -a "$LOG"; then
-    log "WARN: git pull failed (likely no creds). Continuing with current tree at $(git rev-parse HEAD 2>/dev/null || echo 'unknown')"
-  fi
-else
-  fail "No source: $TARBALL missing and $APP_DIR is not a git repo"
-fi
-
-# If the tarball didn't include .git (or the working tree is broken), fall
-# back to the origin/main SHA so we still build a meaningful image tag.
+# A source-SHA tag is valid only when Git can prove the exact commit and the
+# pulled tree matches it. Marker files and caller-provided labels are
+# not accepted as release provenance.
 if ! git rev-parse --verify HEAD >/dev/null 2>&1 || git status -s 2>&1 | grep -q "fatal: unable to read tree"; then
-  log "WARN: git tree is broken, falling back to .last-sha marker or LAST_SHA env"
-  # Prefer LAST_SHA env (set by dev machine), fall back to .last-sha file.
-  if [ -n "${LAST_SHA:-}" ]; then
-    NEW_TAG="$LAST_SHA"
-    log "WARN: using LAST_SHA env $NEW_TAG"
-  elif [ -f "$APP_DIR/.last-sha" ]; then
-    NEW_TAG=$(cat "$APP_DIR/.last-sha")
-    log "WARN: using marker SHA $NEW_TAG"
-  else
-    fail "git tree is broken and no SHA source. Pass LAST_SHA=<sha> env or write .last-sha."
-  fi
-else
-  NEW_TAG=$(git rev-parse HEAD)
+  fail "release source must resolve to a valid Git commit"
 fi
+# A source-SHA image tag is trustworthy only when every tracked and untracked
+# build input belongs to that commit. Refuse dirty checkouts instead of silently
+# labeling uncommitted code with the previous commit's SHA.
+if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+  fail "release source tree is dirty; commit the exact release contents before deploying"
+fi
+NEW_TAG=$(git rev-parse HEAD)
 [ ${#NEW_TAG} -eq 40 ] || fail "git rev-parse returned non-SHA: $NEW_TAG"
 log "Building image tag: $NEW_TAG"
+
+# Before migrations or container replacement, prove the currently running
+# application can be addressed by its immutable source-SHA image tag. The
+# preflight also records the exact tag and image ID atomically for the operator.
+# A first install has no prior container and therefore no rollback image; every
+# upgrade fails closed when its existing image cannot be verified.
+ROLLBACK_IMAGE_FILE="${ROLLBACK_IMAGE_FILE:-/data/markup-clone/rollback-image.env}"
+if docker inspect "$APP_CONTAINER" >/dev/null 2>&1; then
+  [ -f "$APP_DIR/scripts/rollback-image-preflight.sh" ] || \
+    fail "missing rollback-image-preflight.sh"
+  log "Verifying retained rollback image before migrations"
+  APP_NAME="$APP_NAME" \
+    APP_CONTAINER="$APP_CONTAINER" \
+    ROLLBACK_IMAGE_FILE="$ROLLBACK_IMAGE_FILE" \
+    bash "$APP_DIR/scripts/rollback-image-preflight.sh" 2>&1 | tee -a "$LOG"
+  log "Verifying current public route and trusted TLS before migrations"
+  EDGE_PROXY="$EDGE_PROXY" \
+    PUBLIC_HOSTNAME="$PUBLIC_HOSTNAME" \
+    HOST_PORT="$HOST_PORT" \
+    bash "$APP_DIR/scripts/edge-proxy-preflight.sh" verify 2>&1 | tee -a "$LOG"
+else
+  log "First install: no existing $APP_CONTAINER container to retain for rollback"
+fi
 
 # --- 2. Apply pending Prisma migrations ---
 # Migrations dir on the host may not match the local one if multiple deploys happened.
@@ -341,8 +331,27 @@ log "Building image tag: $NEW_TAG"
 MIG_DIR="$APP_DIR/prisma/migrations"
 [ -d "$MIG_DIR" ] || fail "no migrations dir at $MIG_DIR"
 
+# A newly created PostgreSQL database has no Prisma history table yet. Create
+# the Prisma 6-compatible table before querying or recording raw SQL migrations.
+# IF NOT EXISTS keeps this a no-op for every existing deployment.
+docker exec -i "$PG_CONTAINER" \
+  psql -v ON_ERROR_STOP=1 -U "$PG_USER_VALUE" -d "$PG_DB_VALUE" <<'SQL'
+CREATE TABLE IF NOT EXISTS "_prisma_migrations" (
+  "id" VARCHAR(36) NOT NULL,
+  "checksum" VARCHAR(64) NOT NULL,
+  "finished_at" TIMESTAMPTZ,
+  "migration_name" VARCHAR(255) NOT NULL,
+  "logs" TEXT,
+  "rolled_back_at" TIMESTAMPTZ,
+  "started_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  "applied_steps_count" INTEGER NOT NULL DEFAULT 0,
+  CONSTRAINT "_prisma_migrations_pkey" PRIMARY KEY ("id")
+);
+SQL
+
 # Detect which migrations have been applied
-APPLIED=$(docker exec "$PG_CONTAINER" psql -U markup -d markup_db -t -A \
+APPLIED=$(docker exec "$PG_CONTAINER" psql -v ON_ERROR_STOP=1 \
+  -U "$PG_USER_VALUE" -d "$PG_DB_VALUE" -t -A \
   -c "SELECT migration_name FROM _prisma_migrations" 2>/dev/null || echo "")
 
 for mig_dir in "$MIG_DIR"/*/; do
@@ -355,24 +364,25 @@ for mig_dir in "$MIG_DIR"/*/; do
   fi
   if [ "$mig_name" = "20260610010000_add_api_key" ]; then
     # Check if apiKey column exists; skip if so
-    HAS_KEY=$(docker exec "$PG_CONTAINER" psql -U markup -d markup_db -t -A \
+    HAS_KEY=$(docker exec "$PG_CONTAINER" psql -v ON_ERROR_STOP=1 \
+      -U "$PG_USER_VALUE" -d "$PG_DB_VALUE" -t -A \
       -c "SELECT 1 FROM information_schema.columns WHERE table_name='Project' AND column_name='apiKey'" 2>/dev/null | tr -d '[:space:]')
     if [ "$HAS_KEY" = "1" ]; then
       log "Skipping legacy migration $mig_name (apiKey column already exists)"
-      docker exec "$PG_CONTAINER" psql -U markup -d markup_db -c \
+      docker exec "$PG_CONTAINER" psql -v ON_ERROR_STOP=1 \
+        -U "$PG_USER_VALUE" -d "$PG_DB_VALUE" -c \
         "INSERT INTO _prisma_migrations (id, checksum, finished_at, migration_name, applied_steps_count) VALUES (gen_random_uuid()::text, 'baseline', NOW(), '$mig_name', 1) ON CONFLICT DO NOTHING" >/dev/null
       continue
     fi
   fi
   if [ -f "$mig_dir/migration.sql" ]; then
-    log "Applying migration: $mig_name (errors below are OK if already applied)"
-    # Suppress errors: psql is noisy about existing relations; the SELECT check above
-    # is the only authoritative test for "already applied", and idempotency errors
-    # from a partial prior apply are harmless.
-    docker exec -i "$PG_CONTAINER" psql -U markup -d markup_db \
-      < "$mig_dir/migration.sql" 2>&1 | grep -v "^ERROR:" | head -5 | tee -a "$LOG" || true
-    docker exec "$PG_CONTAINER" psql -U markup -d markup_db -c \
-      "INSERT INTO _prisma_migrations (id, checksum, finished_at, migration_name, applied_steps_count) VALUES (gen_random_uuid()::text, 'baseline', NOW(), '$mig_name', 1) ON CONFLICT DO NOTHING" >/dev/null
+    [ -f "$APP_DIR/scripts/apply-migration.sh" ] || fail "missing apply-migration.sh"
+    log "Applying migration atomically: $mig_name"
+    PG_CONTAINER="$PG_CONTAINER" \
+      PG_USER_VALUE="$PG_USER_VALUE" \
+      PG_DB_VALUE="$PG_DB_VALUE" \
+      bash "$APP_DIR/scripts/apply-migration.sh" \
+        "$mig_name" "$mig_dir/migration.sql" 2>&1 | tee -a "$LOG"
   fi
 done
 
@@ -405,6 +415,7 @@ docker run -d \
   --env-file "$APP_DIR/.env" \
   -e "HOSTNAME=0.0.0.0" \
   -v "$SCREENSHOTS_DIR:/data/screenshots" \
+  -v "$BACKUPS_DIR:/data/backups" \
   -v "$APP_DIR/scripts:/opt/app-scripts:ro" \
   -p "127.0.0.1:${HOST_PORT}:3000" \
   "$APP_NAME:$NEW_TAG" 2>&1 | tee -a "$LOG"
@@ -465,8 +476,6 @@ docker exec "$PG_CONTAINER" sh -c "
 # pattern would require either running a separate Caddy instance
 # (different port) or converting the fragment to JSON. The every-minute
 # inline-route guard is the right operational tradeoff for now.
-PUBLIC_HOSTNAME="${PUBLIC_HOSTNAME:-markup.ashbi.ca}"
-
 add_markup_route() {
   local file="$1"
   [ -z "$file" ] && return 1
@@ -484,6 +493,7 @@ EOF
   fi
 }
 
+if [ "$EDGE_PROXY" = "caddy" ]; then
 # Persist to BOTH the systemd-override file (live read by caddy) and
 # the /etc/caddy base (so a fleet-wide overwrite doesn't lose us).
 for CADDYFILE in /opt/caddy/Caddyfile /etc/caddy/Caddyfile; do
@@ -533,6 +543,9 @@ else
   systemctl restart caddy 2>/dev/null || service caddy restart 2>/dev/null || \
     log "WARN: could not restart caddy (no systemctl or service). The route is added to Caddyfile but Caddy needs to be running to pick it up."
 fi
+else
+  log "Traefik route is managed outside this deploy; no edge configuration was mutated"
+fi
 
 # --- 5. Health check ---
 log "Waiting for $APP_CONTAINER to be healthy..."
@@ -540,6 +553,11 @@ for i in $(seq 1 20); do
   if curl -sf "http://127.0.0.1:${HOST_PORT}/api/health" >/dev/null 2>&1; then
     log "Health check passed after ${i}s"
     curl -s "http://127.0.0.1:${HOST_PORT}/api/health" | tee -a "$LOG"
+    log "Rechecking public route and trusted TLS"
+    EDGE_PROXY="$EDGE_PROXY" \
+      PUBLIC_HOSTNAME="$PUBLIC_HOSTNAME" \
+      HOST_PORT="$HOST_PORT" \
+      bash "$APP_DIR/scripts/edge-proxy-preflight.sh" verify 2>&1 | tee -a "$LOG"
     log "DEPLOY OK: $NEW_TAG"
 
     # Install the daily prune-screenshots cron (idempotent: re-running

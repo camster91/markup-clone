@@ -19,7 +19,7 @@
 // the harness writes its own .env fixture in a tempdir.
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   mkdtempSync,
   writeFileSync,
@@ -231,7 +231,9 @@ function withTmp<T>(
 const FAKE_ENV =
   'DATABASE_URL="postgresql://markup:***@markup-postgres:5432/markup_db"\n';
 
-describe('deploy.sh — ensure postgres is running (three-branch decision tree)', () => {
+const hasBash = spawnSync('bash', ['--version'], { stdio: 'ignore' }).status === 0;
+
+describe.skipIf(!hasBash)('deploy.sh — ensure postgres is running (three-branch decision tree)', () => {
   it('branch 1: does nothing when `docker ps` shows the container running', () => {
     withTmp({ ps_running: '1', inspect_ok: '0' }, FAKE_ENV, (t) => {
       t.run();

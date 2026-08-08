@@ -50,6 +50,7 @@ const mocks = vi.hoisted(() => {
     consume: vi.fn().mockReturnValue({ ok: true, remaining: 5 }),
     spawn: vi.fn(),
     audit: vi.fn(),
+    projectAccess: vi.fn(),
     prisma: {
       screenshot: {
         findUnique: vi.fn(async ({ where, select }: { where: { id: string }; select?: Record<string, unknown> }) => {
@@ -59,7 +60,10 @@ const mocks = vi.hoisted(() => {
           const out: Record<string, unknown> = {};
           for (const k of Object.keys(select)) {
             if (k === 'page') {
-              out.page = { projectId: 'proj-1', project: { shareToken: null } };
+              out.page = {
+                projectId: 'proj-1',
+                project: { id: 'proj-1', shareToken: null },
+              };
             } else {
               out[k] = (row as unknown as Record<string, unknown>)[k];
             }
@@ -166,6 +170,10 @@ vi.mock('@/lib/csrf', async () => {
   };
 });
 
+vi.mock('@/lib/teams', () => ({
+  assertProjectAccessible: (...args: unknown[]) => mocks.projectAccess(...args),
+}));
+
 // Fake child: routes the recapture script's exit event with a
 // configurable capturedAt + dims. The recapture route reads the
 // Screenshot row back after the script's UPDATE — we model the
@@ -222,6 +230,11 @@ const PAGE_ID = '22222222-2222-2222-2222-222222222222';
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.consume.mockReturnValue({ ok: true, remaining: 5 });
+  mocks.projectAccess.mockResolvedValue({
+    ok: true,
+    projectId: 'proj-1',
+    teamId: null,
+  });
   mocks.db.screenshots = [];
   mocks.db.versions = [];
   // Seed the Screenshot row the recapture updates. Use a fixed
@@ -406,6 +419,11 @@ describe('GET /api/screenshots/[id]/history', () => {
   });
 
   it('returns 404 for anonymous callers without a share token', async () => {
+    mocks.projectAccess.mockResolvedValue({
+      ok: false,
+      status: 403,
+      error: 'Authentication required',
+    });
     const res = await HISTORY(
       new Request(`https://markup.ashbi.ca/api/screenshots/${SCREENSHOT_ID}/history`, {
         method: 'GET',

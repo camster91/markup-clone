@@ -4,7 +4,7 @@ import { requireDashboardAuth } from '@/lib/auth';
 import { requireCsrfToken } from '@/lib/csrf';
 import { audit } from '@/lib/audit';
 import { validateSubscriberEmail, validateProjectId } from '@/lib/validation';
-import { assertProjectAccessible } from '@/lib/teams';
+import { assertProjectAdmin } from '@/lib/teams';
 
 export async function GET(
   req: Request,
@@ -18,7 +18,7 @@ export async function GET(
     const idRes = validateProjectId(id);
     if (!idRes.ok) return NextResponse.json({ error: idRes.error }, { status: 400 });
 
-    const access = await assertProjectAccessible(id);
+    const access = await assertProjectAdmin(id);
     if (!access.ok) {
       return NextResponse.json({ error: access.error }, { status: access.status });
     }
@@ -48,7 +48,7 @@ export async function POST(
     const idRes = validateProjectId(id);
     if (!idRes.ok) return NextResponse.json({ error: idRes.error }, { status: 400 });
 
-    const access = await assertProjectAccessible(id);
+    const access = await assertProjectAdmin(id);
     if (!access.ok) {
       return NextResponse.json({ error: access.error }, { status: access.status });
     }

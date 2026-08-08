@@ -11,8 +11,12 @@
 // Re-throws on any non-2xx response so the route can record
 // the failure on the integration row.
 
-import type { PinPayload, WebhookConfig } from './types';
+import type { IntegrationDeliveryPayload, PinPayload, WebhookConfig } from './types';
 import { assertSafeOutboundUrl } from '@/lib/safe-url';
+import { IntegrationHttpError } from './errors';
+import { buildSignedWebhookHeaders } from './signing';
+
+const OUTBOUND_TIMEOUT_MS = 10_000;
 
 /**
  * Build the request headers for a generic-webhook dispatch.
@@ -58,9 +62,38 @@ export async function post(config: WebhookConfig, payload: PinPayload): Promise<
     headers,
     body: JSON.stringify(payload),
     redirect: 'error',
+    signal: AbortSignal.timeout(OUTBOUND_TIMEOUT_MS),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Webhook returned ${res.status}: ${text.slice(0, 200)}`);
+    throw new IntegrationHttpError('Webhook', res.status, res.headers?.get?.('retry-after') ?? null);
   }
+}
+
+export async function postEvent(
+  config: WebhookConfig,
+  delivery: IntegrationDeliveryPayload,
+): Promise<number> {
+  if (!delivery.signingSecret) throw new Error('Webhook signing secret is missing');
+  const safe = await assertSafeOutboundUrl(config.url);
+  if (!safe.ok) throw new Error(`Webhook URL rejected: ${safe.error}`);
+  const headers = buildSignedWebhookHeaders({
+    operatorHeaders: config.headers,
+    secret: delivery.signingSecret,
+    timestamp: delivery.timestamp,
+    payloadJson: delivery.payloadJson,
+    eventId: delivery.event.id,
+    eventType: delivery.event.type,
+    deliveryId: delivery.deliveryId,
+  });
+  const res = await fetch(safe.value, {
+    method: 'POST',
+    headers,
+    body: delivery.payloadJson,
+    redirect: 'error',
+    signal: AbortSignal.timeout(OUTBOUND_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new IntegrationHttpError('Webhook', res.status, res.headers?.get?.('retry-after') ?? null);
+  }
+  return res.status;
 }

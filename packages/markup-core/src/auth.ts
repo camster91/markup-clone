@@ -51,9 +51,9 @@ export interface AuthErrorResponse {
 export function getDashboardHost(): string {
   // parseHost handles both bare-hostname and full-URL forms of the env
   // var, and falls back to 'markup.ashbi.ca' when unset. We only need
-  // the bare host here — the allow-list compares against `host` (which
-  // includes the port, from `new URL(origin).host`), so a different
-  // port is correctly rejected even when the underlying hostname matches.
+  // the configured host (including any explicit port) here. The allow-list
+  // compares it against `new URL(origin).host`, so a different port is
+  // correctly rejected even when the hostname matches.
   return parseHost(process.env.DASHBOARD_HOST).host;
 }
 

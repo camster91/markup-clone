@@ -20,6 +20,10 @@ import { defineConfig } from 'vite';
 //   captureViewport and the test stub no longer matches.
 
 export default defineConfig({
+  // This build emits the widget into Next's public directory but does not
+  // consume public assets as inputs. Disabling Vite's publicDir copy avoids
+  // treating the output directory as its own source.
+  publicDir: false,
   build: {
     outDir: 'public',
     emptyOutDir: false,

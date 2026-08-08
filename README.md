@@ -2,7 +2,11 @@
 
 A client-side visual-feedback tool for staging sites. Clients drop a single `<script>` tag into their staging site, click anywhere to leave a feedback pin, and review/resolve those pins from a dashboard. Screenshot recapture is done server-side via headless Chromium.
 
-This repository is the **deploy shell** for the app that lives next to it: a tarball + bash script combo that builds the Docker image, keeps the Caddy route alive, and manages two cron jobs on the Ashbi fleet VPS.
+Supported developer contracts: [`docs/developer-api-v1.md`](docs/developer-api-v1.md),
+[`docs/api/openapi-v1.yaml`](docs/api/openapi-v1.yaml), and
+[`packages/markup-sdk/README.md`](packages/markup-sdk/README.md).
+
+This repository includes the fail-closed VPS deploy shell: it fast-forwards an authenticated Git checkout, builds a source-SHA Docker image, keeps the Caddy route alive, and manages three cron jobs on the Ashbi fleet VPS.
 
 ## Features
 
@@ -14,14 +18,19 @@ This repository is the **deploy shell** for the app that lives next to it: a tar
 - **Screenshot capture** — client uploads a screenshot of the annotated area alongside the pin (`POST /api/pins`)
 
 ### Dashboard
-- **Projects view** — list, create, rename, regenerate API key, and delete projects
+- **Agency delivery view** — organize client accounts, sites, review rounds, and reversible archives
 - **Pin thread** — per-pin comment thread, mark pins as `OPEN` or `RESOLVED`
 - **Recapture** — re-screenshot a page server-side via headless Chromium; the client polls `/api/screenshots/[id]/status` until the new dimensions arrive
-- **Subscribers** — per-project email list; new pins notify subscribers via the Mailgun HTTP API
+- **Email notifications** — each project member controls new-feedback, reply,
+  status, assignment, and mention mail with role-aware recommendations
+- **External alerts** — owners can keep a separate address list for new-feedback
+  alerts when the recipient does not have a project account
 
 ### Server-Side
-- **PostgreSQL + Prisma** — projects, pages, screenshots, pins, comments, subscribers, audit log
-- **Email** — Mailgun HTTP API for subscriber notifications (no-op if `MAILGUN_API_KEY` / `MAILGUN_DOMAIN` are empty)
+- **PostgreSQL + Prisma** — projects, review rounds, pages, screenshots, pins,
+  comments, notification preferences, integrations, teams, and audit log
+- **Email** — Mailgun HTTP API for branded member notifications and external
+  alerts (no-op if `MAILGUN_API_KEY` / `MAILGUN_DOMAIN` are empty)
 - **Screenshot storage** — PNGs on a bind-mounted volume; immutable `Cache-Control` + `ETag` headers on `/api/screenshots/[id]/image`
 - **Audit log** — dashboard writes are recorded in `AuditLog` and surfaced at `/api/audit`
 
@@ -60,11 +69,11 @@ The last 12 commits since `d569b1a`, newest first (audit sweep D5/D7/D8 + F3/F4/
 ├── Dockerfile                # Multi-stage build, Next.js 16 standalone
 ├── docker-compose.yml        # Local dev only (postgres + app)
 ├── prisma/
-│   ├── schema.prisma         # Project, Subscriber, Page, Screenshot, Pin, Comment, AuditLog
+│   ├── schema.prisma         # Projects, review workflow, notifications, teams, integrations
 │   └── migrations/           # Applied in order by deploy.sh
 ├── scripts/
-│   ├── deploy.sh             # VPS deploy (tarball extract, build, Caddy, cron)
-│   ├── install-cron.sh       # Installs the two cron jobs (idempotent)
+│   ├── deploy.sh             # VPS deploy (verified Git pull, build, Caddy, cron)
+│   ├── install-cron.sh       # Installs the three cron jobs (idempotent)
 │   ├── markup-caddy-guard.sh # Every-minute Caddy route guard
 │   ├── cleanup-caddy-orphans.sh  # Standalone orphan-caddy killer
 │   ├── prune-screenshots.sh  # Daily 90-day retention prune
@@ -75,7 +84,7 @@ The last 12 commits since `d569b1a`, newest first (audit sweep D5/D7/D8 + F3/F4/
 │   ├── app/                  # Next.js App Router
 │   ├── components/           # Widget, Dashboard, Feedback
 │   └── lib/                  # prisma, auth, email, audit, rate-limit, png-dimensions
-├── tests/                    # 212+ unit + integration + widget tests
+├── tests/                    # 875+ unit + integration + widget tests
 ├── .env.example              # Documented env-var template
 └── README.md                 # You are here
 ```
@@ -90,10 +99,15 @@ Required at runtime:
 - `NODE_ENV` — `production` in the deploy container
 - `DASHBOARD_HOST` — public hostname for the dashboard origin check + email links
 - `SCREENSHOTS_DIR` — bind-mounted path for screenshot PNGs
+- `DELIVERY_WORKER_SECRET` — at least 32 random bytes used only by the
+  internal durable-integration processor and its host cron
+- `INTEGRATION_ENCRYPTION_KEY` — exactly 32 random bytes encoded as 43
+  base64url characters; encrypts provider credentials such as GitHub tokens
 
 Optional:
 
-- `MAILGUN_API_KEY` / `MAILGUN_DOMAIN` — subscriber notifications (email is a no-op if either is empty)
+- `MAILGUN_API_KEY` / `MAILGUN_DOMAIN` — member notifications and external alerts
+  (email is a no-op if either is empty)
 - `RECAPTURE_SCRIPT` — override the bind-mounted `recapture.sh` path
 - `HOST_PORT` — host port the app container binds to (default `3030`)
 - `PUBLIC_HOSTNAME` — hostname the deploy script adds a Caddy route for (default `markup.ashbi.ca`)
@@ -103,7 +117,7 @@ See `.env.example` for the full annotated list and defaults.
 ## Local development
 
 ```bash
-# 1. Bring up the dev stack (postgres + app)
+# 1. Bring up the dev stack (postgres + one-shot migrator + app)
 cp .env.example .env          # then edit the placeholders
 docker compose up --build
 
@@ -111,43 +125,78 @@ docker compose up --build
 open http://localhost:3030
 ```
 
-The dev stack uses `docker-compose.yml` and is for local / smoke tests only. The VPS uses `scripts/deploy.sh` (no compose).
+The dev stack uses `docker-compose.yml` and is for local / smoke tests only. On
+a fresh volume, the `migrate` service applies every Prisma migration before the
+app starts. The VPS uses `scripts/deploy.sh` (no compose).
 
 ### Running the test suite
 
 ```bash
-npm test            # 212+/212+ unit + integration + widget tests
+npm test            # 896+ unit + integration + widget + deploy-contract tests
 npm run lint        # ESLint, 0 warnings
+npm run test:load:local # loopback-only multipart pin-ingestion rehearsal
 ```
+
+The load rehearsal requires the disposable Compose app container named
+`markup-clone`. It refuses non-loopback URLs and non-local fixture databases,
+stays within the endpoint's intentional 30-request burst budget, and verifies
+that its project rows and screenshot files are removed afterward. Its output is
+local capacity evidence only, not a production benchmark.
+
+### Running browser E2E tests
+
+```bash
+npx playwright install chromium firefox webkit # one-time browser install
+npm run test:e2e                             # all three engines
+npm run test:e2e -- --project=chromium       # one engine while iterating
+```
+
+The E2E suite executes the freshly built `public/widget.js`, proves a real PNG
+multipart upload, exercises recapture labels, and runs the 320px keyboard/focus,
+touch-target, form-label, font-size, focus-trap, and overflow contract in Chromium,
+Firefox, and WebKit. WebKit is useful engine coverage; it is not a claim that the
+suite ran on physical iOS/macOS Safari hardware.
 
 ## VPS deploy flow (`scripts/deploy.sh`)
 
-The deploy script is run **on the VPS** (currently `coolify`). The dev machine pushes a tarball, the VPS extracts, builds, and serves.
+The deploy script is run **on the VPS** (currently `coolify`) after the approved
+release commit has been pushed. The VPS fast-forwards its authenticated checkout,
+verifies that the tree is clean, builds the exact commit, and serves it.
 
 ```bash
-# From the dev machine:
-tar --exclude='.next' --exclude='node_modules' --exclude='.git/objects/pack' \
-  -czf /tmp/markup-clone.tgz -C ~/projects/markup-clone .
-scp /tmp/markup-clone.tgz coolify:/root/markup-clone.tgz
-ssh coolify "bash /root/markup-clone/scripts/deploy.sh"
+ssh coolify "cd /root/markup-clone && git pull --ff-only && bash scripts/deploy.sh"
 ```
 
 What `deploy.sh` does, in order:
 
-1. **Orphan-caddy pre-flight** — kills any `caddy run` process whose parent is not PID 1. These come from prior debug SSH sessions (operator piped `caddy run ... | tail -30` and the pipe held the read end open after the SSH closed). The systemd caddy is a direct child of PID 1, so it's preserved. The standalone variant is `scripts/cleanup-caddy-orphans.sh` for ad-hoc operator use.
+1. **Edge-proxy pre-flight** — detects the process that actually owns public
+   port 443. Traefik must have both its container and listener; an ambiguous state
+   fails closed. Orphan-Caddy cleanup runs only on an explicitly detected legacy
+   Caddy host, never while Traefik exists.
 2. **Postgres health check** — starts `markup-postgres` if it's down and pins its restart policy to `unless-stopped` (Coolify's default is `no`).
-3. **Source refresh** — if `/root/markup-clone.tgz` is newer than `.git/HEAD`, extract it. If not, `git pull --ff-only`. The tarball branch clears `find $APP_DIR -mindepth 1 -maxdepth 1` minus `.env`, `.git`, `node_modules`, `.next`; extracts; **chowns to `root:root`** (the macOS dev box stamps `501:games` into the tar header, and ad-hoc operator SSH work expects Linux ownership); and `chmod +x`s the scripts dir.
-4. **Prisma migrations** — runs any unapplied `prisma/migrations/*/migration.sql` against the live DB. Idempotent: checks `_prisma_migrations` first and inserts a baseline row for the legacy `apiKey` migration if the column already exists.
-5. **Docker build** — `docker build -t markup-clone:$SHA -t markup-clone:latest .` where `$SHA` is the current `git rev-parse HEAD` (40 chars). A 40-char check is enforced so a broken tree never produces a `latest` tag from a non-SHA.
-6. **Container recreate** — `docker rm -f markup-clone` then `docker run -d --name markup-clone --network bridge --restart unless-stopped --env-file $APP_DIR/.env -e HOSTNAME=0.0.0.0 -v /data/screenshots:/data/screenshots -v $APP_DIR/scripts:/opt/app-scripts:ro -p 127.0.0.1:${HOST_PORT}:3000 markup-clone:$SHA`. The explicit `HOSTNAME=0.0.0.0` is required because Next.js 16's standalone `server.js` defaults to `process.env.HOSTNAME` (which Docker sets to the container ID), which would make the app bind to that single interface and break in-container healthchecks. Traefik labels are intentionally absent — the public proxy on this host is Caddy.
-7. **Network attach** — `docker network connect markup-net markup-clone` so the app container can resolve `markup-postgres` by name.
-8. **pg_hba trust rule** — `docker exec markup-postgres sh -c 'sed -i ... insert trust rule ...'` for the dynamic `markup-net` subnet. The default `pg_hba.conf` requires `scram-sha-256` but the .env password may not match; the trust rule bypasses that for the bridge subnet only. Subnet is read from `docker network inspect` (no hard-coded `172.20.0.0/16` like the previous version).
-9. **Caddy route defensive re-add** — for both `/opt/caddy/Caddyfile` and `/etc/caddy/Caddyfile`, `grep` for `^${PUBLIC_HOSTNAME}\s*{` and append the route block if missing. The block uses `reverse_proxy 127.0.0.1:${HOST_PORT}`. **Always uses `systemctl restart caddy`** (never the soft admin-API reload) because the host's Caddyfile has `admin off` and the soft-reload path leaves port 443/80 in a non-listening state on broken configs.
-10. **Caddy health check** — if `caddy run` is up but `:2019` is unreachable, log a warning; if the process is dead, `systemctl restart caddy` again.
-11. **App health check** — `curl -sf http://127.0.0.1:${HOST_PORT}/api/health` for up to 20 s. On success, install the cron jobs (`scripts/install-cron.sh`) and log `DEPLOY OK: $SHA`.
-12. **Logs** — every step tee's to `/var/log/markup-deploy.log`.
+3. **Source refresh** — require `/root/markup-clone` to be a Git repository and run `git pull --ff-only`. Authentication, merge, or checkout failures stop the release; stale source and unverified tarballs are not accepted.
+4. **Release-source and rollback-image preflight** — refuse tracked or untracked source changes so the image tag cannot misrepresent a dirty build; then verify that the current container's `markup-clone:<40-character-sha>` tag still exists and resolves to its running image ID, and atomically record it at `/data/markup-clone/rollback-image.env`. Existing deployments fail closed if this proof is unavailable; a true first install is allowed without a prior image.
+5. **Prisma migrations** — runs each unapplied `prisma/migrations/*/migration.sql` with `ON_ERROR_STOP=1`. The migration SQL and its Prisma history marker share one PostgreSQL transaction, so both commit or both roll back; any SQL or marker error stops the deploy.
+6. **Docker build** — `docker build -t markup-clone:$SHA -t markup-clone:latest .` where `$SHA` is the current `git rev-parse HEAD` (40 chars). A 40-char check is enforced so a broken tree never produces a `latest` tag from a non-SHA.
+7. **Container recreate** — `docker rm -f markup-clone` then `docker run -d --name markup-clone --network bridge --restart unless-stopped --env-file $APP_DIR/.env -e HOSTNAME=0.0.0.0 -v /data/screenshots:/data/screenshots -v $APP_DIR/scripts:/opt/app-scripts:ro -p 127.0.0.1:${HOST_PORT}:3000 markup-clone:$SHA`. The explicit `HOSTNAME=0.0.0.0` is required because Next.js 16's standalone `server.js` defaults to `process.env.HOSTNAME` (which Docker sets to the container ID), which would make the app bind to that single interface and break in-container healthchecks. Traefik labels are intentionally absent because the active file-provider route targets the loopback port.
+8. **Network attach** — `docker network connect markup-net markup-clone` so the app container can resolve `markup-postgres` by name.
+9. **pg_hba trust rule** — `docker exec markup-postgres sh -c 'sed -i ... insert trust rule ...'` for the dynamic `markup-net` subnet. The default `pg_hba.conf` requires `scram-sha-256` but the .env password may not match; the trust rule bypasses that for the bridge subnet only. Subnet is read from `docker network inspect` (no hard-coded `172.20.0.0/16` like the previous version).
+10. **Edge detection** — `edge-proxy-preflight.sh` identifies the process that
+   actually owns public port 443. On the current VPS this is Traefik, so the deploy
+   skips every Caddy process/config mutation. Legacy Caddy route sync remains only
+   for a host explicitly detected as Caddy.
+11. **Fail-closed public preflight** — before migrations on an existing install,
+   verify the active Traefik route, loopback service target, trusted TLS chain, and
+   public health payload. Self-signed, expired, mismatched, or missing certificates
+   stop the release; insecure curl flags are prohibited.
+12. **Local and public health checks** — wait for
+   `http://127.0.0.1:${HOST_PORT}/api/health`, then re-run the trusted public edge
+   check before installing the cron jobs and logging `DEPLOY OK: $SHA`.
+13. **Logs** — every step tee's to `/var/log/markup-deploy.log`.
 
-The script is **idempotent** — re-running it on an up-to-date tree is a no-op (no migration, no Caddy write, no cron change).
+The script is safe to rerun: applied migrations and existing Caddy/cron state are
+not duplicated. It intentionally rebuilds and recreates the application container,
+so an up-to-date run is not a literal no-op.
 
 ### Required host state
 
@@ -161,16 +210,48 @@ These are created by earlier deploys; the script assumes they exist:
 
 ## Cron jobs
 
-Both jobs are written by `scripts/install-cron.sh`, which `deploy.sh` calls automatically on a successful health check. Files are written with `cat >` (idempotent — re-running rewrites the same file). The deploy script also re-runs the installer on every successful deploy, so a fresh deploy onto an existing host picks up cron changes automatically.
+The jobs are written by `scripts/install-cron.sh`, which `deploy.sh` calls on a
+successful health check. In Traefik mode it installs pruning and integration
+delivery, invokes tracked scripts through Bash without changing their Git modes,
+and removes the obsolete Caddy guard cron. The Caddy guard is installed only on a
+legacy host explicitly detected as Caddy.
 
 | Cron file | Schedule | Job | Source |
 |-----------|----------|-----|--------|
 | `/etc/cron.d/markup-clone` | `0 3 * * *` (daily 03:00 UTC) | `prune-screenshots.sh` — delete `*.png` files older than 90 days in `/data/screenshots` and orphan the corresponding `Screenshot` rows in the DB. | `scripts/prune-screenshots.sh` |
-| `/etc/cron.d/markup-caddy-guard` | `* * * * *` (every minute) | `markup-caddy-guard.sh` — re-adds the `import /opt/caddy/markup.d/caddyfile` directive to the master Caddyfiles if a fleet-wide edit stripped it. Soft-reloads caddy via the admin API when reachable, else `systemctl restart caddy`. Bounded at 60 s of missing-route exposure. | `scripts/markup-caddy-guard.sh` |
+| `/etc/cron.d/markup-caddy-guard` | Legacy Caddy hosts only | Re-adds the inline Caddy route. Removed automatically when Traefik is detected. | `scripts/markup-caddy-guard.sh` |
+| `/etc/cron.d/markup-integration-delivery` | `* * * * *` (every minute) | Claims a bounded Postgres delivery batch and invokes the protected in-container processor. | `POST /api/internal/integration-deliveries/process` |
+
+### Reliable outbound integrations
+
+Pin creation writes an immutable `visual-feedback.event.v1` envelope and one
+delivery per configured target in the same database transaction. Slack and
+Discord receive channel-friendly cards. Generic webhooks receive the exact
+versioned JSON body with `X-Visual-Feedback-Event`,
+`X-Visual-Feedback-Event-Id`, `X-Visual-Feedback-Delivery`,
+`X-Visual-Feedback-Timestamp`, and `X-Visual-Feedback-Signature` headers. The
+signature is `v1=` plus the HMAC-SHA256 of `timestamp.payload`; the signing
+secret is shown only when a generic webhook is created.
+
+Network failures, timeouts, rate limits, and retryable HTTP responses use a
+bounded schedule of five attempts. Permanent failures or an exhausted retry
+budget enter `DEAD_LETTER`. Project administrators can inspect the safe delivery
+log and start a fresh bounded retry cycle; event payloads, target configuration,
+and signing secrets are never returned by that log.
+
+GitHub issue delivery uses the same durable queue. Project owners select one
+explicit `owner/repository`, optional labels, and a fine-grained token restricted
+to that repository with **Metadata: read** and **Issues: write**. The token is
+encrypted with AES-256-GCM under `INTEGRATION_ENCRYPTION_KEY` before storage and
+is never returned by an API. The Test action performs a read-only repository
+check. Real issue bodies reuse `visual-feedback.issue.v1`, include the exact-pin
+review link and a stable hidden event marker, and retries inspect recent issues
+for that marker before creating another. Successful delivery activity retains a
+validated `github.com` issue link for the owner.
 
 The guard is a **backstop**, not the primary defense. The primary defense is the `add_markup_route` defensive re-add in `deploy.sh` step 9. The every-minute guard exists because other repos in the Ashbi fleet (e.g. `simaqadeer-app`, `family-planner`) also have `deploy.sh` scripts that overwrite the shared Caddyfile.
 
-To install the crons manually (e.g. after editing the cron files locally and shipping them via tarball but not running a full deploy):
+To install the crons manually after an approved source update without running a full deploy:
 
 ```bash
 ssh coolify "bash /root/markup-clone/scripts/install-cron.sh"
@@ -194,9 +275,12 @@ import /opt/caddy/markup.d/caddyfile
 
 Caddy v2 errors with `unrecognized directive: markup.ashbi.ca` — `import` is for JSON config fragments, not Caddyfile site blocks. The reverted commit is `020e845` ("fix(deploy): revert M1 import-directive approach, keep inline-route guard"). The current code keeps the import line as a no-op in the guard's backstop comments for historical context, but the actual route sync is the inline `add_markup_route` function. See the comments on lines 366-374 of `scripts/deploy.sh` for the full write-up.
 
-### macOS tarball ownership stamps `501:games` into extracted files
+### Unverified source archives are not a release mechanism
 
-The macOS dev box tarballs the project with the developer's local UID/GID, and `tar -xzf` on Linux preserves those values. `docker build` is fine with this, but ad-hoc operator SSH work (reading `Dockerfile`, walking `prisma/migrations/`) expects Linux ownership. `deploy.sh` runs `chown -R root:root $APP_DIR` after every extract — keep that step in the script.
+The old tarball workflow could include ignored local files, overwrite runtime
+configuration, or label content that did not match the stated commit. Production
+deploys now require the authenticated host checkout to fast-forward cleanly and
+refuse any tracked or untracked release-source difference.
 
 ### `pg_hba.conf` defaults to `scram-sha-256` — trust rule must be inserted at the top
 
@@ -288,23 +372,26 @@ Once loaded, users can:
 
 ## API endpoints
 
-Routes are gated by `requireProjectKey` (widget) or `requireDashboardOrigin` (dashboard) — see `src/lib/auth.ts`. The actual route handlers live under `src/app/api/`.
+Routes are gated by `requireProjectKey` (widget) or authenticated dashboard
+session plus origin checks (dashboard) — see `src/lib/auth.ts`. The actual route
+handlers live under `src/app/api/`.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET    | `/api/health` | Liveness probe used by `deploy.sh`'s post-deploy health check |
 | GET    | `/api/audit` | Recent `AuditLog` entries (dashboard origin) |
-| GET    | `/api/projects` | List projects with their pages / screenshots / pins / comments (dashboard origin) |
+| GET    | `/api/projects` | List compact, role-safe project summaries (dashboard session) |
 | POST   | `/api/projects` | Create a project — returns the generated `apiKey` once (dashboard origin) |
 | PATCH  | `/api/projects/:id` | Rename a project and/or regenerate its `apiKey` (dashboard origin) |
 | DELETE | `/api/projects/:id` | Delete a project and its screenshot files (dashboard origin) |
-| GET    | `/api/projects/:id/subscribers` | List subscribers for a project (dashboard origin) |
-| POST   | `/api/projects/:id/subscribers` | Add a subscriber — triggers a welcome email via Mailgun (dashboard origin) |
-| DELETE | `/api/projects/:id/subscribers/:email` | Remove a subscriber (dashboard origin) |
-| POST   | `/api/pins` | Create a pin with screenshot (multipart), notifies subscribers (project key) |
-| PATCH  | `/api/pins/:id` | Update a pin's status (`OPEN` ↔ `RESOLVED`) (dashboard origin) |
+| GET/PATCH | `/api/projects/:id/notification-preferences` | Read or save the signed-in member's own role-aware email choices |
+| GET    | `/api/projects/:id/subscribers` | List owner-managed external new-feedback alerts |
+| POST   | `/api/projects/:id/subscribers` | Add an external new-feedback address |
+| DELETE | `/api/projects/:id/subscribers/:email` | Remove an external new-feedback address |
+| POST   | `/api/pins` | Create a pin with screenshot; notify external and opted-in member recipients |
+| PATCH  | `/api/pins/:id` | Update status/internal workflow fields and notify opted-in recipients |
 | DELETE | `/api/pins/:id` | Delete a pin and its comments (dashboard origin) |
-| POST   | `/api/pins/:id/comments` | Add a comment to a pin's thread (dashboard origin) |
+| POST   | `/api/pins/:id/comments` | Add a thread reply; process preference-aware reply, reopen, and mention mail |
 | GET    | `/api/screenshots/:id/image` | Stream the screenshot PNG with `Cache-Control` + `ETag` |
 | POST   | `/api/screenshots/:id/recapture` | Spawn `scripts/recapture.sh` to re-screenshot the page server-side (dashboard origin) |
 | GET    | `/api/screenshots/:id/status` | Lightweight `width`/`height`/`capturedAt` poll used during recapture (dashboard origin) |

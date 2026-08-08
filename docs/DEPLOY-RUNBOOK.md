@@ -2,22 +2,203 @@
 
 Incident-response doc. If you're here, the deploy is on fire and you need to fix it in 5 minutes, not read essays. The README's [Known pitfalls](../README.md#known-pitfalls) and [Troubleshooting](../README.md#troubleshooting) sections are the *root-cause* write-ups (use those when starting fresh or doing a postmortem); this runbook is the *on-call* doc with copy-pasteable fixes.
 
-> **First move always:** `ssh coolify` and `bash /root/markup-clone/scripts/cleanup-caddy-orphans.sh` — orphan caddy is the most common "mystery" outage and takes 5 seconds to rule out.
+> **Current edge (verified 2026-08-08): Traefik owns ports 80/443.** Do not run
+> the legacy Caddy cleanup or restart commands on this host; host-visible Caddy
+> processes belong to unrelated Docker applications. Start with
+> `bash /root/markup-clone/scripts/edge-proxy-preflight.sh verify`. Caddy sections
+> below are retained only for a host explicitly detected as `caddy`.
 
 ## Pre-deploy checklist
 
 Run through these before kicking off a deploy. Each takes <10s.
 
-1. **On the VPS, no orphan caddy is bound on :443, and the guard cron has fired in the last 60s.** `ssh coolify 'pgrep -af caddy | grep -v caddy-guard'` — expect no output. `ssh coolify 'ls -la /var/log/markup-caddy-guard.log'` — the log mtime should be within the last 60s; if it's stale while `journalctl -u crond` shows the `markup-caddy-guard` CMD firing every minute, see Failure 5.
-2. **`/etc/caddy/Caddyfile` and `/opt/caddy/markup.d/caddyfile` exist and are readable.** `ssh coolify 'ls -l /etc/caddy/Caddyfile /opt/caddy/markup.d/caddyfile 2>&1'`.
+1. **Traefik is the public listener.** `ssh coolify 'ss -ltnp | grep -E ":(80|443).*traefik"'`
+   must show both public ports. `systemctl status caddy` is not an ingress check on
+   this VPS; the Caddy unit is intentionally masked.
+2. **The active Traefik route and trusted certificate pass.** Run
+   `ssh coolify 'bash /root/markup-clone/scripts/edge-proxy-preflight.sh verify'`.
+   This validates `/opt/traefik/dynamic/routers.yml`, loopback port 3030, the
+   public health payload, hostname, expiry, issuer chain, and OS trust. Never add
+   `-k` or `--insecure` to turn a certificate failure green.
 3. **`.env` on the VPS has the current `POSTGRES_PASSWORD` and `DATABASE_URL`.** `ssh coolify 'grep -E "^(POSTGRES_PASSWORD|DATABASE_URL)=" /root/markup-clone/.env'` — both lines present, no `***` from chat-layer redaction.
 4. **The `markup-net` Docker bridge exists and has a known subnet.** `ssh coolify 'docker network inspect markup-net -f "{{range .IPAM.Config}}{{.Subnet}}{{end}}"'` — must return a CIDR, not empty.
-5. **Local `npm run lint && npx vitest run` are clean.** 0 warnings, 212+/212+ passing (the suite has grown with the audit sweep D5/D7/D8 + F3/F4/F5; the exact count is in the last `npx vitest run` output).
-6. **The Caddyfile on the VPS has the `markup.ashbi.ca { reverse_proxy 127.0.0.1:3030 }` site block.** `ssh coolify 'bash /root/markup-clone/scripts/host-state.sh | grep -i "markup route"'` — the `has_markup_route` helper (line 28 of `scripts/host-state.sh`) returns `present` if the block is there, `**MISSING**` if not. The bare `grep -A1 "markup.ashbi.ca" /etc/caddy/Caddyfile` form still works but will false-positive on a stale or commented-out block.
+5. **Local `npm run lint && npm test` are clean.** Require zero lint warnings
+   and use the exact test count from the release evidence; do not rely on the
+   historical counts elsewhere in this runbook.
+6. **The active router maps Markup to loopback port 3030.** Confirm the `markup`
+   router and service in `/opt/traefik/dynamic/routers.yml`; the edge preflight in
+   item 2 checks both. Do not inspect `/data/coolify/proxy` for this route—the live
+   Traefik container does not mount that directory.
 7. **The new screenshot status endpoint `/api/screenshots/[id]/status` is reachable from the dashboard origin.** `ssh coolify 'curl -sI -H "Origin: https://markup.ashbi.ca" http://127.0.0.1:3030/api/screenshots/00000000-0000-0000-0000-000000000000/status'` — expect a `200` (the zero UUID resolves to a 404 payload but the origin check passes) or a `404` from the route, **never** a `405 Method Not Allowed` or a `Connection refused`. This route is what `ScreenshotView` polls every second during a recapture (commits `bd5c4ac` + `7ce5dba` + `d131d5f`); if it's missing the dashboard's "regenerating screenshot" spinner never resolves.
-8. **No uncommitted changes in the repo** that would change deploy behavior. `git status` clean.
+8. **No uncommitted changes in the repo** that would change deploy behavior.
+   `git status` must be clean; `deploy.sh` now enforces tracked and untracked
+   cleanliness before assigning the source-SHA image tag.
+9. **The host checkout can authenticate to Git and fast-forward.** Run
+   `git -C /root/markup-clone ls-remote origin HEAD` read-only before the release
+   window. `deploy.sh` requires the checkout, pull, commit resolution, and clean
+   tree to succeed. Tarballs and legacy `.last-sha` markers are not accepted as
+   release provenance.
+10. **The running application has an immutable rollback image.**
+   `bash /root/markup-clone/scripts/rollback-image-preflight.sh` must succeed
+   before migrations or replacement. It verifies that the container uses
+   `markup-clone:<40-character-sha>`, that the image is still local, and that
+   the tag still resolves to the exact running image ID. The deploy records the
+   result in `/data/markup-clone/rollback-image.env` with mode `0600`.
 
 If any item fails, fix it *before* you start — these are the failure modes below.
+
+The 2026-08-08 read-only preflight found one current stop condition: production
+`scripts/prune-screenshots.sh` has byte-for-byte identical content to Git but is
+mode `0755` while the checked-in mode is `0644`. The host therefore appears dirty.
+Choose and approve one of these before deployment: commit the executable bit as
+intentional, or restore the host mode to the committed value. Do not bypass the
+clean-tree guard.
+
+The same preflight found a second release stop: public HTTPS currently serves a
+self-signed `CN=markup.ashbi.ca` certificate (verification result 18). The active
+Traefik router names the `letsencrypt` resolver, but `/opt/traefik/dynamic/tls.yml`
+explicitly loads the self-signed certificate and the active ACME store has no
+Markup certificate. The app remains healthy on loopback and returns HTTP 200 only
+when certificate verification is bypassed. Repairing the live certificate and
+reloading Traefik require explicit production approval.
+
+A read-only recovery inventory found a known-good certificate/key pair at
+`/opt/traefik/certs/.bak.20260723_192747/markup.ashbi.ca.{crt,key}`. The pair
+matches, the key is mode `0600`, the SAN is exactly `markup.ashbi.ca`, the issuer
+is Let's Encrypt `YE1`, and it is valid through 2026-09-13. Its SHA-256
+fingerprint is
+`92:11:C0:FD:B9:1D:45:23:F3:96:0A:81:8A:ED:0C:E1:E4:FB:28:1B:45:4E:A4:ED:4A:59:56:24:76:8B:EC:6B`.
+The inactive `/data/coolify/proxy/acme.json` also contains a different valid
+Markup certificate through 2026-09-03; do not edit Traefik's active ACME JSON by
+hand when the verified file-pair rollback is available.
+
+For an approved TLS repair window:
+
+1. Back up the active Markup certificate/key, `tls.yml`, and active ACME JSON.
+2. Atomically restore the verified archived pair to the active certificate paths
+   and confirm Traefik's file watcher serves the expected fingerprint with normal
+   certificate verification.
+3. Preserve that restored pair as the immediate rollback while removing only the
+   two Markup static-certificate lines from `tls.yml`. The already-loaded
+   `markup@file` router is enabled with `certResolver: letsencrypt`, and its
+   `markup@file` service is enabled at `http://127.0.0.1:3030`.
+4. Confirm the active `/opt/traefik/acme.json` gains `markup.ashbi.ca`, the public
+   certificate is trusted, and `edge-proxy-preflight.sh verify` passes. If ACME
+   issuance fails, restore the static `tls.yml` binding to the known-good pair.
+
+Pending migrations run through `scripts/apply-migration.sh` with
+`psql --single-transaction -v ON_ERROR_STOP=1`. The Prisma history marker is
+streamed after the migration SQL in that same transaction, so the schema and
+history both commit or both roll back. Never filter or suppress migration errors
+to keep a release moving.
+
+## Release recovery drills
+
+Production execution requires Cameron's explicit approval. The commands below
+were exercised against the disposable local Compose stack on 2026-08-08; they
+are not evidence that a production backup or rollback has been performed.
+
+### Backup drill
+
+The app image pins PostgreSQL 16 client tools to match the server. The script
+creates a private custom-format dump, verifies its table of contents, and writes
+a SHA-256 sidecar before reporting success.
+
+```bash
+docker compose exec -T app bash /opt/app-scripts/backup-postgres.sh
+docker compose exec -T app sh -c 'ls -l /data/backups && pg_restore --list /data/backups/markup-YYYYMMDDTHHMMSSZ.dump | head'
+```
+
+On the VPS, use `docker exec markup-clone` for the first command. Copy both the
+`.dump` and `.dump.sha256` files off-host; a same-host backup is only a recovery
+convenience, not disaster recovery.
+
+### Restore drill
+
+First prove the guard refuses a non-empty database. Then stop every writer,
+name the exact target database, and explicitly opt into replacement. Never run
+this against production while the app container is accepting traffic.
+
+```bash
+docker compose run --rm --no-deps -T \
+  -e RESTORE_CONFIRM_DATABASE=markup_db \
+  app bash /opt/app-scripts/restore-postgres.sh /data/backups/markup-YYYYMMDDTHHMMSSZ.dump
+# Expect exit 4: target is non-empty and remains unchanged.
+
+docker compose stop app
+docker compose run --rm --no-deps -T \
+  -e RESTORE_CONFIRM_DATABASE=markup_db \
+  -e ALLOW_NONEMPTY_RESTORE=1 \
+  app bash /opt/app-scripts/restore-postgres.sh /data/backups/markup-YYYYMMDDTHHMMSSZ.dump
+docker compose up -d app
+curl -fsS http://127.0.0.1:3030/api/health
+```
+
+Verify a known workspace/project row and the finished migration count after the
+restore. If either differs from the backup manifest, keep the app stopped.
+
+### Rollback drill
+
+Application images are tagged with the exact 40-character source SHA. Rollback
+means returning to a known prior image, not rebuilding an old branch. Take a
+backup first, record the current image, and verify the prior image exists locally.
+
+```bash
+bash /root/markup-clone/scripts/rollback-image-preflight.sh
+set -a
+. /data/markup-clone/rollback-image.env
+set +a
+docker image inspect "$ROLLBACK_IMAGE" >/dev/null
+test "$(docker image inspect "$ROLLBACK_IMAGE" --format '{{.Id}}')" = "$ROLLBACK_IMAGE_ID"
+docker stop markup-clone
+docker rename markup-clone markup-clone-failed
+# Re-run the docker run block from scripts/deploy.sh with
+# $ROLLBACK_IMAGE and the unchanged env, network, and mounts.
+curl -fsS http://127.0.0.1:3030/api/health
+```
+
+Keep `markup-clone-failed` until health and the owner/client smoke journey pass.
+To abort the rollback, remove the replacement, rename the retained container
+back, and start it. Additive migrations are retained; never reverse database
+migrations casually during an application rollback.
+
+Read-only production inventory on 2026-08-08 confirmed that the healthy live
+container uses `markup-clone:d47ada5bfa0d66be70d4751ce63ddfee07c63da3`,
+that the tag remains local as image
+`sha256:c077ad33288c5284c16d6c58d11f1bb140dd14167c24502bab0ce81cdc55d891`,
+and that the public health endpoint returns HTTP 200. This proves a prior image
+is retained; it does not prove a production rollback has been executed.
+
+### Observability drill
+
+```bash
+curl -fsS http://127.0.0.1:3030/api/health
+docker inspect markup-clone --format '{{.State.Health.Status}}'
+docker logs --since 10m markup-clone 2>&1 | tail -200
+docker exec markup-postgres pg_isready -U markup -d markup_db
+bash /root/markup-clone/scripts/host-state.sh
+```
+
+Healthy means both containers answer, the application log has no repeated 5xx,
+Prisma, audit, delivery-worker, or recapture failures, and host-state confirms
+the Caddy route plus recapture prerequisites.
+
+### Rate-limit drill
+
+Do not flood the production widget to test throttling. Exercise the deterministic
+route suites and verify the runtime remains single-instance as documented in
+`docs/rate-limit-limitations.md`.
+
+```bash
+npx vitest run tests/unit/rate-limit.test.ts \
+  tests/integration/comments-rate-limit.test.ts \
+  tests/integration/recapture.test.ts \
+  tests/integration/screenshot-status.test.ts
+docker ps --filter name=markup-clone --format '{{.Names}}'
+```
+
+The suites must assert HTTP 429 and numeric `Retry-After` behavior. More than one
+application instance is a release stop until the limiter uses a shared store.
 
 ---
 

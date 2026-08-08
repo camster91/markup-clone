@@ -317,6 +317,42 @@ describe('markup widget', () => {
     expect(headers['X-Api-Key']).toBe('mk_test');
   });
 
+  it('explains review pausing without discarding the drafted feedback', async () => {
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    global.fetch = vi.fn(async () => new Response(JSON.stringify({
+      error: 'New feedback is paused for this review round',
+      code: 'NEW_FEEDBACK_PAUSED',
+    }), { status: 409, headers: { 'Content-Type': 'application/json' } })) as unknown as typeof fetch;
+
+    await clickSaveInFeedbackMode();
+
+    expect(alertSpy).toHaveBeenCalledWith('New feedback is paused for this review round. Replies to existing threads remain open.');
+    const textarea = Array.from(document.querySelectorAll('textarea')).at(-1) as HTMLTextAreaElement;
+    const modalBox = textarea.closest('div')!.parentElement!;
+    const saveBtn = Array.from(modalBox.querySelectorAll('button')).find((button) => button.textContent === 'Save pin') as HTMLButtonElement;
+    expect(textarea.value).toBe('Please change this button color');
+    expect(saveBtn.disabled).toBe(false);
+  });
+
+  it('explains archived sites through the stable error event without discarding the draft', async () => {
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const errorEvent = vi.fn();
+    document.addEventListener('markup:error', errorEvent);
+    global.fetch = vi.fn(async () => new Response(JSON.stringify({
+      error: 'This site is archived and is not accepting new feedback',
+      code: 'PROJECT_ARCHIVED',
+    }), { status: 409, headers: { 'Content-Type': 'application/json' } })) as unknown as typeof fetch;
+
+    await clickSaveInFeedbackMode();
+
+    expect(alertSpy).toHaveBeenCalledWith('This site is archived and is not accepting new feedback.');
+    expect(errorEvent).toHaveBeenCalledWith(expect.objectContaining({
+      detail: { message: 'This site is archived and is not accepting new feedback.', code: 'PROJECT_ARCHIVED' },
+    }));
+    const textarea = Array.from(document.querySelectorAll('textarea')).at(-1) as HTMLTextAreaElement;
+    expect(textarea.value).toBe('Please change this button color');
+  });
+
   it('Save click sends a FormData body with projectId, path, xPercent, yPercent, text, and screenshot', async () => {
     await clickSaveInFeedbackMode();
 
@@ -335,6 +371,13 @@ describe('markup widget', () => {
     expect(parseFloat(fd.get('xPercent') as string)).toBeCloseTo((25 / 800) * 100, 5);
     expect(parseFloat(fd.get('yPercent') as string)).toBeCloseTo((25 / 600) * 100, 5);
     expect(fd.get('text')).toBe('Please change this button color');
+    expect(fd.get('pageUrl')).toBe('http://localhost:3000/');
+    expect(fd.get('viewportWidth')).toBe('800');
+    expect(fd.get('viewportHeight')).toBe('600');
+    expect(Number(fd.get('devicePixelRatio'))).toBeGreaterThan(0);
+    expect(typeof fd.get('userAgent')).toBe('string');
+    expect(typeof fd.get('platform')).toBe('string');
+    expect(JSON.parse(String(fd.get('selectorCandidatesJson')))).toContain('#t');
 
     // The test stub replaces captureViewport with a fake Blob; the widget should
     // attach it as a 'screenshot' File-like entry.
@@ -353,8 +396,8 @@ describe('markup widget', () => {
     expect(document.querySelector('#markup-toggle')).toBeNull();
 
     // 2. Auditable signal: a clear, single-line warning was logged.
-    const calls = warnSpy.mock.calls.map(args => String(args[0] ?? ''));
-    expect(calls.some(msg => /missing data-api-key or data-project-id/i.test(msg))).toBe(true);
+    const calls = (warnSpy.mock.calls as unknown[][]).map((args: unknown[]) => String(args[0] ?? ''));
+    expect(calls.some((msg: string) => /missing data-api-key or data-project-id/i.test(msg))).toBe(true);
 
     // 3. Hard signal: fetch was NEVER called. This is the security-relevant
     //    one — a silent swallow would let a misconfigured embed pretend to work.
@@ -367,8 +410,8 @@ describe('markup widget', () => {
     await loadWidget({ projectId: '' });
 
     expect(document.querySelector('#markup-toggle')).toBeNull();
-    const calls = warnSpy.mock.calls.map(args => String(args[0] ?? ''));
-    expect(calls.some(msg => /missing data-api-key or data-project-id/i.test(msg))).toBe(true);
+    const calls = (warnSpy.mock.calls as unknown[][]).map((args: unknown[]) => String(args[0] ?? ''));
+    expect(calls.some((msg: string) => /missing data-api-key or data-project-id/i.test(msg))).toBe(true);
 
     const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
     expect(fetchMock).not.toHaveBeenCalled();

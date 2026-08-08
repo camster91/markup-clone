@@ -87,9 +87,31 @@ npm run lint
 
 ---
 
+## 2026-08-08 managed-share follow-up
+
+- **M4 closed locally:** generated links enter through `/share/<token>/open`, then
+  use a token-bound HttpOnly cookie. Shared media rejects query-only tokens, the
+  public route emits `Referrer-Policy: no-referrer`, and client media URLs contain
+  no share credential.
+- **M9 closed locally:** share-cookie verification uses constant-time comparison;
+  media authorization is also bound to expiry and password-hash state so rotation,
+  password replacement, expiry, or revocation invalidates prior access.
+- Shared image/attachment responses use private caching with `Vary: Cookie`, while
+  history uses private no-store, preventing authenticated responses from entering a
+  shared proxy cache.
+- **M2 closed locally:** the overview no longer heartbeats into every visible
+  project. A focused project owns one presence heartbeat/list poll and one SSE
+  stream regardless of screenshot count; authenticated browser QA measured the
+  transport counts over a full cadence.
+- **M1 closed locally:** the home RSC and `/api/projects` now select only scoped
+  project-card scalars, then use one parameterized aggregate over the authorized
+  project IDs for page, screenshot, total-pin, and open-pin counts. No nested
+  page/screenshot/pin trees are hydrated for the overview.
+
 ## Residual risk / deploy notes
 
 1. **Session is now mandatory for dashboard APIs.** Operators must log in before poller / mutations work. Ensure at least one `User` row exists in each environment before deploy.
 2. **CSRF cookie** is issued on login; client fetches must use `dashboardHeaders()` (now includes `X-CSRF-Token`).
 3. **Webhook https-only** may break operators who pointed integrations at plain `http://` receivers — they must move to HTTPS.
-4. Medium items M1–M2 remain the largest performance follow-ups for multi-project workspaces.
+4. Medium items M1 and M2 are closed locally. Horizontal realtime fan-out still
+   needs shared pub/sub before more than one application replica is introduced.

@@ -1,28 +1,36 @@
 'use client';
 
-import { useState, useCallback, useMemo, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import PinThread from './PinThread';
 import HistoryPanel from './HistoryPanel';
-import type { Pin, FeedbackComment, ScreenshotWithPins, FeedbackAnnotation } from '@/lib/types';
+import type { Pin, FeedbackComment, ScreenshotWithPins, FeedbackAnnotation, IssueOptions } from '@/lib/types';
 import { useRecaptureStatus } from '@/lib/hooks/useRecaptureStatus';
-import { usePresence, colorForUserId, shortLabelForUserId } from '@/lib/hooks/usePresence';
-import { useLiveEvents } from '@/lib/hooks/useLiveEvents';
+import { colorForUserId, shortLabelForUserId, type PresenceActivity, type PresenceRow } from '@/lib/hooks/usePresence';
+import { formatDateTime } from '@/lib/date-format';
+import { dashboardHeaders } from '@/lib/client-origin';
+import type { IssueMetadataUpdate } from './IssueMetadataEditor';
+import { pinMatchesIssueFilters, type IssueFilters as IssueFilterValue } from '@/lib/issue-metadata';
 
 export default function ScreenshotView({
   screenshot,
   pagePath,
   projectId,
+  projectName,
+  projectDomain,
+  showDeveloperContext = false,
+  issueOptions,
+  issueFilters,
+  onProjectUpdated,
+  presenceOthers = [],
+  onPresenceActivity,
   /**
    * Render the screenshot read-only. When true:
    *   - The recapture button is hidden (no headless-Chromium cost
    *     for someone who only has the share link).
    *   - The PinThread form is disabled (no new comments).
    *   - Pin status changes (open/resolved) are blocked.
-   *   - The presence/recapture poll loops and SSE subscription are
-   *     still started, but a viewer without a project-scoped
-   *     identity can't trigger any writes — the network is
-   *     non-empty noise. (Could optimize by short-circuiting the
-   *     hooks, but the gain is small for the v1 share link.)
+   *   - No authenticated collaboration transport starts in this
+   *     component; public shares remain presence-free.
    *
    * Used by /share/[token] (the public view) and any future
    * embed that doesn't want to expose the dashboard's mutation
@@ -33,12 +41,24 @@ export default function ScreenshotView({
   screenshot: ScreenshotWithPins;
   pagePath: string;
   /**
-   * Project this screenshot belongs to. Used to anchor the per-screenshot
-   * presence heartbeat (collab card). Optional — when omitted (e.g. in
-   * unit tests that only exercise the recapture poll loop), the
-   * presence hook is skipped and the screenshot renders normally.
+   * Project this screenshot belongs to. Used for issue handoff and comment
+   * context; public read-only screenshots may omit it.
    */
   projectId?: string;
+  projectName?: string;
+  projectDomain?: string;
+  /** Show privacy-bounded technical capture details to project administrators. */
+  showDeveloperContext?: boolean;
+  /** Owner/operator-only assignee and reusable tag choices. */
+  issueOptions?: IssueOptions;
+  /** Owner/operator-only filters applied to the locally live pin collection. */
+  issueFilters?: IssueFilterValue;
+  /** Refresh the parent DTO after an internal mutation so global counts/options stay current. */
+  onProjectUpdated?: () => Promise<void> | void;
+  /** Shared project presence; this screenshot renders matching cursors only. */
+  presenceOthers?: PresenceRow[];
+  /** Report focused screenshot/cursor activity to the project-owned heartbeat. */
+  onPresenceActivity?: (activity: PresenceActivity) => void;
   readOnly?: boolean;
 }) {
   const [activePinId, setActivePinId] = useState<string | null>(null);
@@ -47,6 +67,27 @@ export default function ScreenshotView({
   const [height, setHeight] = useState(screenshot.height);
   const [capturedAt, setCapturedAt] = useState(screenshot.capturedAt);
   const [imageKey, setImageKey] = useState(0); // bump to force img reload
+  const visiblePins = useMemo(
+    () => issueFilters ? pins.filter((pin) => pinMatchesIssueFilters(pin, issueFilters)) : pins,
+    [issueFilters, pins]
+  );
+
+  const updatePinQuery = useCallback((pinId: string | null) => {
+    const url = new URL(window.location.href);
+    if (pinId) url.searchParams.set('pin', pinId);
+    else url.searchParams.delete('pin');
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+  }, []);
+
+  useEffect(() => {
+    const requestedPinId = new URLSearchParams(window.location.search).get('pin');
+    if (requestedPinId && visiblePins.some((pin) => pin.id === requestedPinId)) {
+      setActivePinId(requestedPinId);
+    } else if (activePinId && !visiblePins.some((pin) => pin.id === activePinId)) {
+      updatePinQuery(null);
+      setActivePinId(null);
+    }
+  }, [activePinId, updatePinQuery, visiblePins]);
   // === History tab =====================================================
   // 'latest' (default) renders the screenshot + pins as before.
   // 'history' renders HistoryPanel — the last 50 ScreenshotVersion
@@ -58,43 +99,37 @@ export default function ScreenshotView({
   // imageKey, and the panel re-fetches the version list so the new
   // capture shows up at the top of the grid.
   const [tab, setTab] = useState<'latest' | 'history'>('latest');
+  const latestTabRef = useRef<HTMLButtonElement | null>(null);
+  const historyTabRef = useRef<HTMLButtonElement | null>(null);
+  const activePinTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const latestTabId = `screenshot-${screenshot.id}-latest-tab`;
+  const historyTabId = `screenshot-${screenshot.id}-history-tab`;
+  const latestPanelId = `screenshot-${screenshot.id}-latest-panel`;
+  const historyPanelId = `screenshot-${screenshot.id}-history-panel`;
   const imgUrl = `/api/screenshots/${screenshot.id}/image?v=${imageKey}`;
 
-  // === Presence (collab card) ============================================
-  // We host a per-screenshot usePresence() call so the reviewer
-  // associated with this ScreenshotView row gets a heartbeat tied to
-  // THIS project + THIS screenshot. The "project-level" presence row
-  // (no screenshotId) from the parent <ProjectCard> is still bumped
-  // by the parent's usePresence — both heartbeats coexist; the one
-  // with a screenshotId just carries the cursor position.
-  //
-  // Two issues to avoid:
-  //   1) Double-bumping the row. Both heartbeats share the
-  //      (userId, projectId) key, so the second upsert is a no-op
-  //      "overwrite with the same values" — fine, and the screenshotId
-  //      on the row will flip between null and the current screenshot
-  //      id, which is what we want (it tells the dashboard "this
-  //      reviewer is currently looking at screenshot X").
-  //   2) Cursor lag. The 5s tick + 1s overlap cursor means the
-  //      cursor position we POST is up to ~5s stale. That's fine for
-  //      a "where is the reviewer roughly looking" indicator, which
-  //      is the explicit design — the cursor is NOT pixel-accurate.
-  //
-  // We pass the cursor ref into the hook via `cursorRef`. The hook
-  // reads `.current` on every tick; the ref is filled by the
-  // onMouseMove handler below.
-  //
-  // The hook needs a projectId. The ScreenshotView doesn't have one
-  // directly (the ScreenshotWithPins type stops at the screenshot).
-  // We add a `screenshot.projectId` lookup via a prop on the parent
-  // chain (page.projectId → screenshot.projectId), but that requires
-  // a type change. For now, the simplest correct fix is to look up
-  // the projectId from the screenshot's page (the parent
-  // <ProjectCard> knows it) and pass it through. To avoid changing
-  // ScreenshotWithPins, we pass the projectId as a SECOND optional
-  // prop. When absent, the ScreenshotView's presence row has an
-  // empty projectId and the route will 400 — better to fail loud
-  // than to silently drop the heartbeat.
+  const handleTabKeyDown = useCallback((event: React.KeyboardEvent<HTMLButtonElement>) => {
+    let next: 'latest' | 'history' | null = null;
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+      next = tab === 'latest' ? 'history' : 'latest';
+    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+      next = tab === 'history' ? 'latest' : 'history';
+    } else if (event.key === 'Home') {
+      next = 'latest';
+    } else if (event.key === 'End') {
+      next = 'history';
+    }
+    if (!next) return;
+    event.preventDefault();
+    setTab(next);
+    (next === 'latest' ? latestTabRef : historyTabRef).current?.focus();
+  }, [tab]);
+
+  const closePinThread = useCallback(() => {
+    updatePinQuery(null);
+    setActivePinId(null);
+    queueMicrotask(() => activePinTriggerRef.current?.focus());
+  }, [updatePinQuery]);
 
   // Stable initial-dims reference so the recapture hook doesn't re-fire
   // on every parent re-render. capturedAt is a string from the server,
@@ -124,12 +159,11 @@ export default function ScreenshotView({
     void startRecapture();
   }, [startRecapture]);
 
-  // === Mouse tracking → cursorRef for usePresence =======================
-  // The hook reads `cursorRef.current` on every 5s tick. We translate
+  // === Mouse tracking → project-owned presence ===========================
+  // Translate
   // browser-space event coords into the screenshot's coordinate space
   // (0-100 percent of width/height). The next tick picks up whatever
   // is in the ref at that moment — no per-event throttling needed.
-  const cursorRef = useRef<{ x: number | null; y: number | null } | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
@@ -144,32 +178,12 @@ export default function ScreenshotView({
     // doesn't correspond to a real pixel.
     const x = Math.max(0, Math.min(100, xPct));
     const y = Math.max(0, Math.min(100, yPct));
-    cursorRef.current = { x, y };
-  }, []);
+    onPresenceActivity?.({ screenshotId: screenshot.id, x, y });
+  }, [onPresenceActivity, screenshot.id]);
 
   const handleMouseLeave = useCallback(() => {
-    cursorRef.current = { x: null, y: null };
-  }, []);
-
-  // To attach the ScreenshotView to its project for presence, the
-  // parent threads projectId through. The screenshot object itself
-  // doesn't carry projectId (it stops at pageId), so the parent
-  // <ProjectCard> is responsible for passing it in. When projectId
-  // is omitted (e.g. in unit tests), the presence hook is called
-  // with an empty projectId which short-circuits the heartbeat
-  // (see usePresence) — the recapture flow is the primary use case
-  // for ScreenshotView, and presence is the collab-card overlay on
-  // top of it.
-  // The hook's `others` list is what we render as cursor dots. We
-  // intentionally do NOT consume `myUserId` here — the local browser
-  // already shows the native cursor, so rendering a self-dot on top
-  // would be a duplicate. The hook still tracks self for the
-  // (userId, projectId) upsert key on the server.
-  const { others } = usePresence({
-    projectId: projectId ?? '',
-    screenshotId: projectId ? screenshot.id : null,
-    cursorRef,
-  });
+    onPresenceActivity?.({ screenshotId: screenshot.id, x: null, y: null });
+  }, [onPresenceActivity, screenshot.id]);
 
   const handlePinStatusChange = async (pinId: string, status: 'OPEN' | 'RESOLVED') => {
     // Share-link viewers (readOnly) cannot change pin status — the
@@ -179,12 +193,40 @@ export default function ScreenshotView({
     if (readOnly) return;
     const res = await fetch(`/api/pins/${pinId}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...dashboardHeaders() },
       body: JSON.stringify({ status }),
     });
     if (res.ok) {
       setPins(prev => prev.map(p => p.id === pinId ? { ...p, status } : p));
     }
+  };
+
+  const handlePinMetadataChange = async (pinId: string, update: IssueMetadataUpdate) => {
+    if (readOnly || !showDeveloperContext) return;
+    const res = await fetch(`/api/pins/${pinId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...dashboardHeaders() },
+      body: JSON.stringify(update),
+    });
+    if (!res.ok) {
+      let message = 'Could not save issue details';
+      try {
+        const body = await res.json();
+        if (typeof body?.error === 'string') message = body.error;
+      } catch {
+        // Preserve the generic message for an invalid response body.
+      }
+      throw new Error(message);
+    }
+    const body = await res.json();
+    const updated = body.data as Pick<Pin, 'priority' | 'assignee' | 'tags'>;
+    setPins((previous) => previous.map((pin) => pin.id === pinId ? {
+      ...pin,
+      priority: updated.priority,
+      assignee: updated.assignee,
+      tags: updated.tags,
+    } : pin));
+    await onProjectUpdated?.();
   };
 
   const handleCommentAdded = (pinId: string, comment: FeedbackComment) => {
@@ -227,7 +269,7 @@ export default function ScreenshotView({
       style={{ zIndex: 3 }}
       aria-hidden="true"
     >
-      {pins.map((pin) => (
+      {visiblePins.map((pin) => (
         <AnnotationGroup
           key={pin.id}
           pin={pin}
@@ -237,56 +279,10 @@ export default function ScreenshotView({
     </svg>
   );
 
-  // === Live updates (SSE) =================================================
-  // The hook subscribes to /api/events?projectId=X&screenshotId=Y on
-  // mount and re-subscribes if either prop changes. We only act on
-  // `new-comment` events whose pinId matches a pin we know about —
-  // the dispatch is additive (the comment is appended to the local
-  // pin state, which is what the active PinThread renders from), so
-  // a duplicate from a slow POST roundtrip and a duplicate from the
-  // SSE event would both show up. The dedupe key is the comment id
-  // (Prisma's UUID); the PinThread is idempotent on id-keyed children.
-  //
-  // We deliberately do NOT replace the existing recapture poll loop
-  // with a `recapture-complete` event listener here — the SSE event
-  // is the "fast path" but the polling fallback (which the rest of
-  // the dashboard depends on) must remain the source of truth. The
-  // useRecaptureStatus hook will pick up the new PNG via either path.
-  useLiveEvents({
-    projectId: projectId ?? null,
-    screenshotId: projectId ? screenshot.id : null,
-    onEvent: (event) => {
-      if (event.type === 'new-comment') {
-        // The payload shape is documented in src/lib/events.ts; the
-        // server picks a safe projection (no apiKey, no full pin row).
-        const payload = event.payload as {
-          pinId: string;
-          comment: FeedbackComment;
-        };
-        // The active pin is the one the reviewer is currently
-        // looking at. If the SSE event is for a different pin (a
-        // collaborator commenting on a sibling pin), we still
-        // optimistically append — the PinThread only opens for
-        // the active pin, but the next time it opens, the
-        // comment will be there. (This also keeps the pin's
-        // comment-count display in sync.)
-        if (payload.pinId && payload.comment && payload.comment.id) {
-          setPins(prev => prev.map(p =>
-            p.id === payload.pinId
-              ? (p.comments.some(c => c.id === payload.comment.id)
-                  ? p // dedupe: comment already in local state
-                  : { ...p, comments: [...p.comments, payload.comment] })
-              : p
-          ));
-        }
-      }
-    },
-  });
-
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden bg-white">
-      <div className="bg-gray-50 px-4 py-2 text-xs text-gray-500 flex items-center justify-between border-b border-gray-200">
-        <div className="flex items-center gap-4">
+      <div className="bg-gray-50 px-4 py-2 text-xs text-gray-500 flex flex-wrap items-center justify-between gap-2 border-b border-gray-200">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-4">
           {/* Tab switcher. The "Latest" tab is the original
               ScreenshotView body (image + pins + annotations). The
               "History" tab mounts <HistoryPanel> in place of the
@@ -296,11 +292,16 @@ export default function ScreenshotView({
               active tab. */}
           <div role="tablist" aria-label="Screenshot view" className="flex items-center gap-1">
             <button
+              ref={latestTabRef}
+              id={latestTabId}
               type="button"
               role="tab"
               aria-selected={tab === 'latest'}
+              aria-controls={latestPanelId}
+              tabIndex={tab === 'latest' ? 0 : -1}
               data-testid="tab-latest"
               onClick={() => setTab('latest')}
+              onKeyDown={handleTabKeyDown}
               className={`px-2 py-1 rounded text-xs font-medium ${
                 tab === 'latest'
                   ? 'bg-white text-gray-900 border border-gray-300'
@@ -310,11 +311,16 @@ export default function ScreenshotView({
               Latest
             </button>
             <button
+              ref={historyTabRef}
+              id={historyTabId}
               type="button"
               role="tab"
               aria-selected={tab === 'history'}
+              aria-controls={historyPanelId}
+              tabIndex={tab === 'history' ? 0 : -1}
               data-testid="tab-history"
               onClick={() => setTab('history')}
+              onKeyDown={handleTabKeyDown}
               className={`px-2 py-1 rounded text-xs font-medium ${
                 tab === 'history'
                   ? 'bg-white text-gray-900 border border-gray-300'
@@ -326,7 +332,7 @@ export default function ScreenshotView({
           </div>
           <span>
             {tab === 'latest'
-              ? <>Captured: {new Date(capturedAt).toLocaleString()} · {width}×{height}px</>
+              ? <>Captured: {formatDateTime(capturedAt)} · {width}×{height}px</>
               : 'Every recapture of this screenshot'}
           </span>
         </div>
@@ -334,10 +340,10 @@ export default function ScreenshotView({
           {tab === 'latest' && (
             <>
               <span className="text-gray-400">
-                {pins.length} pin{pins.length === 1 ? '' : 's'}
+                {visiblePins.length} pin{visiblePins.length === 1 ? '' : 's'}
               </span>
               <span className="text-gray-400">
-                {pins.filter(p => p.status === 'RESOLVED').length} resolved
+                {visiblePins.filter(p => p.status === 'RESOLVED').length} resolved
               </span>
             </>
           )}
@@ -369,6 +375,9 @@ export default function ScreenshotView({
 
       <div
         ref={containerRef}
+        id={latestPanelId}
+        role="tabpanel"
+        aria-labelledby={latestTabId}
         className="relative"
         style={{ maxWidth: '100%' }}
         onMouseMove={handleMouseMove}
@@ -382,14 +391,24 @@ export default function ScreenshotView({
           draggable={false}
         />
         {annotationsSvg}
-        {pins.map((pin, idx) => {
+        {visiblePins.map((pin, idx) => {
           const isActive = activePinId === pin.id;
           const isResolved = pin.status === 'RESOLVED';
           return (
             <button
               key={pin.id}
               type="button"
-              onClick={() => setActivePinId(isActive ? null : pin.id)}
+              aria-label={`${isResolved ? 'Resolved' : 'Open'} feedback pin ${idx + 1}: ${pin.comments[0]?.text || 'No comment'}`}
+              aria-expanded={isActive}
+              onClick={(event) => {
+                if (isActive) {
+                  closePinThread();
+                } else {
+                  activePinTriggerRef.current = event.currentTarget;
+                  updatePinQuery(pin.id);
+                  setActivePinId(pin.id);
+                }
+              }}
               className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-md flex items-center justify-center font-bold text-white text-xs transition-transform hover:scale-110 ${
                 isResolved ? 'bg-green-500' : 'bg-red-500'
               } ${isActive ? 'scale-125 ring-4 ring-blue-300' : ''}`}
@@ -412,7 +431,7 @@ export default function ScreenshotView({
             shows a small dot at `${xPercent}%` / `${yPercent}%`. The
             container div already has `position: relative`, so absolute
             positioning inside slots the dot over the image correctly. */}
-        {others
+        {presenceOthers
           .filter((p) => p.screenshotId === screenshot.id && p.cursorX !== null && p.cursorY !== null)
           .map((p) => (
             <div
@@ -430,17 +449,35 @@ export default function ScreenshotView({
           ))}
 
         {activePinId && (
-          <div className="absolute top-2 right-2 w-80 max-w-[calc(100%-1rem)] bg-white rounded-lg shadow-2xl border border-gray-200 z-20 max-h-[80vh] overflow-y-auto">
+          <div
+            className="absolute top-2 right-2 w-80 max-w-[calc(100%-1rem)] bg-white rounded-lg shadow-2xl border border-gray-200 z-20 max-h-[80vh] overflow-y-auto"
+            role="dialog"
+            aria-modal="false"
+            aria-label="Feedback thread"
+          >
             {(() => {
-              const pin = pins.find(p => p.id === activePinId);
+              const pin = visiblePins.find(p => p.id === activePinId);
               if (!pin) return null;
               return (
                 <PinThread
                   pin={pin}
                   projectId={projectId ?? null}
                   readOnly={readOnly}
-                  onClose={() => setActivePinId(null)}
+                  showDeveloperContext={showDeveloperContext}
+                  issueOptions={issueOptions}
+                  handoffContext={showDeveloperContext && projectId && projectName && projectDomain ? {
+                    project: { id: projectId, name: projectName, domain: projectDomain },
+                    pagePath,
+                    screenshot: {
+                      id: screenshot.id,
+                      width,
+                      height,
+                      capturedAt,
+                    },
+                  } : undefined}
+                  onClose={closePinThread}
                   onStatusChange={handlePinStatusChange}
+                  onMetadataChange={handlePinMetadataChange}
                   onCommentAdded={handleCommentAdded}
                 />
               );
@@ -459,7 +496,12 @@ export default function ScreenshotView({
         // recapture (which bumps imageKey in the recapture-status
         // hook's onUpdate) causes the panel to re-fetch and show
         // the new version at the top of the grid.
-        <HistoryPanel screenshotId={screenshot.id} refreshKey={imageKey} />
+        <div id={historyPanelId} role="tabpanel" aria-labelledby={historyTabId}>
+          <HistoryPanel
+            screenshotId={screenshot.id}
+            refreshKey={imageKey}
+          />
+        </div>
       )}
     </div>
   );

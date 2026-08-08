@@ -37,6 +37,6 @@
     "build.sh"
   ],
   "scripts": {
-    "build": "./build.sh"
+    "build": "node ../../scripts/build-core.mjs"
   }
 }

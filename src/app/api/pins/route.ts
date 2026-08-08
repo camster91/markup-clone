@@ -5,8 +5,11 @@ import { writeFile, mkdir, rename } from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
 import { sendSubscriberEmails } from '@/lib/email';
-import { dispatch } from '@/lib/integrations/dispatcher';
-import type { PinPayload } from '@/lib/integrations/types';
+import { sendProjectMemberNotification } from '@/lib/project-notification-delivery';
+import { enqueuePinCreatedEvent } from '@/lib/integrations/delivery-queue';
+import { buildIssueHandoffV1 } from '@/lib/issue-handoff';
+import type { Pin as FeedbackPin } from '@/lib/types';
+import { parseHost } from '@/lib/origin';
 import {
   LIMITS,
   validatePagePath,
@@ -16,6 +19,11 @@ import {
 } from '@/lib/validation';
 import { consume } from '@/lib/rate-limit';
 import { emit } from '@/lib/events';
+import {
+  normalizeBrowserContext,
+  parseDeveloperContext,
+  sanitizeElementSnippetHtml,
+} from '@/lib/developer-context';
 
 const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || '/data/screenshots';
 const MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024; // 8MB
@@ -44,6 +52,15 @@ export async function POST(req: Request) {
     const screenshot = form.get('screenshot') as File | null;
     const textRaw = (form.get('text') as string | null) || '';
     const authorNameRaw = (form.get('authorName') as string | null) || 'Client';
+    const developerContextInput = {
+      pageUrl: form.get('pageUrl'),
+      viewportWidth: form.get('viewportWidth'),
+      viewportHeight: form.get('viewportHeight'),
+      devicePixelRatio: form.get('devicePixelRatio'),
+      userAgent: form.get('userAgent'),
+      platform: form.get('platform'),
+      selectorCandidatesJson: form.get('selectorCandidatesJson'),
+    };
 
     // === Input validation (returns 400 with a specific error message) ===
     if (!projectId) return NextResponse.json({ error: 'projectId required' }, { status: 400 });
@@ -104,8 +121,39 @@ export async function POST(req: Request) {
     }
 
     // Ensure project + page exist
-    const project = await prisma.project.findUnique({ where: { id: projectId } });
+    const project = await prisma.project.findUnique({
+      where: { id: projectId },
+      include: {
+        activeReviewRound: {
+          select: { id: true, number: true, name: true, commentsPaused: true },
+        },
+      },
+    });
     if (!project) return NextResponse.json({ error: 'project not found' }, { status: 404 });
+    if (project.archivedAt) {
+      return NextResponse.json(
+        {
+          error: 'This site is archived and is not accepting new feedback',
+          code: 'PROJECT_ARCHIVED',
+        },
+        { status: 409 }
+      );
+    }
+    if (project.activeReviewRound?.commentsPaused) {
+      return NextResponse.json(
+        {
+          error: 'New feedback is paused for this review round',
+          code: 'NEW_FEEDBACK_PAUSED',
+        },
+        { status: 409 }
+      );
+    }
+    const developerContextRes = parseDeveloperContext(developerContextInput, project.domain, path_);
+    if (!developerContextRes.ok) {
+      return NextResponse.json({ error: developerContextRes.error }, { status: 400 });
+    }
+    const developerContext = developerContextRes.value;
+    const safeElementHTML = sanitizeElementSnippetHtml(elementHTML);
 
     const page = await prisma.page.upsert({
       where: { projectId_path: { projectId, path: path_ } },
@@ -147,10 +195,18 @@ export async function POST(req: Request) {
         const pin = await tx.pin.create({
           data: {
             screenshotId: ss.id,
+            reviewRoundId: project.activeReviewRoundId || undefined,
             xPercent,
             yPercent,
             elementXPath: elementXPath || undefined,
-            elementHTML: elementHTML || undefined,
+            elementHTML: safeElementHTML || undefined,
+            pageUrl: developerContext.pageUrl,
+            viewportWidth: developerContext.viewportWidth,
+            viewportHeight: developerContext.viewportHeight,
+            devicePixelRatio: developerContext.devicePixelRatio,
+            userAgent: developerContext.userAgent,
+            platform: developerContext.platform,
+            selectorCandidatesJson: developerContext.selectorCandidatesJson,
             authorName,
             comments: text
               ? {
@@ -163,6 +219,79 @@ export async function POST(req: Request) {
               : undefined,
           },
           include: { comments: true },
+        });
+        const buildIntegrationIssue = () => {
+        const createdAt = pin.createdAt.toISOString();
+        const capturedAt = ss.capturedAt.toISOString();
+        const normalized = normalizeBrowserContext(developerContext.userAgent, developerContext.platform);
+        const selectors = developerContext.selectorCandidatesJson
+          ? JSON.parse(developerContext.selectorCandidatesJson) as string[]
+          : [];
+        const hasDeveloperContext = Boolean(
+          developerContext.pageUrl || developerContext.viewportWidth || developerContext.viewportHeight ||
+          developerContext.devicePixelRatio || developerContext.userAgent || developerContext.platform ||
+          developerContext.selectorCandidatesJson || safeElementHTML || elementXPath
+        );
+        const issuePin: FeedbackPin = {
+          id: pin.id,
+          xPercent: pin.xPercent,
+          yPercent: pin.yPercent,
+          status: pin.status,
+          priority: 'NONE',
+          assignee: null,
+          tags: [],
+          elementXPath: pin.elementXPath,
+          elementHTML: pin.elementHTML,
+          developerContext: hasDeveloperContext ? {
+            pageUrl: developerContext.pageUrl,
+            route: path_,
+            viewport: developerContext.viewportWidth !== null && developerContext.viewportHeight !== null
+              ? {
+                  width: developerContext.viewportWidth,
+                  height: developerContext.viewportHeight,
+                  devicePixelRatio: developerContext.devicePixelRatio,
+                }
+              : null,
+            browser: normalized.browser,
+            platform: normalized.platform,
+            selectors,
+            elementSnippet: safeElementHTML,
+            screenshot: {
+              id: ss.id,
+              width: ss.width,
+              height: ss.height,
+              capturedAt,
+            },
+            reviewRound: project.activeReviewRound ? {
+              id: project.activeReviewRound.id,
+              number: project.activeReviewRound.number,
+              name: project.activeReviewRound.name,
+            } : null,
+          } : null,
+          createdAt,
+          comments: pin.comments.map((comment) => ({
+            id: comment.id,
+            author: comment.author,
+            authorRole: comment.authorRole,
+            text: comment.text,
+            createdAt: comment.createdAt.toISOString(),
+            attachments: [],
+          })),
+          annotations: [],
+        };
+        return buildIssueHandoffV1({
+          dashboardOrigin: parseHost(process.env.DASHBOARD_HOST).origin,
+          project: { id: project.id, name: project.name, domain: project.domain },
+          pagePath: path_,
+          screenshot: { id: ss.id, width: ss.width, height: ss.height, capturedAt },
+          pin: issuePin,
+        });
+        };
+        await enqueuePinCreatedEvent(tx, {
+          projectId: project.id,
+          eventId: crypto.randomUUID(),
+          occurredAt: pin.createdAt.toISOString(),
+          issue: buildIntegrationIssue,
         });
         return { screenshot: ss, pin };
       });
@@ -180,45 +309,32 @@ export async function POST(req: Request) {
     // Fire-and-forget email notification — query subscribers after tx commits,
     // then send without blocking the response.
     const pid = project.id;
+    const memberNotification = {
+      projectId: pid,
+      pinId: result.pin.id,
+      event: 'new-pin' as const,
+      title: 'New feedback',
+      message: `${authorName} added feedback on ${path_}${text ? `: ${text}` : '.'}`,
+    };
     void prisma.subscriber
       .findMany({ where: { projectId: pid }, select: { email: true } })
-      .then((subs) =>
-        sendSubscriberEmails({
+      .then((subs) => {
+        const externalEmails = subs.map((subscriber) => subscriber.email);
+        void sendSubscriberEmails({
           projectName: project.name,
           path: path_,
           commentText: text,
-          subscriberEmails: subs.map((s) => s.email),
-        })
-      )
-      .catch((err) => console.error('[email] subscriber lookup error:', err));
-
-    // Fire-and-forget integration dispatch. After a new pin is
-    // committed, look up every integration configured for the
-    // project and fan the pin payload out to each adapter
-    // (Slack / Discord / generic webhook). The dispatch is
-    // strictly non-blocking: we don't await the dispatch
-    // chain, and the inner dispatcher's errors are caught
-    // per-integration so a failing webhook can never take
-    // down the others. The outcome of each call is recorded
-    // on its Integration row (lastSuccessAt / lastError /
-    // lastErrorAt) so the dashboard's ProjectSettings UI can
-    // show "last success at X" or "last error: Y" per
-    // integration. The pin POST itself never bubbles an
-    // integration error to the client.
-    void dispatchIntegrationsForPin({
-      projectId: pid,
-      projectName: project.name,
-      domain: project.domain,
-      pinId: result.pin.id,
-      screenshotId: result.screenshot.id,
-      xPercent: result.pin.xPercent,
-      yPercent: result.pin.yPercent,
-      pinStatus: result.pin.status,
-      authorName: result.pin.authorName,
-      pinCreatedAt: result.pin.createdAt,
-      path: path_,
-      commentText: text,
-    });
+          subscriberEmails: externalEmails,
+        });
+        void sendProjectMemberNotification({
+          ...memberNotification,
+          ...(externalEmails.length > 0 ? { excludeEmails: externalEmails } : {}),
+        });
+      })
+      .catch((err) => {
+        console.error('[email] subscriber lookup error:', err);
+        void sendProjectMemberNotification(memberNotification);
+      });
 
     // Live update: broadcast a new-pin event to the SSE channel for
     // any dashboard open on this project. The payload is a SAFE
@@ -265,160 +381,4 @@ function readPngDimensions(buf: Buffer): { width: number; height: number } {
   const width = buf.readUInt32BE(16);
   const height = buf.readUInt32BE(20);
   return { width, height };
-}
-
-// `dispatchIntegrationsForPin` is the fire-and-forget bridge
-// between the pin route and the integration adapter layer.
-//
-// Lifecycle:
-//   1. The pin route commits the new Pin + Screenshot, then
-//      `void` calls this function — the response returns to
-//      the widget immediately, without awaiting the dispatch.
-//   2. This function queries every integration row for the
-//      project, builds a safe `PinPayload` projection, and
-//      fires the adapter for each. We `Promise.all` the
-//      per-integration work, but we do NOT await the whole
-//      chain from the route — see the `void` above.
-//   3. Each integration's outcome is recorded on its own
-//      row (lastSuccessAt OR lastError + lastErrorAt) so a
-//      failure on one integration never poisons the others.
-//   4. Any uncaught error in the dispatch loop is logged
-//      but never thrown — the promise resolves to a
-//      no-op so the fire-and-forget pattern stays clean.
-//
-// The function is intentionally NOT exported from this
-// file — it's a private helper for the pin route.
-async function dispatchIntegrationsForPin(args: {
-  projectId: string;
-  projectName: string;
-  domain: string;
-  pinId: string;
-  screenshotId: string;
-  xPercent: number;
-  yPercent: number;
-  pinStatus: string;
-  authorName: string;
-  // The DB returns a Date for createdAt; the SSE payload
-  // serialises it to an ISO string. We accept either so
-  // the caller doesn't need to re-shape the value.
-  pinCreatedAt: Date | string;
-  path: string;
-  commentText: string;
-}): Promise<void> {
-  try {
-    const integrations = await prisma.integration.findMany({
-      where: { projectId: args.projectId },
-      select: { id: true, kind: true, configJson: true },
-    });
-    if (integrations.length === 0) return;
-
-    // Coerce createdAt to an ISO string once so the per-adapter
-    // payload is consistent. The Date branch covers the live
-    // route; the string branch keeps the helper testable from
-    // a hand-built call.
-    const createdAtIso =
-      args.pinCreatedAt instanceof Date
-        ? args.pinCreatedAt.toISOString()
-        : String(args.pinCreatedAt);
-
-    const payload: PinPayload = {
-      pin: {
-        id: args.pinId,
-        screenshotId: args.screenshotId,
-        xPercent: args.xPercent,
-        yPercent: args.yPercent,
-        status: args.pinStatus,
-        authorName: args.authorName,
-        createdAt: createdAtIso,
-      },
-      project: {
-        id: args.projectId,
-        name: args.projectName,
-        domain: args.domain,
-      },
-      path: args.path,
-      commentText: args.commentText,
-    };
-
-    // Per-integration dispatch. We Promise.all so the
-    // independent adapter calls overlap (an operator can
-    // have Slack + Discord + a custom webhook all on the
-    // same project). Each inner step catches its own
-    // errors — see the .then/.catch below.
-    await Promise.all(
-      integrations.map(async (integration) => {
-        // Parse the stored configJson. A malformed value
-        // would have slipped past the POST /integrations
-        // validator; we treat it as a "config invalid"
-        // error on the row and skip the dispatch rather
-        // than fire a half-configured request.
-        let config: unknown;
-        try {
-          config = JSON.parse(integration.configJson);
-        } catch (e) {
-          console.error(
-            `[integrations] configJson parse error for ${integration.id}:`,
-            e
-          );
-          await prisma.integration.update({
-            where: { id: integration.id },
-            data: {
-              lastError: 'Stored config is not valid JSON',
-              lastErrorAt: new Date(),
-            },
-          });
-          return;
-        }
-
-        // kind is a free-form string in the DB; the
-        // dispatcher only knows the closed set. A row with
-        // a typo'd kind is the caller's bug, not ours —
-        // log + record the error on the row.
-        if (
-          integration.kind !== 'slack' &&
-          integration.kind !== 'discord' &&
-          integration.kind !== 'webhook'
-        ) {
-          console.error(
-            `[integrations] unknown kind "${integration.kind}" for ${integration.id}`
-          );
-          await prisma.integration.update({
-            where: { id: integration.id },
-            data: {
-              lastError: `Unknown integration kind: ${integration.kind}`,
-              lastErrorAt: new Date(),
-            },
-          });
-          return;
-        }
-
-        const result = await dispatch(
-          integration.kind,
-          config,
-          payload
-        );
-        if (result.ok) {
-          await prisma.integration.update({
-            where: { id: integration.id },
-            data: {
-              lastSuccessAt: new Date(),
-              lastError: null,
-              lastErrorAt: null,
-            },
-          });
-        } else {
-          await prisma.integration.update({
-            where: { id: integration.id },
-            data: { lastError: result.error, lastErrorAt: new Date() },
-          });
-        }
-      })
-    );
-  } catch (err) {
-    // Defensive net — the inner steps should already have
-    // caught everything, but a DB outage in the findMany
-    // would bubble up here. Log and swallow; the pin POST
-    // is long since returned to the client.
-    console.error('[integrations] dispatch loop error:', err);
-  }
 }

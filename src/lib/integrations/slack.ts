@@ -21,8 +21,12 @@
 // project / page / comment in a section and the position +
 // timestamp in a context row.
 
-import type { PinPayload, SlackConfig } from './types';
+import type { IntegrationDeliveryPayload, PinPayload, SlackConfig } from './types';
+import { pinPayloadFromEvent } from './types';
 import { assertSafeOutboundUrl } from '@/lib/safe-url';
+import { IntegrationHttpError } from './errors';
+
+const OUTBOUND_TIMEOUT_MS = 10_000;
 
 /**
  * Build the Slack message body for a pin event.
@@ -85,9 +89,28 @@ export async function post(config: SlackConfig, payload: PinPayload): Promise<vo
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(buildSlackBody(payload)),
     redirect: 'error',
+    signal: AbortSignal.timeout(OUTBOUND_TIMEOUT_MS),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Slack webhook returned ${res.status}: ${text.slice(0, 200)}`);
+    throw new IntegrationHttpError('Slack webhook', res.status, res.headers?.get?.('retry-after') ?? null);
   }
+}
+
+export async function postEvent(
+  config: SlackConfig,
+  delivery: IntegrationDeliveryPayload,
+): Promise<number> {
+  const safe = await assertSafeOutboundUrl(config.webhookUrl);
+  if (!safe.ok) throw new Error(`Slack webhook URL rejected: ${safe.error}`);
+  const res = await fetch(safe.value, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(buildSlackBody(pinPayloadFromEvent(delivery.event))),
+    redirect: 'error',
+    signal: AbortSignal.timeout(OUTBOUND_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new IntegrationHttpError('Slack webhook', res.status, res.headers?.get?.('retry-after') ?? null);
+  }
+  return res.status;
 }

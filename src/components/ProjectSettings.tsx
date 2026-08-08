@@ -3,10 +3,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import CopyButton from './CopyButton';
 import { dashboardHeaders } from '@/lib/client-origin';
+import { formatDateTime } from '@/lib/date-format';
 
 type ProjectSettingsProps = {
   projectId: string;
   projectName: string;
+  archivedAt?: string | null;
   onProjectUpdated: () => void;
   /**
    * Whether the project currently has an active share link. NULL /
@@ -25,7 +27,7 @@ type ProjectSettingsProps = {
   shareUrl?: string | null;
 };
 
-export default function ProjectSettings({ projectId, projectName, onProjectUpdated }: ProjectSettingsProps) {
+export default function ProjectSettings({ projectId, projectName, archivedAt, onProjectUpdated }: ProjectSettingsProps) {
   const [open, setOpen] = useState(false);
   const [showNewKey, setShowNewKey] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -70,14 +72,15 @@ export default function ProjectSettings({ projectId, projectName, onProjectUpdat
     }
   };
 
-  const handleDelete = async () => {
+  const handleArchiveChange = async () => {
     setOpen(false);
-    const confirmText = `Delete ${projectName}`;
-    if (window.prompt(`Type "${confirmText}" to confirm deletion:`) !== confirmText) return;
+    const nextArchived = !archivedAt;
+    if (nextArchived && !window.confirm(`Archive ${projectName}? It will stop accepting new feedback.`)) return;
 
     const res = await fetch(`/api/projects/${projectId}`, {
-      method: 'DELETE',
-      headers: dashboardHeaders(),
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...dashboardHeaders() },
+      body: JSON.stringify({ archived: nextArchived }),
     });
     if (res.ok) onProjectUpdated();
   };
@@ -88,7 +91,7 @@ export default function ProjectSettings({ projectId, projectName, onProjectUpdat
       <button type="button"
         onClick={() => setOpen(v => !v)}
         className="p-1.5 rounded hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
-        aria-label="Project settings"
+        aria-label="Site settings"
       >
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
@@ -123,13 +126,13 @@ export default function ProjectSettings({ projectId, projectName, onProjectUpdat
           <hr className="my-1 border-gray-200" />
 
           <button type="button"
-            onClick={handleDelete}
-            className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+            onClick={handleArchiveChange}
+            className="w-full text-left px-4 py-2 text-sm text-amber-800 hover:bg-amber-50 flex items-center gap-2"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
             </svg>
-            Delete Project
+            {archivedAt ? 'Restore site' : 'Archive site'}
           </button>
         </div>
       )}
@@ -180,36 +183,51 @@ export default function ProjectSettings({ projectId, projectName, onProjectUpdat
  * regardless, so this is a fast-path for the user — without it,
  * the toggle would stay stale for up to 5s.
  */
+export function buildShareRequestBody(expiresLocal: string, password: string) {
+  return {
+    expiresAt: expiresLocal ? new Date(expiresLocal).toISOString() : null,
+    password: password || null,
+  };
+}
+
 export function ShareToggle({
   projectId,
   hasShareToken,
   shareUrl,
+  shareExpiresAt,
+  sharePasswordProtected,
   onChange,
 }: {
   projectId: string;
   hasShareToken?: boolean;
   shareUrl?: string | null;
+  shareExpiresAt?: string | null;
+  sharePasswordProtected?: boolean;
   onChange: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Local copy of the shareUrl — the server tells us the canonical
-  // value when we mint, and we display it until the parent re-renders
-  // with a new shareUrl from the next poll. Using a local state
-  // avoids a flash of the empty state between the POST returning
-  // and onChange() triggering a refetch.
   const [activeUrl, setActiveUrl] = useState<string | null>(shareUrl ?? null);
+  const [activeExpiry, setActiveExpiry] = useState<string | null>(shareExpiresAt ?? null);
+  const [activePasswordProtected, setActivePasswordProtected] = useState(
+    sharePasswordProtected ?? false
+  );
+  const [configuring, setConfiguring] = useState(hasShareToken !== true);
+  const [expiresLocal, setExpiresLocal] = useState('');
+  const [password, setPassword] = useState('');
 
-  // Sync the local URL with the prop. If the parent learned about
-  // a token from its initial fetch (e.g. the project was created
-  // with one in the same session) we should display it. We only
-  // reset on prop-change — the activeUrl set by generate should
-  // NOT be wiped by a stale null prop before the parent's
-  // onProjectUpdated finishes its refetch.
   useEffect(() => {
-    if (shareUrl) setActiveUrl(shareUrl);
-    else if (hasShareToken === false) setActiveUrl(null);
+    if (shareUrl) {
+      setActiveUrl(new URL(shareUrl, window.location.origin).toString());
+    } else if (hasShareToken === false) {
+      setActiveUrl(null);
+    }
   }, [shareUrl, hasShareToken]);
+
+  useEffect(() => {
+    setActiveExpiry(shareExpiresAt ?? null);
+    setActivePasswordProtected(sharePasswordProtected ?? false);
+  }, [shareExpiresAt, sharePasswordProtected]);
 
   const isActive = hasShareToken === true || (activeUrl !== null && hasShareToken !== false);
 
@@ -219,17 +237,19 @@ export function ShareToggle({
     try {
       const res = await fetch(`/api/projects/${projectId}/share`, {
         method: 'POST',
-        headers: dashboardHeaders(),
+        headers: { 'Content-Type': 'application/json', ...dashboardHeaders() },
+        body: JSON.stringify(buildShareRequestBody(expiresLocal, password)),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || `Generate failed (${res.status})`);
       }
       const data = await res.json();
-      // The route returns { shareToken, shareUrl }. We display
-      // shareUrl verbatim — it's already an absolute URL built
-      // from the request's origin.
       setActiveUrl(data.shareUrl);
+      setActiveExpiry(data.expiresAt ?? null);
+      setActivePasswordProtected(data.passwordProtected === true);
+      setPassword('');
+      setConfiguring(false);
       onChange();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Generate failed');
@@ -252,6 +272,9 @@ export function ShareToggle({
         throw new Error(body.error || `Revoke failed (${res.status})`);
       }
       setActiveUrl(null);
+      setActiveExpiry(null);
+      setActivePasswordProtected(false);
+      setConfiguring(true);
       onChange();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Revoke failed');
@@ -264,33 +287,46 @@ export function ShareToggle({
     <div className="mt-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
       <div className="flex items-center justify-between gap-2 mb-2">
         <span className="text-sm font-medium text-gray-700">Public share link</span>
-        <span
-          className={`text-xs px-2 py-0.5 rounded-full ${
-            isActive
-              ? 'bg-green-100 text-green-800'
-              : 'bg-gray-200 text-gray-600'
-          }`}
-        >
+        <span className={`text-xs px-2 py-0.5 rounded-full ${
+          isActive ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-600'
+        }`}>
           {isActive ? 'Active' : 'Off'}
         </span>
       </div>
 
-      {isActive && activeUrl ? (
+      {isActive && activeUrl && (
         <>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <code
               data-testid="share-url"
-              className="flex-1 bg-white px-2 py-1 rounded border border-gray-200 font-mono text-xs break-all"
+              className="min-w-0 flex-1 bg-white px-2 py-1 rounded border border-gray-200 font-mono text-xs break-all"
             >
               {activeUrl}
             </code>
             <CopyButton text={activeUrl} />
           </div>
           <p className="mt-1.5 text-xs text-gray-500">
-            Anyone with this URL can view the project read-only. Loads are logged to the audit log.
+            Open access is stored in a secure browser cookie. Loads are logged to the audit log.
           </p>
-          <div className="mt-2 flex justify-end">
-            <button type="button"
+          <div className="mt-2 flex flex-wrap gap-2 text-xs text-gray-700">
+            <span className="rounded-full bg-white px-2 py-1 border border-gray-200">
+              {activePasswordProtected ? 'Password protected' : 'No password'}
+            </span>
+            <span className="rounded-full bg-white px-2 py-1 border border-gray-200">
+              {activeExpiry ? `Expires ${formatDateTime(activeExpiry)}` : 'No expiry'}
+            </span>
+          </div>
+          <div className="mt-3 flex flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setConfiguring((value) => !value)}
+              disabled={busy}
+              className="text-xs px-2 py-1 rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+            >
+              {configuring ? 'Cancel replacement' : 'Replace link'}
+            </button>
+            <button
+              type="button"
               onClick={handleRevoke}
               disabled={busy}
               className="text-xs px-2 py-1 rounded border border-red-300 bg-white text-red-700 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -299,26 +335,60 @@ export function ShareToggle({
             </button>
           </div>
         </>
-      ) : (
-        <>
-          <p className="text-xs text-gray-500">
-            Generate a read-only URL to share with clients. They can view the project but cannot leave comments.
-          </p>
-          <div className="mt-2 flex justify-end">
-            <button type="button"
-              onClick={handleGenerate}
-              disabled={busy}
-              className="text-xs px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {busy ? 'Generating…' : 'Generate share link'}
-            </button>
-          </div>
-        </>
       )}
 
-      {error && (
-        <p className="mt-2 text-xs text-red-600">{error}</p>
+      {(!isActive || configuring) && (
+        <div className={isActive ? 'mt-4 border-t border-gray-200 pt-4' : ''}>
+          <p className="text-xs text-gray-500">
+            {isActive
+              ? 'Replacing rotates the URL immediately. Enter controls for the replacement link.'
+              : 'Generate a read-only client URL. Expiry and password are optional.'}
+          </p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div>
+              <label htmlFor={`share-expiry-${projectId}`} className="block text-xs font-medium text-gray-700">
+                Share link expiry
+              </label>
+              <input
+                id={`share-expiry-${projectId}`}
+                type="datetime-local"
+                value={expiresLocal}
+                onChange={(event) => setExpiresLocal(event.target.value)}
+                className="mt-1 min-h-11 w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900"
+              />
+              <p className="mt-1 text-xs text-gray-500">Up to 365 days from now.</p>
+            </div>
+            <div>
+              <label htmlFor={`share-password-${projectId}`} className="block text-xs font-medium text-gray-700">
+                Share link password
+              </label>
+              <input
+                id={`share-password-${projectId}`}
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                minLength={8}
+                maxLength={128}
+                autoComplete="new-password"
+                className="mt-1 min-h-11 w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900"
+              />
+              <p className="mt-1 text-xs text-gray-500">Optional; 8 characters minimum.</p>
+            </div>
+          </div>
+          <div className="mt-3 flex justify-end">
+            <button
+              type="button"
+              onClick={handleGenerate}
+              disabled={busy || (password.length > 0 && password.length < 8)}
+              className="text-xs px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {busy ? 'Generating…' : isActive ? 'Replace share link' : 'Generate share link'}
+            </button>
+          </div>
+        </div>
       )}
+
+      {error && <p className="mt-2 text-xs text-red-600" role="alert">{error}</p>}
     </div>
   );
 }
@@ -357,12 +427,21 @@ export function IntegrationsSection({ projectId }: { projectId: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<IntegrationRow[]>([]);
+  const [deliveries, setDeliveries] = useState<IntegrationDeliveryRow[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [deliveriesLoaded, setDeliveriesLoaded] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [retrying, setRetrying] = useState<string | null>(null);
+  const [newSigningSecret, setNewSigningSecret] = useState<string | null>(null);
   // Add-form state
   const [adding, setAdding] = useState(false);
-  const [newKind, setNewKind] = useState<'slack' | 'discord' | 'webhook'>('slack');
+  const [newKind, setNewKind] = useState<'slack' | 'discord' | 'webhook' | 'github'>('slack');
   const [newUrl, setNewUrl] = useState('');
   const [newHeaders, setNewHeaders] = useState('');
+  const [githubOwner, setGithubOwner] = useState('');
+  const [githubRepo, setGithubRepo] = useState('');
+  const [githubLabels, setGithubLabels] = useState('visual-feedback');
+  const [githubToken, setGithubToken] = useState('');
   // Per-row test result, keyed by integration id. Cleared
   // when the user starts a new test.
   const [testing, setTesting] = useState<string | null>(null);
@@ -385,6 +464,25 @@ export function IntegrationsSection({ projectId }: { projectId: string }) {
     }
   }, [projectId]);
 
+  const fetchDeliveries = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/integrations/deliveries`, {
+        headers: dashboardHeaders(),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Delivery log failed (${res.status})`);
+      }
+      const body: unknown = await res.json();
+      setDeliveries(Array.isArray(body)
+        ? body.filter(isIntegrationDeliveryRow)
+        : []);
+      setDeliveriesLoaded(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load delivery activity');
+    }
+  }, [projectId]);
+
   // Load on mount. Single-shot — re-fetches happen via the
   // mutation handlers (handleAdd / handleRemove / handleTest).
   useEffect(() => {
@@ -393,7 +491,9 @@ export function IntegrationsSection({ projectId }: { projectId: string }) {
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newUrl.trim()) return;
+    if (newKind === 'github') {
+      if (!githubOwner.trim() || !githubRepo.trim() || !githubToken) return;
+    } else if (!newUrl.trim()) return;
     setAdding(true);
     setError(null);
     try {
@@ -404,7 +504,14 @@ export function IntegrationsSection({ projectId }: { projectId: string }) {
       // gets parsed; a parse failure is treated as a form
       // validation error rather than a server roundtrip.
       let config: Record<string, unknown> = {};
-      if (newKind === 'slack' || newKind === 'discord') {
+      if (newKind === 'github') {
+        config = {
+          owner: githubOwner.trim(),
+          repo: githubRepo.trim(),
+          labels: githubLabels.split(',').map((label) => label.trim()).filter(Boolean),
+          token: githubToken,
+        };
+      } else if (newKind === 'slack' || newKind === 'discord') {
         config = { webhookUrl: newUrl.trim() };
       } else {
         config = { url: newUrl.trim() };
@@ -434,15 +541,43 @@ export function IntegrationsSection({ projectId }: { projectId: string }) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || `Add failed (${res.status})`);
       }
+      const created = await res.json() as { signingSecret?: string };
+      if (newKind === 'webhook' && created.signingSecret) {
+        setNewSigningSecret(created.signingSecret);
+      }
       // Reset the form. We keep `newKind` so the operator
       // can quickly add a second integration of the same kind.
       setNewUrl('');
       setNewHeaders('');
+      setGithubOwner('');
+      setGithubRepo('');
+      setGithubLabels('visual-feedback');
+      setGithubToken('');
       await fetchRows();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to add integration');
     } finally {
       setAdding(false);
+    }
+  };
+
+  const handleRetry = async (deliveryId: string) => {
+    setRetrying(deliveryId);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/projects/${projectId}/integrations/deliveries/${deliveryId}/retry`,
+        { method: 'POST', headers: dashboardHeaders() },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Retry failed (${res.status})`);
+      }
+      await fetchDeliveries();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to retry delivery');
+    } finally {
+      setRetrying(null);
     }
   };
 
@@ -503,9 +638,29 @@ export function IntegrationsSection({ projectId }: { projectId: string }) {
 
       <p className="text-xs text-gray-500 mb-3">
         When a new pin is created, every integration below receives a
-        notification. Dispatch is fire-and-forget — a slow or failing
-        webhook never delays the pin POST.
+        durable notification. Failed deliveries retry automatically and remain
+        visible here without delaying client feedback.
       </p>
+
+      {newSigningSecret && (
+        <div role="status" className="mb-3 rounded border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
+          <p className="font-semibold">Copy this signing secret now</p>
+          <p className="mt-0.5">It will not be shown again. Use it to verify webhook signatures.</p>
+          <div className="mt-2 flex min-w-0 items-center gap-2">
+            <code className="min-w-0 flex-1 overflow-x-auto rounded bg-white px-2 py-1 font-mono">
+              {newSigningSecret}
+            </code>
+            <CopyButton text={newSigningSecret} />
+            <button
+              type="button"
+              onClick={() => setNewSigningSecret(null)}
+              className="rounded px-2 py-1 text-amber-800 hover:bg-amber-100"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Existing integrations list. Each row shows the
           kind + a one-line summary (the URL is masked as
@@ -515,7 +670,7 @@ export function IntegrationsSection({ projectId }: { projectId: string }) {
       {loaded && rows.length > 0 && (
         <ul className="space-y-2 mb-3">
           {rows.map((row) => {
-            const url = urlForRow(row);
+            const destination = destinationForRow(row);
             const status = integrationStatusBadge(row);
             return (
               <li
@@ -523,23 +678,25 @@ export function IntegrationsSection({ projectId }: { projectId: string }) {
                 data-testid={`integration-row-${row.id}`}
                 className="bg-white border border-gray-200 rounded px-3 py-2"
               >
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-2 min-w-0 flex-1">
                     <span className="inline-block text-xs font-semibold uppercase tracking-wide text-gray-500 flex-shrink-0">
                       {row.kind}
                     </span>
-                    {url && (
+                    {destination && (
                       <code
                         data-testid={`integration-url-${row.id}`}
-                        className="text-xs font-mono text-gray-400 truncate"
-                        title={url}
+                        className={`text-xs font-mono text-gray-400 ${
+                          destination.secret ? 'truncate' : 'break-all whitespace-normal'
+                        }`}
+                        title={destination.value}
                       >
-                        {maskUrl(url)}
+                        {destination.secret ? maskUrl(destination.value) : destination.value}
                       </code>
                     )}
                     {status}
                   </div>
-                  <div className="flex items-center gap-1 flex-shrink-0">
+                  <div className="flex items-center gap-1 self-end sm:self-auto flex-shrink-0">
                     <button
                       type="button"
                       onClick={() => handleTest(row.id)}
@@ -590,19 +747,68 @@ export function IntegrationsSection({ projectId }: { projectId: string }) {
           appears for the generic webhook kind. */}
       <form onSubmit={handleAdd} className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
-          <label className="text-xs text-gray-600">Kind:</label>
+          <label htmlFor="integration-kind" className="text-xs text-gray-600">Kind:</label>
           <select
+            id="integration-kind"
             value={newKind}
-            onChange={(e) => setNewKind(e.target.value as 'slack' | 'discord' | 'webhook')}
+            onChange={(e) => setNewKind(e.target.value as 'slack' | 'discord' | 'webhook' | 'github')}
             className="text-xs border border-gray-200 rounded px-2 py-1 bg-white"
             data-testid="integration-kind"
           >
             <option value="slack">Slack</option>
             <option value="discord">Discord</option>
             <option value="webhook">Webhook</option>
+            <option value="github">GitHub issue</option>
           </select>
+        </div>
+        {newKind === 'github' ? (
+          <fieldset className="grid gap-2 rounded border border-gray-200 bg-white p-3 sm:grid-cols-2">
+            <legend className="px-1 text-xs font-medium text-gray-700">GitHub repository</legend>
+            <input
+              type="text"
+              aria-label="GitHub owner"
+              value={githubOwner}
+              onChange={(event) => setGithubOwner(event.target.value)}
+              placeholder="Organization or owner"
+              autoComplete="off"
+              className="min-w-0 rounded border border-gray-200 px-2 py-1 text-xs font-mono"
+            />
+            <input
+              type="text"
+              aria-label="GitHub repository"
+              value={githubRepo}
+              onChange={(event) => setGithubRepo(event.target.value)}
+              placeholder="Repository name"
+              autoComplete="off"
+              className="min-w-0 rounded border border-gray-200 px-2 py-1 text-xs font-mono"
+            />
+            <input
+              type="text"
+              aria-label="GitHub labels"
+              value={githubLabels}
+              onChange={(event) => setGithubLabels(event.target.value)}
+              placeholder="Labels, comma separated"
+              className="min-w-0 rounded border border-gray-200 px-2 py-1 text-xs font-mono"
+            />
+            <input
+              type="password"
+              aria-label="GitHub token"
+              value={githubToken}
+              onChange={(event) => setGithubToken(event.target.value)}
+              placeholder="Fine-grained access token"
+              autoComplete="new-password"
+              className="min-w-0 rounded border border-gray-200 px-2 py-1 text-xs font-mono"
+            />
+            <p className="text-xs text-gray-500 sm:col-span-2">
+              Restrict the token to this repository with Metadata: read and Issues: write.
+              The token is encrypted before storage and is never shown again.
+            </p>
+          </fieldset>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
           <input
             type="password"
+            aria-label="Integration URL"
             value={newUrl}
             onChange={(e) => setNewUrl(e.target.value)}
             placeholder={
@@ -613,10 +819,12 @@ export function IntegrationsSection({ projectId }: { projectId: string }) {
             className="flex-1 min-w-0 text-xs px-2 py-1 border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400 font-mono"
             data-testid="integration-url-input"
           />
-        </div>
+          </div>
+        )}
         {newKind === 'webhook' && (
           <input
             type="text"
+            aria-label="Optional webhook headers as JSON"
             value={newHeaders}
             onChange={(e) => setNewHeaders(e.target.value)}
             placeholder='Optional headers: {"X-Auth": "secret"}'
@@ -627,13 +835,84 @@ export function IntegrationsSection({ projectId }: { projectId: string }) {
         <div className="flex justify-end">
           <button
             type="submit"
-            disabled={adding || !newUrl.trim()}
+            disabled={adding || (newKind === 'github'
+              ? !githubOwner.trim() || !githubRepo.trim() || !githubToken
+              : !newUrl.trim())}
             className="text-xs px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {adding ? 'Adding…' : 'Add integration'}
           </button>
         </div>
       </form>
+
+      <div className="mt-4 border-t border-gray-200 pt-3">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <h3 className="text-sm font-medium text-gray-700">Delivery activity</h3>
+          <button
+            type="button"
+            onClick={() => {
+              setActivityOpen(true);
+              void fetchDeliveries();
+            }}
+            className="rounded px-2 py-1 text-xs text-blue-700 hover:bg-blue-50"
+          >
+            {activityOpen ? 'Refresh' : 'Show activity'}
+          </button>
+        </div>
+        {!activityOpen ? (
+          <p className="text-xs text-gray-400">Open the delivery log to inspect retries and failures.</p>
+        ) : !deliveriesLoaded ? (
+          <p className="text-xs text-gray-400">Loading delivery activity…</p>
+        ) : deliveries.length === 0 ? (
+          <p className="text-xs text-gray-400">No deliveries yet.</p>
+        ) : (
+          <ul className="space-y-2" aria-label="Integration delivery activity">
+            {deliveries.map((delivery) => (
+              <li key={delivery.id} className="rounded border border-gray-200 bg-white px-3 py-2 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold uppercase text-gray-600">{delivery.integration.kind}</span>
+                    <span className={deliveryStatusClass(delivery.status)}>
+                      {deliveryStatusLabel(delivery.status)}
+                    </span>
+                    <span className="text-gray-400">
+                      Attempt {delivery.attemptCount}/5
+                      {delivery.retryCycle > 0 ? ` · retry cycle ${delivery.retryCycle + 1}` : ''}
+                    </span>
+                  </div>
+                  {delivery.status === 'DEAD_LETTER' && (
+                    <button
+                      type="button"
+                      onClick={() => handleRetry(delivery.id)}
+                      disabled={retrying === delivery.id}
+                      className="rounded border border-blue-300 px-2 py-1 text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                    >
+                      {retrying === delivery.id ? 'Retrying…' : 'Retry'}
+                    </button>
+                  )}
+                </div>
+                <p className="mt-1 text-gray-500">
+                  {delivery.event.type} · {new Date(delivery.event.occurredAt).toLocaleString()}
+                </p>
+                {delivery.externalUrl && delivery.externalId && (
+                  <a
+                    href={delivery.externalUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-1 inline-flex text-blue-700 underline decoration-blue-300 underline-offset-2 hover:text-blue-900"
+                  >
+                    Open GitHub issue
+                    <span className="sr-only"> #{delivery.externalId} (opens in a new tab)</span>
+                  </a>
+                )}
+                {delivery.lastError && (
+                  <p className="mt-1 break-words text-red-700">{delivery.lastError}</p>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
     </div>
@@ -655,18 +934,68 @@ type IntegrationRow = {
   lastError: string | null;
   lastErrorAt: string | null;
   createdAt: string;
+  credentialConfigured?: boolean;
 };
 
-/** Pull the destination URL out of a row's configJson. The
+type IntegrationDeliveryRow = {
+  id: string;
+  status: 'PENDING' | 'PROCESSING' | 'RETRY_SCHEDULED' | 'SUCCEEDED' | 'DEAD_LETTER';
+  attemptCount: number;
+  retryCycle: number;
+  nextAttemptAt: string;
+  deliveredAt: string | null;
+  lastStatusCode: number | null;
+  lastError: string | null;
+  externalId: string | null;
+  externalUrl: string | null;
+  createdAt: string;
+  updatedAt: string;
+  integration: { id: string; kind: string };
+  event: { id: string; type: string; occurredAt: string };
+};
+
+function isIntegrationDeliveryRow(value: unknown): value is IntegrationDeliveryRow {
+  if (!value || typeof value !== 'object') return false;
+  const row = value as Partial<IntegrationDeliveryRow>;
+  return typeof row.id === 'string'
+    && typeof row.status === 'string'
+    && typeof row.attemptCount === 'number'
+    && typeof row.retryCycle === 'number'
+    && Boolean(row.integration && typeof row.integration.kind === 'string')
+    && Boolean(row.event && typeof row.event.type === 'string' && typeof row.event.occurredAt === 'string');
+}
+
+function deliveryStatusLabel(status: IntegrationDeliveryRow['status']): string {
+  switch (status) {
+    case 'PENDING': return 'Pending';
+    case 'PROCESSING': return 'Sending';
+    case 'RETRY_SCHEDULED': return 'Retry scheduled';
+    case 'SUCCEEDED': return 'Delivered';
+    case 'DEAD_LETTER': return 'Dead letter';
+  }
+}
+
+function deliveryStatusClass(status: IntegrationDeliveryRow['status']): string {
+  const base = 'rounded-full px-2 py-0.5 font-medium';
+  if (status === 'SUCCEEDED') return `${base} bg-green-100 text-green-800`;
+  if (status === 'DEAD_LETTER') return `${base} bg-red-100 text-red-800`;
+  if (status === 'RETRY_SCHEDULED') return `${base} bg-amber-100 text-amber-800`;
+  return `${base} bg-gray-100 text-gray-700`;
+}
+
+/** Pull a safe destination label out of a row's configJson. The
  *  shape is kind-specific; this helper centralises the
  *  branching. Returns null when the config doesn't parse —
  *  the row still renders the kind label, just without a URL. */
-function urlForRow(row: IntegrationRow): string | null {
+function destinationForRow(row: IntegrationRow): { value: string; secret: boolean } | null {
   try {
     const config = JSON.parse(row.configJson);
     if (config && typeof config === 'object') {
-      if (typeof config.webhookUrl === 'string') return config.webhookUrl;
-      if (typeof config.url === 'string') return config.url;
+      if (row.kind === 'github' && typeof config.owner === 'string' && typeof config.repo === 'string') {
+        return { value: `${config.owner}/${config.repo}`, secret: false };
+      }
+      if (typeof config.webhookUrl === 'string') return { value: config.webhookUrl, secret: true };
+      if (typeof config.url === 'string') return { value: config.url, secret: true };
     }
   } catch {
     // Config is malformed — the row was probably created

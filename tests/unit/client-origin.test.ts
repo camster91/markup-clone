@@ -7,7 +7,7 @@
 // silently regress either one).
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { getDashboardOrigin, dashboardHeaders } from '@/lib/client-origin';
+import { dashboardHeaders } from '@/lib/client-origin';
 
 describe('client-origin', () => {
   const ORIGINAL = process.env.NEXT_PUBLIC_DASHBOARD_HOST;
@@ -24,14 +24,12 @@ describe('client-origin', () => {
     }
   });
 
-  it('falls back to https://markup.ashbi.ca when NEXT_PUBLIC_DASHBOARD_HOST is unset', () => {
-    expect(getDashboardOrigin()).toBe('https://markup.ashbi.ca');
-    expect(dashboardHeaders()).toEqual({ Origin: 'https://markup.ashbi.ca' });
+  it('does not set the browser-controlled Origin header', () => {
+    expect(dashboardHeaders()).toEqual({});
   });
 
-  it('uses NEXT_PUBLIC_DASHBOARD_HOST when it is set', () => {
+  it('does not need a second public host configuration', () => {
     process.env.NEXT_PUBLIC_DASHBOARD_HOST = 'https://staging.markup.example';
-    expect(getDashboardOrigin()).toBe('https://staging.markup.example');
-    expect(dashboardHeaders()).toEqual({ Origin: 'https://staging.markup.example' });
+    expect(dashboardHeaders()).toEqual({});
   });
 });

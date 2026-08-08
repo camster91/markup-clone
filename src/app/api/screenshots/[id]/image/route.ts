@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { isDashboardOrigin } from '@/lib/auth';
 import { validateScreenshotId } from '@/lib/validation';
+import { assertProjectAccessible } from '@/lib/teams';
 import { readFile, stat } from 'fs/promises';
 import path from 'path';
+import { requestHasShareAccess } from '@/lib/share-access';
 
 const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || '/data/screenshots';
 
@@ -12,12 +13,12 @@ const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || '/data/screenshots';
 // Serves the PNG for a screenshot (or a specific ScreenshotVersion
 // via ?storageKey=). Auth mirrors /api/attachments/[id]:
 //
-//   1. Dashboard origin (Origin / sec-fetch-site same-origin).
-//   2. ?share=<token> matching the screenshot's project's shareToken.
+//   1. Authenticated access to the screenshot's project.
+//   2. The exact managed link's token-bound HttpOnly access cookie.
 //
 // Unauthorized and missing both return 404 so a probe cannot tell
 // whether a screenshot UUID exists. Dashboard responses use a
-// private Cache-Control; share-token responses may stay immutable.
+// private Cache-Control so a shared proxy cannot replay cookie-gated media.
 
 export async function GET(
   req: Request,
@@ -37,7 +38,12 @@ export async function GET(
         page: {
           select: {
             project: {
-              select: { shareToken: true },
+              select: {
+                id: true,
+                shareToken: true,
+                shareExpiresAt: true,
+                sharePasswordHash: true,
+              },
             },
           },
         },
@@ -46,15 +52,22 @@ export async function GET(
     if (!ss) return NextResponse.json({ error: 'not found' }, { status: 404 });
 
     // === Auth ===========================================================
-    // Dashboard origin OR matching ?share= token. 404 (not 401) on
+    // Authenticated project access OR a valid managed-share cookie. 404 (not 401) on
     // failure so existence is not leaked to anonymous probes.
-    const dashboard = isDashboardOrigin(req);
     const url = new URL(req.url);
-    const shareToken = url.searchParams.get('share');
-    const projectShareToken = ss.page?.project?.shareToken ?? null;
-    const shareTokenValid = !!shareToken && shareToken === projectShareToken;
+    const project = ss.page?.project;
+    const shareAccessValid = !!project?.shareToken && requestHasShareAccess(
+      req,
+      project.shareToken,
+      project.sharePasswordHash,
+      project.shareExpiresAt
+    );
+    const projectId = ss.page?.project?.id ?? null;
+    const memberAccess = !shareAccessValid && projectId
+      ? await assertProjectAccessible(projectId)
+      : null;
 
-    if (!dashboard && !shareTokenValid) {
+    if (!shareAccessValid && !memberAccess?.ok) {
       return NextResponse.json({ error: 'not found' }, { status: 404 });
     }
 
@@ -94,9 +107,11 @@ export async function GET(
       versionCapturedAt = version.capturedAt;
     }
 
-    const filePath = path.join(SCREENSHOTS_DIR, storageKey);
-    const fileStat = await stat(filePath);
-    const buf = await readFile(filePath);
+    // Runtime captures live on an external persistent mount and must not be
+    // copied into the standalone build output by Turbopack's file tracer.
+    const filePath = path.join(/* turbopackIgnore: true */ SCREENSHOTS_DIR, storageKey);
+    const fileStat = await stat(/* turbopackIgnore: true */ filePath);
+    const buf = await readFile(/* turbopackIgnore: true */ filePath);
 
     // ETag for caching. Includes the storageKey so two different
     // versions' PNGs don't share an ETag (the dashboard's
@@ -108,14 +123,15 @@ export async function GET(
       : `"${id}-${ss.capturedAt.getTime()}"`;
 
     if (req.headers.get('if-none-match') === etag) {
-      return new NextResponse(null, { status: 304 });
+      return new NextResponse(null, {
+        status: 304,
+        headers: { 'Cache-Control': 'private, max-age=3600', Vary: 'Cookie' },
+      });
     }
 
     // Dashboard: private cache. Share-token viewers: immutable is
     // fine (the storageKey is content-addressed / versioned).
-    const cacheControl = dashboard
-      ? 'private, max-age=3600'
-      : 'public, max-age=31536000, immutable';
+    const cacheControl = 'private, max-age=3600';
 
     return new NextResponse(buf, {
       status: 200,
@@ -123,6 +139,7 @@ export async function GET(
         'Content-Type': 'image/png',
         'Content-Length': fileStat.size.toString(),
         'Cache-Control': cacheControl,
+        'Vary': 'Cookie',
         'ETag': etag,
       },
     });

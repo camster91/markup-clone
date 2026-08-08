@@ -12,9 +12,15 @@
 import * as slack from './slack';
 import * as discord from './discord';
 import * as webhook from './webhook';
-import type { PinPayload, IntegrationKind } from './types';
+import * as github from './github';
+import type { GitHubConfig, IntegrationDeliveryPayload, PinPayload, IntegrationKind } from './types';
+import { IntegrationHttpError } from './errors';
+import { classifyDeliveryStatus } from './retry';
 
 export type DispatchResult = { ok: true } | { ok: false; error: string };
+export type DeliveryDispatchResult =
+  | { ok: true; statusCode: number; externalId?: string; externalUrl?: string }
+  | { ok: false; error: string; retryable: boolean; statusCode?: number; retryAfter?: string };
 
 /**
  * Dispatch a payload to the right adapter for `kind`.
@@ -43,6 +49,9 @@ export async function dispatch(
           payload
         );
         return { ok: true };
+      case 'github':
+        await github.verifyGithubRepository(config as GitHubConfig);
+        return { ok: true };
       default: {
         // Exhaustiveness check — if a new kind is added without
         // a case here, this branch catches it at runtime.
@@ -52,5 +61,64 @@ export async function dispatch(
     }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Dispatch one durable event attempt and preserve retry-relevant metadata. */
+export async function dispatchDelivery(
+  kind: IntegrationKind,
+  config: unknown,
+  delivery: IntegrationDeliveryPayload,
+): Promise<DeliveryDispatchResult> {
+  try {
+    let statusCode: number;
+    let externalReference: { externalId: string; externalUrl: string } | undefined;
+    switch (kind) {
+      case 'slack':
+        statusCode = await slack.postEvent(config as { webhookUrl: string }, delivery);
+        break;
+      case 'discord':
+        statusCode = await discord.postEvent(config as { webhookUrl: string }, delivery);
+        break;
+      case 'webhook':
+        if (!delivery.signingSecret) {
+          return { ok: false, error: 'Webhook signing secret is missing', retryable: false };
+        }
+        statusCode = await webhook.postEvent(
+          config as { url: string; headers?: Record<string, string> },
+          delivery,
+        );
+        break;
+      case 'github': {
+        const result = await github.postEvent(config as GitHubConfig, delivery);
+        statusCode = result.statusCode;
+        externalReference = { externalId: result.externalId, externalUrl: result.externalUrl };
+        break;
+      }
+      default: {
+        const _exhaustive: never = kind;
+        return {
+          ok: false,
+          error: `Unknown integration kind: ${String(_exhaustive)}`,
+          retryable: false,
+        };
+      }
+    }
+    return { ok: true, statusCode, ...externalReference };
+  } catch (error) {
+    if (error instanceof IntegrationHttpError) {
+      return {
+        ok: false,
+        error: error.message,
+        statusCode: error.statusCode,
+        retryable: Boolean(error.retryAfter) || classifyDeliveryStatus(error.statusCode) === 'retry',
+        ...(error.retryAfter ? { retryAfter: error.retryAfter } : {}),
+      };
+    }
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      retryable: true,
+    };
   }
 }

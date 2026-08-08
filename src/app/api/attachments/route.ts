@@ -9,6 +9,9 @@
 //   - file (required): the binary. The route validates `file.type`
 //     against the `kind` field (closed set below) and rejects
 //     anything that doesn't match.
+//   - projectId (required): the project that owns the upload. Access is
+//     checked before bytes are written and the ownership is persisted so
+//     the later comment claim cannot cross project boundaries.
 //   - commentId (optional): the Comment this attachment belongs to.
 //     When present, the route verifies the row exists so a bad
 //     commentId is a 404, not a 500 from the FK constraint on
@@ -23,7 +26,7 @@
 //     roundtrip independent of the comment-create roundtrip (a
 //     network blip on one doesn't fail the other).
 //
-// Auth: requireDashboardOrigin. The dashboard is the only mint
+// Auth: authenticated dashboard session plus project access. The dashboard is the only mint
 // surface — the widget never uploads attachments (it posts a
 // pin+screenshot at most, and the screenshot goes through its own
 // /api/pins route), and the /share/[token] view is read-only.
@@ -56,6 +59,8 @@ import { requireCsrfToken } from '@/lib/csrf';
 import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
+import { validateProjectId } from '@/lib/validation';
+import { assertProjectAccessible } from '@/lib/teams';
 
 const ATTACHMENTS_DIR = process.env.ATTACHMENTS_DIR || '/data/attachments';
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024; // 8MB
@@ -135,6 +140,7 @@ export async function POST(req: Request) {
   try {
     const form = await req.formData();
     const commentIdRaw = form.get('commentId') as string | null;
+    const projectIdRaw = form.get('projectId');
     const file = form.get('file') as File | null;
 
     // === Input validation ===
@@ -146,6 +152,18 @@ export async function POST(req: Request) {
     }
     if (file.size > MAX_ATTACHMENT_BYTES) {
       return NextResponse.json({ error: 'file too large' }, { status: 413 });
+    }
+
+    const projectIdRes = validateProjectId(projectIdRaw);
+    if (!projectIdRes.ok) {
+      return NextResponse.json({ error: projectIdRes.error }, { status: 400 });
+    }
+    const projectAccess = await assertProjectAccessible(projectIdRes.value);
+    if (!projectAccess.ok) {
+      return NextResponse.json(
+        { error: projectAccess.error },
+        { status: projectAccess.status }
+      );
     }
 
     // commentId is optional. When present, the route validates
@@ -172,10 +190,25 @@ export async function POST(req: Request) {
       // unique-index point read.
       const comment = await prisma.comment.findUnique({
         where: { id: commentIdRaw },
-        select: { id: true },
+        select: {
+          id: true,
+          pin: {
+            select: {
+              screenshot: {
+                select: { page: { select: { projectId: true } } },
+              },
+            },
+          },
+        },
       });
       if (!comment) {
         return NextResponse.json({ error: 'comment not found' }, { status: 404 });
+      }
+      if (comment.pin.screenshot.page.projectId !== projectIdRes.value) {
+        return NextResponse.json(
+          { error: 'comment does not belong to the requested project' },
+          { status: 403 }
+        );
       }
       commentIdToBind = commentIdRaw;
     }
@@ -245,6 +278,7 @@ export async function POST(req: Request) {
       data: {
         id: attachmentId,
         commentId: commentIdToBind,
+        projectId: projectIdRes.value,
         kind,
         storageKey,
         mimeType: file.type,
@@ -260,9 +294,8 @@ export async function POST(req: Request) {
           id: attachment.id,
           // The relative URL the dashboard puts in <img src>. The
           // GET route serves the file with the right
-          // Content-Type. The share view appends `?share=<token>`
-          // (the attachment route recognizes the token for
-          // non-dashboard callers).
+          // Content-Type. Managed public review access is carried by an
+          // HttpOnly cookie, so this URL never contains the share token.
           url: `/api/attachments/${attachment.id}`,
           kind: attachment.kind,
           size: attachment.size,

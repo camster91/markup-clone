@@ -44,13 +44,9 @@ describe('parseHost', () => {
     });
   });
 
-  it('strips the port from `host` but preserves it in `origin`', () => {
-    // `hostname` on a parsed URL drops the port; `origin` keeps it.
-    // This is the behaviour the rest of the app relies on — auth.ts
-    // compares the request's host (which still includes the port)
-    // against the bare host, so :8443 vs no-port is correctly rejected.
+  it('preserves the configured port in both `host` and `origin`', () => {
     expect(parseHost('https://markup.ashbi.ca:8443')).toEqual({
-      host: 'markup.ashbi.ca',
+      host: 'markup.ashbi.ca:8443',
       origin: 'https://markup.ashbi.ca:8443',
     });
   });
@@ -65,9 +61,9 @@ describe('parseHost', () => {
   it('preserves a non-default scheme (http) when one is provided', () => {
     // The parser is scheme-aware but doesn't impose https. Local dev on
     // a non-TLS port uses this path; the auth allow-list still works
-    // because it compares hosts, not schemes.
+    // because it compares the configured host and port, not schemes.
     expect(parseHost('http://markup.ashbi.ca:3000')).toEqual({
-      host: 'markup.ashbi.ca',
+      host: 'markup.ashbi.ca:3000',
       origin: 'http://markup.ashbi.ca:3000',
     });
   });

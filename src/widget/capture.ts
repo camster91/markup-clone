@@ -8,7 +8,10 @@
 // The technique is the SVG-foreignObject trick — works in Chrome, Safari,
 // Firefox, Edge. We clone the document, inline computed styles (so the
 // foreignObject render matches the live page), and rasterize via <img> +
-// <canvas> + canvas.toBlob().
+// <canvas> + canvas.toBlob(). The SVG must be loaded through a data URL: Chromium
+// treats a blob-backed SVG containing foreignObject as non-origin-clean and
+// canvas.toBlob() then throws SecurityError even when the document has no remote
+// assets.
 
 export async function captureViewport(): Promise<Blob> {
   const w = window.innerWidth;
@@ -49,36 +52,38 @@ export async function captureViewport(): Promise<Blob> {
     '</foreignObject></svg>';
 
   const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
+  const url = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') resolve(reader.result);
+      else reject(new Error('svg data URL conversion failed'));
+    };
+    reader.onerror = () => reject(reader.error || new Error('svg data URL conversion failed'));
+    reader.readAsDataURL(blob);
+  });
 
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const i = new Image();
-      i.onload = () => resolve(i);
-      i.onerror = () => reject(new Error('svg load failed'));
-      i.src = url;
-    });
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const i = new Image();
+    i.onload = () => resolve(i);
+    i.onerror = () => reject(new Error('svg load failed'));
+    i.src = url;
+  });
 
-    const canvas = document.createElement('canvas');
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('canvas 2d context unavailable');
-    ctx.scale(dpr, dpr);
-    ctx.drawImage(img, 0, 0);
-    URL.revokeObjectURL(url);
+  const canvas = document.createElement('canvas');
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('canvas 2d context unavailable');
+  ctx.scale(dpr, dpr);
+  ctx.drawImage(img, 0, 0);
 
-    return await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob(
-        (b) => (b ? resolve(b) : reject(new Error('canvas.toBlob returned null'))),
-        'image/png',
-        0.92
-      );
-    });
-  } catch (err) {
-    URL.revokeObjectURL(url);
-    throw err;
-  }
+  return await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error('canvas.toBlob returned null'))),
+      'image/png',
+      0.92
+    );
+  });
 }
 
 // Recursively copy computed styles from src tree to dst tree.

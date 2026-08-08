@@ -25,6 +25,12 @@ import { requireDashboardAuth } from '@/lib/auth';
 import { requireCsrfToken } from '@/lib/csrf';
 import { audit } from '@/lib/audit';
 import { validateTeamName, validateUuidParam } from '@/lib/validation';
+import {
+  assertOperator,
+  getCallerUser,
+  getWorkspaceScopeWhere,
+  normalizeTeamRole,
+} from '@/lib/teams';
 
 export async function GET(
   req: Request,
@@ -37,19 +43,32 @@ export async function GET(
   const idRes = validateUuidParam(id, 'id');
   if (!idRes.ok) return NextResponse.json({ error: idRes.error }, { status: 400 });
 
-  // Verify the workspace exists. Without this, findMany would just
-  // return [] and the caller would have no signal that the workspace
-  // is missing vs. legitimately empty.
-  const workspace = await prisma.workspace.findUnique({
-    where: { id: idRes.value },
+  const caller = await getCallerUser();
+  if (!caller) {
+    return NextResponse.json({ error: 'Authentication required' }, { status: 403 });
+  }
+
+  // Verify the workspace is both present and visible to the caller.
+  const workspace = await prisma.workspace.findFirst({
+    where: { AND: [{ id: idRes.value }, getWorkspaceScopeWhere(caller)] },
     select: { id: true },
   });
   if (!workspace) return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
 
   const teams = await prisma.team.findMany({
-    where: { workspaceId: idRes.value },
+    where:
+      caller.role === 'operator'
+        ? { workspaceId: idRes.value }
+        : {
+            workspaceId: idRes.value,
+            members: { some: { userId: caller.id } },
+          },
     orderBy: { createdAt: 'asc' },
     include: {
+      members: {
+        where: { userId: caller.id },
+        select: { role: true, projectId: true },
+      },
       _count: {
         select: { members: true, projects: true },
       },
@@ -57,15 +76,20 @@ export async function GET(
   });
 
   return NextResponse.json(
-    teams.map((t) => ({
-      id: t.id,
-      workspaceId: t.workspaceId,
-      name: t.name,
-      memberCount: t._count.members,
-      projectCount: t._count.projects,
-      createdAt: t.createdAt,
-      updatedAt: t.updatedAt,
-    }))
+    teams.map((t) => {
+      const membershipRole = normalizeTeamRole(t.members[0]?.role);
+      const isGuest = caller.role !== 'operator' && membershipRole === 'guest';
+      const canSeeMemberCount = caller.role === 'operator' || membershipRole === 'owner';
+      return {
+        id: t.id,
+        workspaceId: t.workspaceId,
+        name: t.name,
+        memberCount: canSeeMemberCount ? t._count.members : undefined,
+        projectCount: isGuest ? 1 : t._count.projects,
+        createdAt: t.createdAt,
+        updatedAt: t.updatedAt,
+      };
+    })
   );
 }
 
@@ -77,6 +101,11 @@ export async function POST(
   if (authErr) return authErr;
   const csrfErr = requireCsrfToken(req);
   if (csrfErr) return csrfErr;
+
+  const access = await assertOperator();
+  if (!access.ok) {
+    return NextResponse.json({ error: access.error }, { status: access.status });
+  }
 
   try {
     const { id } = await params;

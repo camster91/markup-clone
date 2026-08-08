@@ -28,7 +28,7 @@ const mocks = vi.hoisted(() => ({
     }),
   },
   audit: vi.fn(),
-  sendMentionEmail: vi.fn(),
+  sendProjectMemberNotification: vi.fn(),
   fetch: vi.fn(),
 }));
 
@@ -45,8 +45,8 @@ vi.mock('@/lib/audit', () => ({
   audit: mocks.audit,
 }));
 
-vi.mock('@/lib/email', () => ({
-  sendMentionEmail: mocks.sendMentionEmail,
+vi.mock('@/lib/project-notification-delivery', () => ({
+  sendProjectMemberNotification: mocks.sendProjectMemberNotification,
 }));
 
 // Import after the mocks so the route picks them up.
@@ -80,7 +80,7 @@ const params = () => ({ params: Promise.resolve({ id: PIN_A }) });
 function setupStandardMocks(opts: {
   commentRow?: any;
   pinStatus?: string;
-  mentionedUsers?: { email: string }[];
+  mentionedUsers?: { id?: string; email: string }[];
 } = {}) {
   mocks.comment.create.mockResolvedValue(
     opts.commentRow ?? { id: 'c-1', text: 'hi', author: 'Reviewer', authorRole: 'reviewer', createdAt: new Date('2026-06-14T15:00:00.000Z') }
@@ -107,10 +107,13 @@ function setupStandardMocks(opts: {
       teamId: null,
     });
   mocks.pin.update.mockResolvedValue({ id: PIN_A, status: 'OPEN' });
-  mocks.user.findMany.mockResolvedValue(opts.mentionedUsers ?? []);
+  mocks.user.findMany.mockResolvedValue((opts.mentionedUsers ?? []).map((user, index) => ({
+    id: user.id ?? `mentioned-${index + 1}`,
+    email: user.email,
+  })));
   mocks.audit.mockClear();
-  mocks.sendMentionEmail.mockClear();
-  mocks.sendMentionEmail.mockResolvedValue(undefined);
+  mocks.sendProjectMemberNotification.mockClear();
+  mocks.sendProjectMemberNotification.mockResolvedValue(undefined);
 }
 
 beforeEach(() => {
@@ -206,11 +209,11 @@ describe('POST /api/pins/[id]/comments — @-mention dispatch', () => {
     expect(mocks.user.findMany).toHaveBeenCalledTimes(1);
     expect(mocks.user.findMany).toHaveBeenCalledWith({
       where: { email: { in: ['alice@example.com'], mode: 'insensitive' } },
-      select: { email: true },
+      select: { id: true, email: true },
     });
   });
 
-  it('sends one mention email per matched user', async () => {
+  it('queues one preference-aware mention event for the matched project users', async () => {
     setupStandardMocks({
       mentionedUsers: [
         { email: 'alice@example.com' },
@@ -224,17 +227,15 @@ describe('POST /api/pins/[id]/comments — @-mention dispatch', () => {
     );
     expect(res.status).toBe(201);
 
-    expect(mocks.sendMentionEmail).toHaveBeenCalledTimes(2);
-    const tos = mocks.sendMentionEmail.mock.calls.map(c => c[0].to).sort();
-    expect(tos).toEqual(['alice@example.com', 'bob@example.com']);
-
-    // Each call should carry the comment text and a pinUrl with a
-    // #comment-<id> fragment pointing at the screenshot image.
-    for (const call of mocks.sendMentionEmail.mock.calls) {
-      const arg = call[0];
-      expect(arg.commentText).toContain('@alice@example.com');
-      expect(arg.pinUrl).toMatch(new RegExp(`/api/screenshots/${SCREENSHOT_A}/image#comment-c-1$`));
-    }
+    expect(mocks.sendProjectMemberNotification).toHaveBeenCalledWith({
+      projectId: PROJECT_A,
+      pinId: PIN_A,
+      event: 'mention',
+      title: 'You were mentioned',
+      message: 'Reviewer mentioned you: @alice@example.com and @bob@example.com take a look',
+      actorUserId: '00000000-0000-4000-8000-000000000001',
+      targetUserIds: ['mentioned-1', 'mentioned-2'],
+    });
   });
 
   it('silently ignores unrecognized emails (no User match → no email)', async () => {
@@ -247,7 +248,7 @@ describe('POST /api/pins/[id]/comments — @-mention dispatch', () => {
     expect(res.status).toBe(201);
 
     expect(mocks.user.findMany).toHaveBeenCalled();
-    expect(mocks.sendMentionEmail).not.toHaveBeenCalled();
+    expect(mocks.sendProjectMemberNotification.mock.calls.filter(([arg]) => arg.event === 'mention')).toHaveLength(0);
     // No matched users ⇒ no audit row.
     expect(mocks.audit).not.toHaveBeenCalled();
   });
@@ -266,11 +267,11 @@ describe('POST /api/pins/[id]/comments — @-mention dispatch', () => {
     // The User lookup is given the deduplicated list (just "alice@example.com").
     expect(mocks.user.findMany).toHaveBeenCalledWith({
       where: { email: { in: ['alice@example.com'], mode: 'insensitive' } },
-      select: { email: true },
+      select: { id: true, email: true },
     });
-    // Only one mention email.
-    expect(mocks.sendMentionEmail).toHaveBeenCalledTimes(1);
-    expect(mocks.sendMentionEmail.mock.calls[0][0].to).toBe('alice@example.com');
+    const mentionCalls = mocks.sendProjectMemberNotification.mock.calls.filter(([arg]) => arg.event === 'mention');
+    expect(mentionCalls).toHaveLength(1);
+    expect(mentionCalls[0][0].targetUserIds).toEqual(['mentioned-1']);
   });
 
   it('writes a comment.mention audit log row with the list of notified emails', async () => {
@@ -300,10 +301,10 @@ describe('POST /api/pins/[id]/comments — @-mention dispatch', () => {
   });
 
   it('does not block the response on the email dispatch (fire-and-forget)', async () => {
-    // Make the mock sendMentionEmail slow; the POST must still return
+    // Make the project notification slow; the POST must still return
     // 201 quickly because the dispatch is `void`-prefixed (not awaited).
     setupStandardMocks({ mentionedUsers: [{ email: 'alice@example.com' }] });
-    mocks.sendMentionEmail.mockImplementation(async () => {
+    mocks.sendProjectMemberNotification.mockImplementation(async () => {
       // 200ms of "network". If the route awaited this, the test would
       // take ~200ms. We just assert the call happened, not its timing.
       await new Promise(r => setTimeout(r, 50));
@@ -322,16 +323,39 @@ describe('POST /api/pins/[id]/comments — @-mention dispatch', () => {
     // 50ms the awaited path would take.
     expect(elapsed).toBeLessThan(40);
     // The mock was called even though the response didn't wait.
-    expect(mocks.sendMentionEmail).toHaveBeenCalledTimes(1);
+    expect(mocks.sendProjectMemberNotification).toHaveBeenCalledTimes(2);
   });
 
-  it('does not look up users or send any email when the comment has no mentions', async () => {
+  it('queues a reply event but no mention event when the comment has no mentions', async () => {
     setupStandardMocks();
     const res = await POST(makeReq({ text: 'plain old comment' }), params());
     expect(res.status).toBe(201);
     expect(mocks.user.findMany).not.toHaveBeenCalled();
-    expect(mocks.sendMentionEmail).not.toHaveBeenCalled();
+    expect(mocks.sendProjectMemberNotification).toHaveBeenCalledTimes(1);
+    expect(mocks.sendProjectMemberNotification).toHaveBeenCalledWith({
+      projectId: PROJECT_A,
+      pinId: PIN_A,
+      event: 'new-comment',
+      title: 'New thread reply',
+      message: 'Reviewer replied: plain old comment',
+      actorUserId: '00000000-0000-4000-8000-000000000001',
+    });
     expect(mocks.audit).not.toHaveBeenCalled();
+  });
+
+  it('queues the implicit reopen as a status change when replying to resolved feedback', async () => {
+    setupStandardMocks({ pinStatus: 'RESOLVED' });
+    const res = await POST(makeReq({ text: 'This still needs work', author: 'Reviewer' }), params());
+    expect(res.status).toBe(201);
+    expect(mocks.pin.update).toHaveBeenCalledWith({ where: { id: PIN_A }, data: { status: 'OPEN' } });
+    expect(mocks.sendProjectMemberNotification).toHaveBeenCalledWith({
+      projectId: PROJECT_A,
+      pinId: PIN_A,
+      event: 'status-change',
+      title: 'Feedback reopened',
+      message: 'Reviewer reopened feedback by replying.',
+      actorUserId: '00000000-0000-4000-8000-000000000001',
+    });
   });
 
   it('still returns 201 when the User lookup itself throws (defense in depth)', async () => {
@@ -349,7 +373,7 @@ describe('POST /api/pins/[id]/comments — @-mention dispatch', () => {
     // failed.
     const body = await res.json();
     expect(body.data.id).toBe('c-1');
-    expect(mocks.sendMentionEmail).not.toHaveBeenCalled();
+    expect(mocks.sendProjectMemberNotification.mock.calls.filter(([arg]) => arg.event === 'mention')).toHaveLength(0);
   });
 
   it('handles case where mention is case-mismatched against a stored User', async () => {
@@ -366,7 +390,7 @@ describe('POST /api/pins/[id]/comments — @-mention dispatch', () => {
       params()
     );
     expect(res.status).toBe(201);
-    expect(mocks.sendMentionEmail).toHaveBeenCalledTimes(1);
-    expect(mocks.sendMentionEmail.mock.calls[0][0].to).toBe('Alice@example.com');
+    const mentionCall = mocks.sendProjectMemberNotification.mock.calls.find(([arg]) => arg.event === 'mention');
+    expect(mentionCall?.[0].targetUserIds).toEqual(['mentioned-1']);
   });
 });

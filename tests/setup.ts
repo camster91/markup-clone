@@ -42,5 +42,14 @@ vi.mock('@/lib/auth', async (importOriginal) => {
     // route integration tests don't need a real Session row. Tests that
     // assert 401 on a bad Origin still pass through requireDashboardOrigin.
     requireDashboardAuth: vi.fn(async (req: Request) => actual.requireDashboardOrigin(req)),
+    // Project-scoped route tests exercise validation and persistence after
+    // the dashboard gate. Give their downstream data-access checks a stable
+    // authenticated caller. Auth/session-specific suites explicitly unmock
+    // this module and exercise the real cookie + Session implementation.
+    requireAuth: vi.fn(async () => ({
+      id: '00000000-0000-4000-8000-000000000001',
+      email: 'integration-test@example.com',
+      role: 'reviewer',
+    })),
   };
 });

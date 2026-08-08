@@ -7,19 +7,12 @@
 //
 // Auth (two surfaces):
 //
-//   1. Dashboard origin. The standard gate used by every other
-//      dashboard-side route. The dashboard always loads the
-//      attachment URL from a context where the Origin header is
-//      the dashboard host, so this is the path the dashboard's
-//      <img src> hits.
+//   1. An authenticated caller with access to the owning project.
 //
-//   2. Share token via `?share=<token>` query param. The
-//      /share/[token] view is a server component, so it can
-//      rewrite the attachment URL to include the project token
-//      at render time. The route validates the token against
-//      the Attachment's Comment → Pin → Screenshot → Page →
-//      Project's `shareToken` column. A matching token grants
-//      read access; a missing / wrong token returns 404 (not
+//   2. A token-bound HttpOnly cookie issued by the managed share opener.
+//      The route validates the cookie against the Attachment's Comment →
+//      Pin → Screenshot → Page → Project share configuration. A matching
+//      unexpired capability grants read access; a missing / wrong cookie returns 404 (not
 //      401 — we don't leak "this attachment exists, you just
 //      can't see it" to a public-share probe).
 //
@@ -35,9 +28,10 @@
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { isDashboardOrigin } from '@/lib/auth';
 import { readFile, stat } from 'fs/promises';
 import path from 'path';
+import { assertProjectAccessible } from '@/lib/teams';
+import { requestHasShareAccess } from '@/lib/share-access';
 
 const ATTACHMENTS_DIR = process.env.ATTACHMENTS_DIR || '/data/attachments';
 
@@ -67,6 +61,7 @@ export async function GET(
       where: { id },
       select: {
         id: true,
+        projectId: true,
         storageKey: true,
         mimeType: true,
         size: true,
@@ -83,7 +78,12 @@ export async function GET(
                       select: {
                         id: true,
                         project: {
-                          select: { id: true, shareToken: true },
+                          select: {
+                            id: true,
+                            shareToken: true,
+                            shareExpiresAt: true,
+                            sharePasswordHash: true,
+                          },
                         },
                       },
                     },
@@ -101,28 +101,31 @@ export async function GET(
 
     // === Auth check =====================================================
     // Two acceptable surfaces:
-    //   1. Dashboard origin (the standard dashboard gate).
-    //   2. A ?share=<token> query param that matches the
-    //      attachment's project's shareToken.
+    //   1. An authenticated caller with access to the owning project.
+    //   2. A token-bound managed-share cookie for this exact project link.
     //
-    // The `?share=` path is the only way a non-dashboard viewer
-    // can read the file — the share view bakes the token into
-    // the <img src> at render time. Without the token, a
+    // The cookie is the only way a non-dashboard viewer can read the file.
+    // Public HTML keeps the relative <img src> free of credentials. Without it, a
     // public-share probe gets 404, not 401: we don't leak
     // "this attachment exists" to a token-less scraper.
     //
-    // Both auths are consulted independently — a caller that
-    // passes a dashboard Origin AND a wrong `?share=` still
-    // gets the file (the Origin alone is sufficient). A
-    // caller that passes only `?share=` gets the file only if
-    // the token matches the project.
-    const dashboard = isDashboardOrigin(req);
-    const url = new URL(req.url);
-    const shareToken = url.searchParams.get('share');
-    const projectShareToken = attachment.comment?.pin?.screenshot?.page?.project?.shareToken ?? null;
-    const shareTokenValid = !!shareToken && shareToken === projectShareToken;
+    // A matching cookie capability avoids the session lookup. Otherwise the
+    // caller must pass the same project-access gate as project data routes.
+    const project = attachment.comment?.pin?.screenshot?.page?.project;
+    const shareAccessValid = !!project?.shareToken && requestHasShareAccess(
+      req,
+      project.shareToken,
+      project.sharePasswordHash,
+      project.shareExpiresAt
+    );
+    const projectId = attachment.projectId
+      ?? attachment.comment?.pin?.screenshot?.page?.project?.id
+      ?? null;
+    const memberAccess = !shareAccessValid && projectId
+      ? await assertProjectAccessible(projectId)
+      : null;
 
-    if (!dashboard && !shareTokenValid) {
+    if (!shareAccessValid && !memberAccess?.ok) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 404 });
     }
 
@@ -136,9 +139,11 @@ export async function GET(
     if (storageKey.includes('/') || storageKey.includes('\\') || storageKey.includes('..')) {
       return NextResponse.json({ error: 'invalid storageKey' }, { status: 400 });
     }
-    const filePath = path.join(ATTACHMENTS_DIR, storageKey);
-    const fileStat = await stat(filePath);
-    const buf = await readFile(filePath);
+    // Runtime uploads live on an external persistent mount and must not be
+    // copied into the standalone build output by Turbopack's file tracer.
+    const filePath = path.join(/* turbopackIgnore: true */ ATTACHMENTS_DIR, storageKey);
+    const fileStat = await stat(/* turbopackIgnore: true */ filePath);
+    const buf = await readFile(/* turbopackIgnore: true */ filePath);
 
     // ETag for client-side caching. The ETag encodes the
     // storageKey + size so two attachments with the same id but
@@ -149,7 +154,13 @@ export async function GET(
     // already-seen attachments) can use it.
     const etag = `"${attachment.id}-${storageKey}-${fileStat.size}"`;
     if (req.headers.get('if-none-match') === etag) {
-      return new NextResponse(null, { status: 304 });
+      return new NextResponse(null, {
+        status: 304,
+        headers: {
+          'Cache-Control': 'private, max-age=31536000, immutable',
+          Vary: 'Cookie',
+        },
+      });
     }
 
     // Content-Length comes from the actual file on disk, not
@@ -165,7 +176,8 @@ export async function GET(
         // Attachments are immutable once written — no update
         // path, no PATCH. Cache-Control is the same immutable
         // year-long max-age the screenshot route uses.
-        'Cache-Control': 'public, max-age=31536000, immutable',
+        'Cache-Control': 'private, max-age=31536000, immutable',
+        'Vary': 'Cookie',
         'ETag': etag,
       },
     });

@@ -26,6 +26,14 @@ FROM base AS deps
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 
+# Local/CI migration image. It carries the Prisma CLI and migration files but
+# does not build or start the application. Docker Compose runs this once after
+# Postgres is healthy and before the app container starts.
+FROM deps AS migrator
+COPY prisma ./prisma
+COPY prisma.config.ts ./
+CMD ["npx", "prisma", "migrate", "deploy"]
+
 # ── Builder layer (runs the next build) ──────────────────────────────────────
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
@@ -41,14 +49,16 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 
 # Chromium + psql for the recapture flow. chromium-headless-shell is enough
-# for --screenshot mode (no GPU, no audio, no extensions).
+# for --screenshot mode (no GPU, no audio, no extensions). Match the
+# postgres:16 server: unpinned Alpine currently selects 18, whose dumps emit
+# settings PostgreSQL 16 cannot restore.
 RUN apk add --no-cache \
         curl \
         bash \
         chromium \
         chromium-headless-shell \
         nss \
-        postgresql-client \
+        postgresql16-client \
         dumb-init \
     && ln -sf /usr/bin/chromium-browser /usr/local/bin/chromium 2>/dev/null || true
 
@@ -61,7 +71,7 @@ COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/prisma ./prisma
 
 # /data/screenshots is the bind-mount target for persisted screenshot files
-RUN mkdir -p /data/screenshots /opt/app-scripts
+RUN mkdir -p /data/screenshots /data/backups /opt/app-scripts
 
 EXPOSE 3000
 

@@ -24,26 +24,24 @@ import { requireDashboardAuth, generateApiKey } from '@/lib/auth';
 import { requireCsrfToken } from '@/lib/csrf';
 import { audit } from '@/lib/audit';
 import { validateProjectDomain, validateProjectName, validateUuidParam } from '@/lib/validation';
-import { getCallerUser, getProjectScopeWhere } from '@/lib/teams';
+import {
+  assertProjectCreateAdmin,
+  canAdminProject,
+  getCallerAdminTeamIds,
+  getCallerUser,
+  getProjectScopeWhere,
+} from '@/lib/teams';
+import { loadProjectSummaryCounts, projectSummaryCountsOrZero } from '@/lib/project-summary-counts';
 
 export async function GET(req: Request) {
   const authErr = await requireDashboardAuth(req);
   if (authErr) return authErr;
 
   try {
-    // Optional ?since=<ISO> delta polling. When set, only rows whose
-    // updatedAt (or capturedAt, for Screenshot) is strictly after `since`
-    // are returned at every nested level — Project, Page, Screenshot, Pin,
-    // Comment. The dashboard passes `lastSuccessfulPoll - 1000` as `since`
-    // so two rows updated in the same millisecond (e.g. two pins created
-    // by the same request) cannot race past the cursor. When `since` is
-    // missing or unparseable, the route falls back to the legacy
-    // "return the full tree" behaviour.
-    const url = new URL(req.url);
-    const sinceParam = url.searchParams.get('since');
-    const since = sinceParam ? new Date(sinceParam) : null;
-    const filterSince = sinceParam && !Number.isNaN(since!.getTime());
-
+    const state = new URL(req.url).searchParams.get('state') ?? 'active';
+    if (state !== 'active' && state !== 'archived' && state !== 'all') {
+      return NextResponse.json({ error: 'state must be active, archived, or all' }, { status: 400 });
+    }
     // Resolve the caller and their team scope. The where clause is
     // composed BEFORE the `updatedAt` filter so the two filters AND
     // together: callers see "projects in my teams" AND "updated since
@@ -52,54 +50,29 @@ export async function GET(req: Request) {
     // will see the new `where` shape; the integration tests updated
     // alongside this change assert the team-scope filter is applied.
     const caller = await getCallerUser();
-    const teamScope = await getProjectScopeWhere(caller?.id ?? null);
+    if (!caller) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 403 });
+    }
+    const teamScope = await getProjectScopeWhere(caller);
+    const where = state === 'all'
+      ? teamScope
+      : { AND: [teamScope, state === 'active' ? { archivedAt: null } : { archivedAt: { not: null } }] };
+    const adminTeamIds = caller.role === 'operator' ? [] : await getCallerAdminTeamIds(caller.id);
 
     const projects = await prisma.project.findMany({
-      where: {
-        AND: [
-          teamScope,
-          ...(filterSince ? [{ updatedAt: { gt: since! } }] : []),
-        ],
-      },
-      include: {
-        pages: {
-          where: filterSince ? { updatedAt: { gt: since! } } : undefined,
-          include: {
-            screenshots: {
-              // Screenshot has no `updatedAt` field — its lifetime marker
-              // is `capturedAt`. Same semantics: only screenshots captured
-              // after the cursor are part of the delta.
-              where: filterSince ? { capturedAt: { gt: since! } } : undefined,
-              orderBy: { capturedAt: 'desc' },
-              include: {
-                pins: {
-                  where: filterSince ? { updatedAt: { gt: since! } } : undefined,
-                  orderBy: { createdAt: 'asc' },
-                  include: {
-                    comments: {
-                      where: filterSince ? { updatedAt: { gt: since! } } : undefined,
-                      orderBy: { createdAt: 'asc' },
-                    },
-                    // Annotations: drawn arrows / boxes / freehand
-                    // attached to each pin. The ScreenshotView's SVG
-                    // overlay reads these and renders one <line>/<rect>/
-                    // <polyline> per row. The `where` filters on
-                    // createdAt — no Annotation has an `updatedAt` so
-                    // a new annotation always reflects a new pin event
-                    // for delta polling. We parse pathJson into a
-                    // `number[][]` shape on the way out (the server
-                    // stores it as a JSON string for schema flexibility).
-                    annotations: {
-                      ...(filterSince ? { where: { createdAt: { gt: since! } } } : {}),
-                      orderBy: { createdAt: 'asc' },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-        subscribers: true,
+      where,
+      select: {
+        id: true,
+        name: true,
+        domain: true,
+        apiKey: true,
+        shareToken: true,
+        shareExpiresAt: true,
+        sharePasswordHash: true,
+        teamId: true,
+        archivedAt: true,
+        createdAt: true,
+        updatedAt: true,
         // The team relation is included so the dashboard's
         // ProjectListCard can render "in <team name>" without a
         // follow-up lookup. `select` is limited to the columns the
@@ -109,6 +82,7 @@ export async function GET(req: Request) {
       },
       orderBy: { createdAt: 'desc' },
     });
+    const summaryCounts = await loadProjectSummaryCounts(projects.map((project) => project.id));
     // Project has no `include`-able shareToken — it's a top-level
     // scalar. select it explicitly so the dashboard's ShareToggle can
     // see whether a token is active. `shareToken` is dashboard-only
@@ -132,46 +106,25 @@ export async function GET(req: Request) {
     // prisma include with the legacy shape (no annotation field).
     // Coerce to [] so the response shape is always the same.
     return NextResponse.json(
-      projects.map((p) => ({
+      projects.map((p) => {
+        const canAdmin = canAdminProject(caller, p.teamId, adminTeamIds);
+        const counts = projectSummaryCountsOrZero(summaryCounts, p.id);
+        return {
         id: p.id,
         name: p.name,
         domain: p.domain,
-        apiKey: p.apiKey,
-        shareToken: p.shareToken,
+        apiKey: canAdmin ? p.apiKey : null,
+        shareToken: canAdmin ? p.shareToken : null,
+        shareExpiresAt: canAdmin ? p.shareExpiresAt?.toISOString() ?? null : null,
+        sharePasswordProtected: canAdmin ? Boolean(p.sharePasswordHash) : false,
+        canAdmin,
         teamId: p.teamId,
+        archivedAt: p.archivedAt,
         team: p.team,
         createdAt: p.createdAt,
         updatedAt: p.updatedAt,
-        pages: p.pages.map((page) => ({
-          ...page,
-          screenshots: page.screenshots.map((screenshot) => ({
-            ...screenshot,
-            pins: screenshot.pins.map((pin) => ({
-              ...pin,
-              annotations: (pin.annotations ?? []).map((a) => {
-                let path: number[][] = [];
-                try {
-                  const parsed = JSON.parse(a.pathJson);
-                  if (Array.isArray(parsed)) path = parsed as number[][];
-                } catch {
-                  // Don't leak the per-request loop noise — log once.
-                  // Production data should never reach this branch
-                  // (the POST /api/annotations validator rejects
-                  // malformed input).
-                  console.warn(`[projects] annotation ${a.id} has unparseable pathJson`);
-                }
-                return {
-                  id: a.id,
-                  kind: a.kind,
-                  path,
-                  createdAt: a.createdAt,
-                };
-              }),
-            })),
-          })),
-        })),
-        subscribers: p.subscribers,
-      }))
+        ...counts,
+      }})
     );
   } catch (error) {
     console.error('Projects list error:', error);
@@ -202,32 +155,18 @@ export async function POST(req: Request) {
     const domainRes = validateProjectDomain(domain);
     if (!domainRes.ok) return NextResponse.json({ error: domainRes.error }, { status: 400 });
 
-    // Optional teamId: when supplied, verify it's a UUID and the
-    // caller is a member of the team. A non-member creating a
-    // project under a team they don't belong to is the
-    // "attach a project to someone else's team" footgun — the
-    // membership check is the gate. When teamId is omitted, the
-    // project is created with teamId = NULL (legacy / unscoped).
+    // Owners may create projects inside their team; global operators may
+    // create either team-scoped or legacy unscoped projects.
     let teamIdValue: string | null = null;
     if (teamId !== undefined && teamId !== null) {
       const tidRes = validateUuidParam(teamId, 'teamId');
       if (!tidRes.ok) return NextResponse.json({ error: tidRes.error }, { status: 400 });
-      const caller = await getCallerUser();
-      const callerTeamIds = caller
-        ? (
-            await prisma.teamMember.findMany({
-              where: { userId: caller.id, teamId: tidRes.value },
-              select: { teamId: true },
-            })
-          ).map((r) => r.teamId)
-        : [];
-      if (!callerTeamIds.includes(tidRes.value)) {
-        return NextResponse.json(
-          { error: 'You are not a member of the requested team' },
-          { status: 403 }
-        );
-      }
       teamIdValue = tidRes.value;
+    }
+
+    const admin = await assertProjectCreateAdmin(teamIdValue);
+    if (!admin.ok) {
+      return NextResponse.json({ error: admin.error }, { status: admin.status });
     }
 
     const apiKey = generateApiKey();

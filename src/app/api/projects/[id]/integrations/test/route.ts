@@ -26,11 +26,15 @@ import { prisma } from '@/lib/prisma';
 import { requireDashboardAuth } from '@/lib/auth';
 import { requireCsrfToken } from '@/lib/csrf';
 import { validateProjectId } from '@/lib/validation';
-import { assertProjectAccessible } from '@/lib/teams';
+import { assertProjectAdmin } from '@/lib/teams';
 import { dispatch } from '@/lib/integrations/dispatcher';
 import { isIntegrationKind } from '@/lib/integrations/types';
-import { validateConfig } from '@/lib/integrations/validate';
+import { validateStoredConfig } from '@/lib/integrations/validate';
 import type { PinPayload } from '@/lib/integrations/types';
+import {
+  decryptIntegrationCredential,
+  loadIntegrationEncryptionKey,
+} from '@/lib/integrations/credential-crypto';
 
 export async function POST(
   req: Request,
@@ -46,7 +50,7 @@ export async function POST(
     const idRes = validateProjectId(projectId);
     if (!idRes.ok) return NextResponse.json({ error: idRes.error }, { status: 400 });
 
-    const access = await assertProjectAccessible(projectId);
+    const access = await assertProjectAdmin(projectId);
     if (!access.ok) {
       return NextResponse.json({ error: access.error }, { status: access.status });
     }
@@ -94,9 +98,24 @@ export async function POST(
     if (!isIntegrationKind(row.kind)) {
       return NextResponse.json({ error: 'Integration kind is invalid' }, { status: 500 });
     }
-    const cfgRes = validateConfig(row.kind, config);
+    const cfgRes = validateStoredConfig(row.kind, config);
     if (!cfgRes.ok) {
       return NextResponse.json({ error: cfgRes.error }, { status: 500 });
+    }
+    let runtimeConfig: unknown = cfgRes.value;
+    if (row.kind === 'github') {
+      try {
+        if (!row.credentialCiphertext) throw new Error('missing credential');
+        runtimeConfig = {
+          ...cfgRes.value,
+          token: decryptIntegrationCredential(
+            row.credentialCiphertext,
+            loadIntegrationEncryptionKey(),
+          ),
+        };
+      } catch {
+        return NextResponse.json({ error: 'GitHub credential is unavailable' }, { status: 500 });
+      }
     }
 
     // 4. Build a test payload. We use the project's real
@@ -127,7 +146,7 @@ export async function POST(
     // 5. Dispatch. The dispatcher returns a structured
     //    {ok,error?} result so we don't have to try/catch
     //    a stringified error.
-    const result = await dispatch(row.kind, cfgRes.value, testPayload);
+    const result = await dispatch(row.kind, runtimeConfig, testPayload);
 
     // 6. Persist outcome. We use the prisma update
     //    directly (not a transaction) — the adapter's

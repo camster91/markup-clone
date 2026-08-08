@@ -8,23 +8,17 @@
 //
 // Renders identically to the old in-list <ProjectCard> from
 // <DashboardProjects>, but scoped to a single project:
-//   - usePresence keys on this projectId (project-level heartbeat +
-//     per-screenshot heartbeats from <ScreenshotView>)
-//   - useLiveEvents subscribes to this project's SSE stream
+//   - usePresence owns one project heartbeat/list poll and reads the
+//     active screenshot/cursor from a shared ref
+//   - useLiveEvents owns one project SSE stream
 //   - useRecaptureStatus is hosted by <ScreenshotView> for each
 //     screenshot, exactly as in the old dashboard
 //   - the recapture button is wired to the same POST endpoint
 //
-// Polling: this component re-uses the same ?since= delta-polling
-// pattern that the list page uses against /api/projects. The route
-// /api/projects/[id] does NOT exist as a GET (PATCH/DELETE only — see
-// src/app/api/projects/[id]/route.ts), so we poll the LIST endpoint
-// and filter to this project client-side. The cost is one extra
-// row-level filter per poll, in exchange for NOT having to add a
-// new route handler. The list payload already carries every nested
-// update (page, screenshot, pin, comment, annotation) the detail
-// page cares about, so the per-project page can stay in sync with
-// the rest of the dashboard without any new server endpoint.
+// Polling: this component refreshes from the authenticated
+// /api/projects/[id] GET route. That endpoint uses the same serializer
+// as the server-rendered detail page, keeping the full review tree on
+// the focused surface and out of the dashboard list payload.
 //
 // Why not just navigate back to / for updates: the list page's poll
 // is 5s and clears on unmount, so a detail view that polls the list
@@ -35,11 +29,16 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import ScreenshotView from './ScreenshotView';
 import ProjectSettings, { ShareToggle, IntegrationsSection } from './ProjectSettings';
+import DeveloperAccessPanel from './DeveloperAccessPanel';
 import ProjectSubscribers from './ProjectSubscribers';
+import ProjectNotifications from './ProjectNotifications';
+import ReviewWorkflow from './ReviewWorkflow';
 import PresenceList from './PresenceList';
-import { usePresence } from '@/lib/hooks/usePresence';
+import IssueFilters from './IssueFilters';
+import { usePresence, type PresenceActivity } from '@/lib/hooks/usePresence';
 import { useLiveEvents } from '@/lib/hooks/useLiveEvents';
 import type { ProjectWithPages } from '@/lib/types';
+import { pinMatchesIssueFilters, type IssueFilters as IssueFilterValue } from '@/lib/issue-metadata';
 
 export interface ProjectDetailProps {
   /** The fully-hydrated project tree from the server component. The
@@ -51,32 +50,19 @@ export interface ProjectDetailProps {
 export default function ProjectDetail({ initialProject }: ProjectDetailProps) {
   const [project, setProject] = useState<ProjectWithPages>(initialProject);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const [refreshFailed, setRefreshFailed] = useState(false);
   const mountedRef = useRef(true);
-  // Same delta-polling pattern as <DashboardProjects>: track the
-  // last successful poll timestamp and pass `last - 1000` as the
-  // cursor on the next request. The 1s overlap is critical: two
-  // pins created in the same millisecond would otherwise race
-  // past the cursor and the second one would never come back.
-  // `null` means "no successful poll yet" → first poll goes out
-  // without a cursor and the route returns the full tree.
-  const lastSuccessfulPoll = useRef<number | null>(null);
-
+  const liveRefreshInFlightRef = useRef(false);
   const fetchProject = useCallback(async () => {
     try {
-      // The list endpoint serves the full project list. We poll it
-      // and pick out our project; the cost is one extra row-level
-      // filter per poll, in exchange for NOT having to add a new
-      // server endpoint.
-      const since = lastSuccessfulPoll.current;
-      const url = since === null
-        ? '/api/projects'
-        : `/api/projects?since=${new Date(since - 1000).toISOString()}`;
-      const res = await fetch(url);
-      if (!res.ok) return;
-      const data: ProjectWithPages[] = await res.json();
+      const res = await fetch(`/api/projects/${encodeURIComponent(project.id)}`);
+      if (!res.ok) {
+        if (mountedRef.current) setRefreshFailed(true);
+        return;
+      }
+      const next: ProjectWithPages = await res.json();
       if (!mountedRef.current) return;
-      const next = data.find((p) => p.id === project.id);
-      if (next) {
+      if (next?.id === project.id) {
         // Merge: only update fields the server actually returned,
         // and only if they differ from the current state. The
         // current state may carry optimistic local mutations
@@ -84,10 +70,7 @@ export default function ProjectDetail({ initialProject }: ProjectDetailProps) {
         // replacing the whole tree would clobber them.
         setProject((prev) => mergeProject(prev, next));
         setLastUpdated(Date.now());
-        // Record the cursor AFTER the response has been applied
-        // so a slow request that races a write can't drop the
-        // write.
-        lastSuccessfulPoll.current = Date.now();
+        setRefreshFailed(false);
       } else {
         // Project was deleted on the server while we were on the
         // detail page. Just bump the timestamp; the user will see
@@ -96,10 +79,9 @@ export default function ProjectDetail({ initialProject }: ProjectDetailProps) {
         // dashboard's own <ProjectSettings> delete button owns
         // that flow.
         setLastUpdated(Date.now());
-        lastSuccessfulPoll.current = Date.now();
       }
     } catch {
-      // Silent retry — keep showing old data.
+      if (mountedRef.current) setRefreshFailed(true);
     }
   }, [project.id]);
 
@@ -121,31 +103,44 @@ export default function ProjectDetail({ initialProject }: ProjectDetailProps) {
 
   // === Live updates (SSE) =================================================
   // The hook subscribes to /api/events?projectId=X on mount and
-  // re-subscribes if the projectId changes. We don't dispatch on
-  // events here directly — <ScreenshotView> hosts its own
-  // useLiveEvents for the new-comment path and applies the update
-  // to its local pin state. Project-level events (e.g. settings
-  // changes) are still picked up by the 5s poll above. Subscribing
-  // here makes the connection symmetric with the per-screenshot
-  // subscriptions and lets future event types add a project-level
-  // dispatch without touching <ScreenshotView>.
+  // re-subscribes if the projectId changes. All events use one bounded
+  // refresh path; the periodic detail poll remains recovery.
+  const refreshFromLiveEvent = useCallback(() => {
+    if (liveRefreshInFlightRef.current) return;
+    liveRefreshInFlightRef.current = true;
+    void fetchProject().finally(() => {
+      liveRefreshInFlightRef.current = false;
+    });
+  }, [fetchProject]);
   useLiveEvents({
     projectId: project.id,
-    onEvent: () => {
-      // No-op for now — pin/comment updates are handled by
-      // <ScreenshotView>'s own useLiveEvents subscription. The
-      // hook call here keeps the SSE connection alive so future
-      // project-level events can be dispatched without a
-      // subscription change.
-    },
+    onEvent: refreshFromLiveEvent,
   });
 
   return (
-    <ProjectDetailCard
-      project={project}
-      lastUpdated={lastUpdated}
-      onProjectUpdated={fetchProject}
-    />
+    <div>
+      {refreshFailed ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950"
+        >
+          <span>Live updates paused. This saved review is still available.</span>
+          <button
+            type="button"
+            onClick={() => void fetchProject()}
+            className="rounded-md border border-amber-400 bg-white px-3 py-1.5 font-medium hover:bg-amber-100"
+          >
+            Retry now
+          </button>
+        </div>
+      ) : null}
+      <ProjectDetailCard
+        project={project}
+        lastUpdated={lastUpdated}
+        onProjectUpdated={fetchProject}
+      />
+    </div>
   );
 }
 
@@ -195,11 +190,26 @@ function ProjectDetailCard({
   lastUpdated: number | null;
   onProjectUpdated: () => Promise<void> | void;
 }) {
-  // Project-level presence. The per-screenshot heartbeats are
-  // hosted by <ScreenshotView> via its own usePresence call. The
-  // screenshotId-less row is bumped by THIS call, which is what
-  // the <PresenceList> reads.
-  const { myUserId, others } = usePresence({ projectId: project.id });
+  const [issueFilters, setIssueFilters] = useState<IssueFilterValue>({});
+  const reviewAccessLabel = project.accessRole === 'guest'
+    ? 'Guest access'
+    : project.accessRole === 'client'
+      ? 'Client review access'
+      : 'Review access';
+  const isClientReview = project.accessRole === 'client' || project.accessRole === 'guest';
+  const presenceActivityRef = useRef<PresenceActivity | null>(null);
+  const handlePresenceActivity = useCallback((activity: PresenceActivity) => {
+    const current = presenceActivityRef.current;
+    const isClear = activity.x === null && activity.y === null;
+    if (isClear && current && current.screenshotId !== activity.screenshotId) return;
+    presenceActivityRef.current = activity;
+  }, []);
+  // One heartbeat/list poll owns the focused project. Screenshot views
+  // only update the shared ref and render their slice of `others`.
+  const { myUserId, others } = usePresence({
+    projectId: project.id,
+    activityRef: presenceActivityRef,
+  });
 
   const totalPins = project.pages.reduce(
     (acc, p) => acc + p.screenshots.reduce((a, s) => a + s.pins.length, 0),
@@ -209,61 +219,104 @@ function ProjectDetailCard({
     (acc, p) => acc + p.screenshots.reduce((a, s) => a + s.pins.filter(pn => pn.status === 'OPEN').length, 0),
     0
   );
+  const matchedPins = project.pages.reduce(
+    (count, page) => count + page.screenshots.reduce(
+      (screenshotCount, screenshot) => screenshotCount
+        + screenshot.pins.filter((pin) => pinMatchesIssueFilters(pin, issueFilters)).length,
+      0
+    ),
+    0
+  );
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+      {project.archivedAt ? (
+        <div role="status" className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-300 bg-amber-50 px-6 py-3 text-sm text-amber-950">
+          <span><strong>Archived site.</strong> Historical feedback is preserved, but the widget cannot add new issues.</span>
+          {project.canAdmin ? <span>Use Site settings to restore it.</span> : null}
+        </div>
+      ) : null}
+      {isClientReview && project.reviewBranding ? (
+        <section aria-label="Agency review identity" className="border-b border-gray-200 bg-white">
+          <div className="h-2" style={{ backgroundColor: project.reviewBranding.accentColor }} />
+          <div className="flex flex-col gap-4 px-6 py-5 sm:flex-row sm:items-center">
+            {project.reviewBranding.logoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element -- validated remote workspace logo
+              <img src={project.reviewBranding.logoUrl} alt="" className="h-10 max-w-full object-contain object-left" />
+            ) : (
+              <div aria-hidden="true" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg font-bold" style={{ backgroundColor: project.reviewBranding.accentColor, color: project.reviewBranding.accentText }}>
+                {project.reviewBranding.displayName.slice(0, 1).toUpperCase()}
+              </div>
+            )}
+            <div className="min-w-0">
+              <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Client review with</p>
+              <p className="truncate text-lg font-semibold text-gray-950">{project.reviewBranding.displayName}</p>
+              <p className="mt-1 text-sm leading-5 text-gray-600">{project.reviewBranding.welcome}</p>
+            </div>
+          </div>
+        </section>
+      ) : null}
       <div className="bg-gray-900 px-6 py-4">
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0 w-full sm:flex-1">
             <h2 className="text-xl font-semibold text-white">{project.name}</h2>
             <p className="text-gray-400 text-sm">{project.domain}</p>
           </div>
-          <div className="flex items-center gap-4 text-sm">
-            <span className="text-gray-300">
-              <span className="font-semibold text-white">{totalPins}</span> total pins
+          <div className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 text-sm sm:w-auto sm:flex-nowrap sm:gap-4">
+            <span className="whitespace-nowrap text-gray-300">
+              <span className="font-semibold text-white">{totalPins}</span> {totalPins === 1 ? 'pin' : 'pins'}
             </span>
-            <span className="text-gray-300">
+            <span className="whitespace-nowrap text-gray-300">
               <span className="font-semibold text-yellow-400">{openPins}</span> open
             </span>
-            <span className="text-xs text-gray-500">{timeSinceLabel(lastUpdated)}</span>
-            <ProjectSettings
-              projectId={project.id}
-              projectName={project.name}
-              onProjectUpdated={onProjectUpdated}
-            />
+            <span className="whitespace-nowrap text-xs text-gray-500">{timeSinceLabel(lastUpdated)}</span>
+            {project.canAdmin ? (
+              <ProjectSettings
+                projectId={project.id}
+                projectName={project.name}
+                archivedAt={project.archivedAt ?? null}
+                onProjectUpdated={onProjectUpdated}
+              />
+            ) : (
+              <span className="rounded-full bg-blue-950 px-2 py-1 text-xs text-blue-200">
+                {reviewAccessLabel}
+              </span>
+            )}
           </div>
         </div>
       </div>
 
-      <div className="px-6 py-3 bg-gray-50 border-b border-gray-200 flex items-center gap-2 text-xs">
+      {project.canAdmin ? <div className="px-6 py-3 bg-gray-50 border-b border-gray-200 flex flex-wrap items-center gap-2 text-xs min-w-0">
         <span className="text-gray-500">API Key:</span>
         {project.apiKey ? (
-          <code className="bg-white px-2 py-1 rounded border border-gray-200 font-mono">{project.apiKey}</code>
+          <code className="min-w-0 max-w-full break-all whitespace-normal bg-white px-2 py-1 rounded border border-gray-200 font-mono">{project.apiKey}</code>
         ) : (
           <span className="text-gray-400">Sign in to view</span>
         )}
-      </div>
+      </div> : null}
 
       {/* Public share link toggle. Reads the project's current
           shareToken from the polled project; on generate/revoke
           the toggle pings the parent to refresh so the new token
           (or its absence) shows up in the next poll. */}
-      <div className="px-6 pt-3 pb-0">
+      {project.canAdmin ? <div className="px-6 pt-3 pb-0">
         <ShareToggle
           projectId={project.id}
           hasShareToken={!!project.shareToken}
-          shareUrl={
-            project.shareToken && typeof window !== 'undefined'
-              ? `${window.location.origin}/share/${project.shareToken}`
-              : null
-          }
+          shareUrl={project.shareToken ? `/share/${project.shareToken}/open` : null}
+          shareExpiresAt={project.shareExpiresAt}
+          sharePasswordProtected={project.sharePasswordProtected}
           onChange={onProjectUpdated}
         />
-      </div>
+      </div> : null}
 
-      <PresenceList myUserId={myUserId} others={others} />
+      {project.canAdmin ? <DeveloperAccessPanel projectId={project.id} /> : null}
 
-      <ProjectSubscribers projectId={project.id} />
+      {!isClientReview ? <PresenceList myUserId={myUserId} others={others} /> : null}
+
+      <ProjectNotifications projectId={project.id} />
+
+      {project.canAdmin ? <ProjectSubscribers projectId={project.id} /> : null}
 
       {/* Outbound integrations (Slack / Discord / generic
           webhook). Same grouping rationale as the old dashboard
@@ -271,9 +324,20 @@ function ProjectDetailCard({
           next to each other, and the section owns its own state
           so the project list doesn't have to thread integration
           data through the polled tree. */}
-      <IntegrationsSection projectId={project.id} />
+      {project.canAdmin ? <IntegrationsSection projectId={project.id} /> : null}
+
+      <ReviewWorkflow projectId={project.id} />
 
       <div className="p-6 space-y-6">
+        {project.canAdmin ? (
+          <IssueFilters
+            value={issueFilters}
+            options={project.issueOptions ?? { assignees: [], tags: [] }}
+            matched={matchedPins}
+            total={totalPins}
+            onChange={setIssueFilters}
+          />
+        ) : null}
         {project.pages.length === 0 ? (
           <p className="text-sm text-gray-500 italic">No pages captured yet. Visit the client site with the widget installed.</p>
         ) : (
@@ -292,6 +356,14 @@ function ProjectDetailCard({
                     screenshot={screenshot}
                     pagePath={page.path}
                     projectId={project.id}
+                    projectName={project.name}
+                    projectDomain={project.domain}
+                    showDeveloperContext={project.canAdmin}
+                    issueOptions={project.issueOptions}
+                    issueFilters={project.canAdmin ? issueFilters : undefined}
+                    onProjectUpdated={onProjectUpdated}
+                    presenceOthers={others}
+                    onPresenceActivity={handlePresenceActivity}
                   />
                 ))}
               </div>

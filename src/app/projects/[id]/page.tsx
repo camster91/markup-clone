@@ -13,21 +13,11 @@
 // list endpoint for delta updates, hosts the presence heartbeat,
 // and wires the recapture / pin / comment flows.
 //
-// Auth: the page is mounted under the same dashboard origin as
-// the /api/projects route. We don't re-check auth here — the
-// dashboard's existing <AuthGate> on the home page is the
-// canonical gate, and the per-project page is just a deeper
-// route. If a user navigates directly to /projects/<id> without
-// an active session, the share-link look-up equivalent (token
-// rather than id) would not even match; the per-project page
-// reads by id, which is a dashboard-internal identifier. The
-// project lookup is `prisma.project.findUnique` (no auth check)
-// — a determined attacker who guesses a UUID could read a
-// project they don't own. The UUID v4 collision space makes
-// that infeasible, and the route is mounted at the dashboard
-// origin, not exposed publicly. The /share/[token] path is the
-// public read-only escape hatch — it carries its own token
-// auth and renders the same data with readOnly=true.
+// Auth: direct navigation is authorized on the server before the
+// full project tree is loaded. Anonymous callers and authenticated
+// users outside the project's team receive the same 404 as a missing
+// project. The /share/[token] path is the explicit public read-only
+// escape hatch and carries its own token authorization.
 //
 // Team-scope gate: a project with teamId != NULL is only visible
 // to a caller who is a member of that team. We check that on the
@@ -35,8 +25,8 @@
 // 403) for both "project not found" and "project not in your
 // teams" — leaking the distinction would let a probing caller
 // enumerate project ids. Legacy / unscoped projects (teamId IS
-// NULL) remain visible to every dashboard caller, matching the
-// transitional single-project dashboard behaviour.
+// NULL) remain visible to authenticated dashboard callers, matching
+// the transitional single-project dashboard behaviour.
 //
 // 404: if the project is missing, deleted, or in a team the
 // caller doesn't belong to, call Next.js's notFound() helper.
@@ -51,7 +41,8 @@ import Link from 'next/link';
 import { prisma } from '@/lib/prisma';
 import ProjectDetail from '@/components/ProjectDetail';
 import type { ProjectWithPages } from '@/lib/types';
-import { getCallerUser } from '@/lib/teams';
+import { assertProjectAccessible } from '@/lib/teams';
+import { projectDetailInclude, serializeProjectDetail } from '@/lib/project-detail-dto';
 
 // force-dynamic: a project detail page is a live view. Caching
 // the HTML for 60s would mean a deleted project still renders
@@ -67,67 +58,16 @@ type PageProps = {
 export default async function ProjectDetailPage({ params }: PageProps) {
   const { id } = await params;
 
-  // Team-scope gate. Read the project's teamId first; if the
-  // project has a team, verify the caller is a member before
-  // loading the full tree. Two-step on purpose: the second query
-  // (membership) only fires when teamId != null, and the
-  // 404-on-deny semantics match the existing notFound() branch
-  // (so a probing caller can't distinguish "missing" from
-  // "forbidden").
-  const projectMeta = await prisma.project.findUnique({
-    where: { id },
-    select: { id: true, teamId: true },
-  });
-  if (!projectMeta) {
-    notFound();
-  }
-  if (projectMeta.teamId !== null) {
-    const caller = await getCallerUser();
-    if (!caller) {
-      notFound();
-    }
-    const membership = await prisma.teamMember.findFirst({
-      where: { userId: caller.id, teamId: projectMeta.teamId },
-      select: { id: true },
-    });
-    if (!membership) {
-      notFound();
-    }
-  }
+  // Authorize before loading the full project tree. The shared data-access
+  // gate requires a session for legacy projects and team membership for
+  // scoped projects. Missing and forbidden projects intentionally share the
+  // same 404 response so identifiers cannot be enumerated.
+  const access = await assertProjectAccessible(id);
+  if (!access.ok) notFound();
 
   const project = await prisma.project.findUnique({
     where: { id },
-    include: {
-      pages: {
-        orderBy: { createdAt: 'asc' },
-        include: {
-          screenshots: {
-            orderBy: { capturedAt: 'desc' },
-            include: {
-              pins: {
-                orderBy: { createdAt: 'asc' },
-                include: {
-                  comments: {
-                    orderBy: { createdAt: 'asc' },
-                  },
-                  // Same shape as /api/projects: include the
-                  // annotations (drawn marks) on each pin so
-                  // <ProjectDetail>'s <ScreenshotView> renders
-                  // them. The client's FeedbackAnnotation type
-                  // declares `path` as a parsed number[][];
-                  // we parse pathJson into that shape below
-                  // (mirror of /api/projects route handler).
-                  annotations: {
-                    orderBy: { createdAt: 'asc' },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      subscribers: true,
-    },
+    include: projectDetailInclude,
   });
 
   if (!project) {
@@ -151,66 +91,16 @@ export default async function ProjectDetailPage({ params }: PageProps) {
   // validator, so the JSON.parse here only fails on a
   // hand-crafted DB row; we fall back to an empty array so the
   // ScreenshotView doesn't throw on the bad row.
+  const canAdmin = access.membershipRole === 'owner'
+    || access.membershipRole === 'contributor'
+    || access.membershipRole === 'operator';
   const serializedProject: ProjectWithPages = {
-    id: project.id,
-    name: project.name,
-    domain: project.domain,
-    apiKey: project.apiKey,
-    shareToken: project.shareToken,
-    pages: project.pages.map((page) => ({
-      id: page.id,
-      path: page.path,
-      screenshots: page.screenshots.map((screenshot) => ({
-        id: screenshot.id,
-        storageKey: screenshot.storageKey,
-        pageId: screenshot.pageId,
-        width: screenshot.width,
-        height: screenshot.height,
-        capturedAt: screenshot.capturedAt.toISOString(),
-        pins: screenshot.pins.map((pin) => ({
-          id: pin.id,
-          xPercent: pin.xPercent,
-          yPercent: pin.yPercent,
-          status: pin.status,
-          elementXPath: pin.elementXPath,
-          elementHTML: pin.elementHTML,
-          createdAt: pin.createdAt.toISOString(),
-          comments: pin.comments.map((comment) => ({
-            id: comment.id,
-            text: comment.text,
-            author: comment.author,
-            authorRole: comment.authorRole,
-            createdAt: comment.createdAt.toISOString(),
-            // Empty array — attachments aren't currently
-            // included in the prisma findUnique include for
-            // this page (the list route skips them too). The
-            // PinThread tolerates `attachments: []` cleanly.
-            attachments: [],
-          })),
-          annotations: (pin.annotations ?? []).map((annotation) => {
-            let path: number[][] = [];
-            try {
-              const parsed = JSON.parse(annotation.pathJson);
-              if (Array.isArray(parsed)) path = parsed as number[][];
-            } catch {
-              // Fall through with the empty path; the
-              // ScreenshotView renders zero shapes for this pin
-              // and the bad row is visible in the DB.
-            }
-            return {
-              id: annotation.id,
-              kind: annotation.kind as 'arrow' | 'box' | 'freehand',
-              path,
-              createdAt: annotation.createdAt.toISOString(),
-            };
-          }),
-        })),
-      })),
-    })),
+    ...serializeProjectDetail(project, canAdmin),
+    accessRole: access.membershipRole,
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 sm:p-8">
+    <main className="min-h-screen bg-gray-50 p-4 sm:p-8">
       <div className="max-w-7xl mx-auto">
         <header className="mb-6">
           <div className="flex items-center justify-between flex-wrap gap-4">
@@ -219,7 +109,7 @@ export default async function ProjectDetailPage({ params }: PageProps) {
               className="text-sm text-gray-500 hover:text-gray-700 inline-flex items-center gap-1"
             >
               <span aria-hidden="true">←</span>
-              <span>All projects</span>
+              <span>{project.archivedAt ? 'Archived sites' : 'Active sites'}</span>
             </Link>
             <h1 className="text-2xl font-semibold text-gray-900">{project.name}</h1>
             <div className="w-24" aria-hidden="true" />
@@ -228,6 +118,6 @@ export default async function ProjectDetailPage({ params }: PageProps) {
 
         <ProjectDetail initialProject={serializedProject} />
       </div>
-    </div>
+    </main>
   );
 }

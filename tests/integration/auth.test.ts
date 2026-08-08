@@ -19,6 +19,8 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
+vi.unmock('@/lib/auth');
+
 const mocks = vi.hoisted(() => ({
   user: {
     findUnique: vi.fn(),

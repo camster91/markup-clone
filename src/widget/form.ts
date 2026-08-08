@@ -10,6 +10,7 @@
 
 import { getCssPath } from './dom';
 import { captureViewport } from './capture';
+import { captureDeveloperContext } from './context';
 
 export interface PendingClick {
   clickX: number;
@@ -18,6 +19,13 @@ export interface PendingClick {
   yPercent: number;
   xpath: string;
   elementHTML: string;
+  pageUrl: string;
+  viewportWidth: number;
+  viewportHeight: number;
+  devicePixelRatio: number;
+  userAgent: string;
+  platform: string;
+  selectorCandidates: string[];
 }
 
 export interface ModalHandles {
@@ -59,6 +67,8 @@ let currentModal: ModalHandles | null = null;
 let currentPin: HTMLDivElement | null = null;
 let pendingClick: PendingClick | null = null;
 let _pinCounter = 0;
+let modalKeydownHandler: ((event: KeyboardEvent) => void) | null = null;
+let returnFocusElement: HTMLElement | null = null;
 
 /** The current tool state. Read by tests via `getToolState()`. */
 let toolState: ToolState = { kind: 'idle', clicks: 0, points: [] };
@@ -67,6 +77,10 @@ let toolState: ToolState = { kind: 'idle', clicks: 0, points: [] };
  *  clicks "Save pin" — the pin creation comes first, and the response
  *  supplies the pinId each annotation needs. */
 let annotationQueue: QueuedAnnotation[] = [];
+
+function emitWidgetEvent(name: 'submitted' | 'error', detail: Record<string, unknown>): void {
+  document.dispatchEvent(new CustomEvent(`markup:${name}`, { detail }));
+}
 
 /** Detached listeners the current modal installed on the document. We
  *  keep references so `hideModal` (and a re-entry into showModal) can
@@ -215,6 +229,7 @@ function resetToolButtonStyles(toolRow: HTMLDivElement): void {
     const btn = b as HTMLButtonElement;
     btn.style.background = '#fff';
     btn.style.color = '#374151';
+    btn.setAttribute('aria-pressed', 'false');
   });
 }
 
@@ -225,9 +240,11 @@ function setActiveToolButton(toolRow: HTMLDivElement, kind: AnnotationKind): voi
     if (btn.getAttribute('data-markup-tool') === kind) {
       btn.style.background = '#0F172A';
       btn.style.color = '#fff';
+      btn.setAttribute('aria-pressed', 'true');
     } else {
       btn.style.background = '#fff';
       btn.style.color = '#374151';
+      btn.setAttribute('aria-pressed', 'false');
     }
   });
 }
@@ -305,8 +322,9 @@ function renderAnnotationPreview(ann: QueuedAnnotation): void {
   removeBtn.type = 'button';
   removeBtn.textContent = '×';
   removeBtn.title = 'Remove';
+  removeBtn.setAttribute('aria-label', 'Remove ' + label.textContent + ' annotation');
   removeBtn.style.cssText =
-    'background:none;border:none;color:#9CA3AF;cursor:pointer;font-size:14px;line-height:1;padding:0 2px;flex:0 0 auto';
+    'width:44px;height:44px;margin-left:auto;background:none;border:none;color:#4B5563;cursor:pointer;font-size:18px;line-height:1;padding:0;flex:0 0 auto;font-family:inherit';
   removeBtn.onclick = function () {
     // Drop the annotation from the queue
     const idx = annotationQueue.indexOf(ann);
@@ -469,27 +487,38 @@ function buildModal(
   overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483645;background:rgba(0,0,0,0.05)';
 
   const box = document.createElement('div');
-  const pos = calculatePosition(clickX, clickY, 320);
+  const modalWidth = Math.min(320, Math.max(1, window.innerWidth - 24));
+  const pos = calculatePosition(clickX, clickY, modalWidth);
+  const titleId = 'markup-dialog-title-' + pinNum;
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-modal', 'true');
+  box.setAttribute('aria-labelledby', titleId);
+  box.setAttribute('data-markup-dialog', '1');
+  box.tabIndex = -1;
   box.style.cssText =
     'position:fixed;left:' +
     pos.x +
     'px;top:' +
     pos.y +
-    'px;width:320px;background:#fff;border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,0.25);z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;';
+    'px;width:' +
+    modalWidth +
+    'px;max-height:calc(100vh - 24px);overflow-y:auto;box-sizing:border-box;background:#fff;color:#111;border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,0.25);z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;';
 
   const header = document.createElement('div');
   header.style.cssText =
     'padding:14px 16px;border-bottom:1px solid #E5E7EB;display:flex;justify-content:space-between;align-items:center';
   // Pin number is an integer we control; no user input flows in here.
   const pinLabel = document.createElement('div');
+  pinLabel.id = titleId;
   pinLabel.style.cssText = 'font-weight:600;color:#111;font-size:14px';
   pinLabel.textContent = 'Pin #' + pinNum;
   header.appendChild(pinLabel);
   const closeBtn = document.createElement('button');
   closeBtn.type = 'button';
   closeBtn.textContent = '×';
+  closeBtn.setAttribute('aria-label', 'Close feedback');
   closeBtn.style.cssText =
-    'background:none;border:none;font-size:22px;color:#9CA3AF;cursor:pointer;line-height:1;padding:0 4px';
+    'width:44px;height:44px;background:none;border:none;font-size:22px;color:#4B5563;cursor:pointer;line-height:1;padding:0;flex:0 0 auto;font-family:inherit';
   closeBtn.onclick = hideModal;
   header.appendChild(closeBtn);
   box.appendChild(header);
@@ -508,26 +537,30 @@ function buildModal(
     body.appendChild(warn);
   }
 
-  const authorLabel = document.createElement('div');
-  authorLabel.style.cssText = 'font-size:12px;color:#6B7280;margin-bottom:4px';
+  const authorLabel = document.createElement('label');
+  authorLabel.style.cssText = 'display:block;font-size:12px;color:#6B7280;margin-bottom:8px';
   authorLabel.textContent = 'Your name';
   body.appendChild(authorLabel);
 
   const authorInput = document.createElement('input');
+  authorInput.id = 'markup-author-' + pinNum;
+  authorLabel.htmlFor = authorInput.id;
   authorInput.type = 'text';
   authorInput.value = authorName;
   authorInput.style.cssText =
-    'width:100%;padding:6px 8px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;margin-bottom:10px;box-sizing:border-box;font-family:inherit';
+    'width:100%;min-height:44px;padding:9px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:16px;margin-bottom:10px;box-sizing:border-box;font-family:inherit';
   body.appendChild(authorInput);
 
-  const textLabel = document.createElement('div');
-  textLabel.style.cssText = 'font-size:12px;color:#6B7280;margin-bottom:4px';
+  const textLabel = document.createElement('label');
+  textLabel.style.cssText = 'display:block;font-size:12px;color:#6B7280;margin-bottom:8px';
   textLabel.textContent = 'Comment';
   body.appendChild(textLabel);
 
   const textarea = document.createElement('textarea');
+  textarea.id = 'markup-comment-' + pinNum;
+  textLabel.htmlFor = textarea.id;
   textarea.style.cssText =
-    'width:100%;min-height:70px;padding:8px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;resize:vertical;box-sizing:border-box;font-family:inherit;outline:none';
+    'width:100%;min-height:88px;padding:10px;border:1px solid #D1D5DB;border-radius:6px;font-size:16px;resize:vertical;box-sizing:border-box;font-family:inherit';
   textarea.placeholder = 'What needs to change here?';
   body.appendChild(textarea);
 
@@ -563,8 +596,9 @@ function buildModal(
     btn.type = 'button';
     btn.textContent = def.label;
     btn.setAttribute('data-markup-tool', def.kind);
+    btn.setAttribute('aria-pressed', 'false');
     btn.style.cssText =
-      'flex:1;padding:6px 4px;background:#fff;color:#374151;border:1px solid #D1D5DB;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;font-family:inherit';
+      'flex:1;min-width:0;min-height:44px;padding:8px 4px;background:#fff;color:#374151;border:1px solid #D1D5DB;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;font-family:inherit';
     btn.onclick = function () {
       armTool(def.kind);
     };
@@ -589,7 +623,7 @@ function buildModal(
   cancelBtn.type = 'button';
   cancelBtn.textContent = 'Cancel';
   cancelBtn.style.cssText =
-    'padding:7px 14px;background:#F3F4F6;color:#374151;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500';
+    'min-height:44px;padding:9px 14px;background:#F3F4F6;color:#374151;border:none;border-radius:6px;cursor:pointer;font-size:14px;font-weight:500;font-family:inherit';
   cancelBtn.onclick = hideModal;
 
   const submitBtn = document.createElement('button');
@@ -597,7 +631,7 @@ function buildModal(
   submitBtn.textContent = 'Save pin';
   submitBtn.disabled = true;
   submitBtn.style.cssText =
-    'padding:7px 14px;background:#0F172A;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;opacity:0.5';
+    'min-height:44px;padding:9px 14px;background:#0F172A;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px;font-weight:500;font-family:inherit;opacity:0.5';
   function updateBtn() {
     const ok = textarea.value.trim().length > 0;
     submitBtn.disabled = !ok;
@@ -637,6 +671,10 @@ function hideModal(): void {
   toolState = { kind: 'idle', clicks: 0, points: [] };
   // Drop any queued annotations — they belong to this pin only.
   annotationQueue = [];
+  if (modalKeydownHandler) {
+    document.removeEventListener('keydown', modalKeydownHandler, true);
+    modalKeydownHandler = null;
+  }
   if (currentModal) {
     if (currentModal.overlay && currentModal.overlay.parentNode) {
       currentModal.overlay.parentNode.removeChild(currentModal.overlay);
@@ -651,6 +689,41 @@ function hideModal(): void {
   }
   currentPin = null;
   pendingClick = null;
+  const focusTarget = returnFocusElement;
+  returnFocusElement = null;
+  if (focusTarget && focusTarget.isConnected) focusTarget.focus();
+}
+
+function installModalKeyboardHandling(box: HTMLDivElement): void {
+  modalKeydownHandler = function (event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      hideModal();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const controls = Array.from(
+      box.querySelectorAll<HTMLElement>(
+        'button:not([disabled]),input:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'
+      )
+    );
+    if (controls.length === 0) {
+      event.preventDefault();
+      box.focus();
+      return;
+    }
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+  document.addEventListener('keydown', modalKeydownHandler, true);
 }
 
 /** Public entry: open the feedback modal at (clickX, clickY) for clickTarget. */
@@ -664,6 +737,13 @@ export async function showModal(
   projectId: string
 ): Promise<void> {
   if (currentModal) hideModal();
+  const activeElement = document.activeElement;
+  returnFocusElement =
+    clickTarget instanceof HTMLElement && clickTarget.tabIndex >= 0
+      ? clickTarget
+      : activeElement instanceof HTMLElement && activeElement !== document.body
+      ? activeElement
+      : document.getElementById('markup-toggle') as HTMLElement | null;
 
   // Show "capturing..." pin
   currentPin = renderPin(clickX, clickY, '…', '#9CA3AF');
@@ -683,13 +763,15 @@ export async function showModal(
     console.error('[markup] screenshot capture failed:', err);
   }
 
+  const structuralSelector = getCssPath(clickTarget);
+  const developerContext = captureDeveloperContext(clickTarget, structuralSelector);
   pendingClick = {
     clickX,
     clickY,
     xPercent: (clickX / window.innerWidth) * 100,
     yPercent: (clickY / window.innerHeight) * 100,
-    xpath: getCssPath(clickTarget),
-    elementHTML: clickTarget.outerHTML ? clickTarget.outerHTML.slice(0, 4000) : '',
+    xpath: structuralSelector,
+    ...developerContext,
   };
 
   // Replace placeholder pin with real one
@@ -706,6 +788,7 @@ export async function showModal(
   }
   document.body.appendChild(currentModal.overlay);
   document.body.appendChild(currentModal.box);
+  installModalKeyboardHandling(currentModal.box);
   setTimeout(() => currentModal!.textarea.focus(), 0);
 }
 
@@ -732,6 +815,13 @@ async function submitPending(
   fd.append('yPercent', String(pendingClick.yPercent));
   fd.append('elementXPath', pendingClick.xpath || '');
   fd.append('elementHTML', pendingClick.elementHTML || '');
+  fd.append('pageUrl', pendingClick.pageUrl);
+  fd.append('viewportWidth', String(pendingClick.viewportWidth));
+  fd.append('viewportHeight', String(pendingClick.viewportHeight));
+  fd.append('devicePixelRatio', String(pendingClick.devicePixelRatio));
+  fd.append('userAgent', pendingClick.userAgent);
+  fd.append('platform', pendingClick.platform);
+  fd.append('selectorCandidatesJson', JSON.stringify(pendingClick.selectorCandidates));
   fd.append('text', text);
   fd.append('authorName', author);
   if (screenshotBlob) {
@@ -757,6 +847,24 @@ async function submitPending(
     });
     if (!res.ok) {
       const errText = await res.text();
+      if (res.status === 409) {
+        try {
+          const payload = JSON.parse(errText);
+          if (payload?.code === 'NEW_FEEDBACK_PAUSED') {
+            const pausedError = new Error('New feedback is paused for this review round. Replies to existing threads remain open.');
+            pausedError.name = 'ReviewFeedbackPaused';
+            throw pausedError;
+          }
+          if (payload?.code === 'PROJECT_ARCHIVED') {
+            const archivedError = new Error('This site is archived and is not accepting new feedback.');
+            archivedError.name = 'ProjectArchived';
+            throw archivedError;
+          }
+        } catch (parseError) {
+          if (parseError instanceof Error
+            && (parseError.name === 'ReviewFeedbackPaused' || parseError.name === 'ProjectArchived')) throw parseError;
+        }
+      }
       throw new Error('HTTP ' + res.status + ': ' + errText.slice(0, 200));
     }
     // Parse the pin id from the success response. The pin POST
@@ -817,6 +925,7 @@ async function submitPending(
     }
 
     // Success: keep the pin in place, close modal
+    emitWidgetEvent('submitted', { pinId, projectId });
     hideModal();
   } catch (err) {
     console.error('[markup] save failed:', err);
@@ -824,7 +933,18 @@ async function submitPending(
       currentModal.submitBtn.disabled = false;
       currentModal.submitBtn.textContent = 'Save pin';
     }
-    alert('Could not save feedback. ' + ((err as Error).message || 'Unknown error') + '. Check the console.');
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    const code = err instanceof Error && err.name === 'ReviewFeedbackPaused'
+      ? 'NEW_FEEDBACK_PAUSED'
+      : err instanceof Error && err.name === 'ProjectArchived'
+        ? 'PROJECT_ARCHIVED'
+        : undefined;
+    emitWidgetEvent('error', { message, ...(code ? { code } : {}) });
+    if (err instanceof Error && (err.name === 'ReviewFeedbackPaused' || err.name === 'ProjectArchived')) {
+      alert(err.message);
+    } else {
+      alert('Could not save feedback. ' + ((err as Error).message || 'Unknown error') + '. Check the console.');
+    }
   }
 }
 

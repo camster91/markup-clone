@@ -48,12 +48,31 @@ const mocks = vi.hoisted(() => ({
     update: vi.fn(),
     deleteMany: vi.fn(),
   },
+  txIntegrationFindMany: vi.fn().mockResolvedValue([]),
+  txIntegrationEventCreate: vi.fn().mockResolvedValue({}),
+  integrationDelivery: {
+    findMany: vi.fn(),
+    updateMany: vi.fn(),
+  },
   audit: vi.fn(),
 }));
 
 vi.mock('@/lib/prisma', () => ({
   prisma: mocks,
 }));
+
+vi.mock('@/lib/auth', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/auth')>();
+  return {
+    ...actual,
+    requireDashboardAuth: vi.fn(async (req: Request) => actual.requireDashboardOrigin(req)),
+    requireAuth: vi.fn(async () => ({
+      id: 'operator-1',
+      email: 'operator@example.com',
+      role: 'operator',
+    })),
+  };
+});
 
 vi.mock('@/lib/audit', () => ({
   audit: mocks.audit,
@@ -112,6 +131,8 @@ function req(
 import { POST as IntegrationsPOST, GET as IntegrationsGET } from '../../src/app/api/projects/[id]/integrations/route';
 import { DELETE as IntegrationDELETE } from '../../src/app/api/projects/[id]/integrations/[integrationId]/route';
 import { POST as IntegrationTestPOST } from '../../src/app/api/projects/[id]/integrations/test/route';
+import { GET as DeliveryLogGET } from '../../src/app/api/projects/[id]/integrations/deliveries/route';
+import { POST as DeliveryRetryPOST } from '../../src/app/api/projects/[id]/integrations/deliveries/[deliveryId]/retry/route';
 import { POST as PinsPOST } from '../../src/app/api/pins/route';
 
 import { post as slackPost } from '../../src/lib/integrations/slack';
@@ -121,6 +142,7 @@ import { buildSlackBody } from '../../src/lib/integrations/slack';
 import { buildDiscordBody } from '../../src/lib/integrations/discord';
 import { buildHeaders as buildWebhookHeaders } from '../../src/lib/integrations/webhook';
 import { dispatch } from '../../src/lib/integrations/dispatcher';
+import { encryptIntegrationCredential } from '../../src/lib/integrations/credential-crypto';
 
 const SAMPLE_PAYLOAD = {
   pin: {
@@ -158,6 +180,8 @@ function makeFormData(fields: Record<string, string | File>): FormData {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.txIntegrationFindMany.mockResolvedValue([]);
+  mocks.txIntegrationEventCreate.mockResolvedValue({});
   // Replace global fetch with a controllable mock. vi.stubGlobal
   // is automatically cleaned up in vitest's afterEach.
   fetchMock.mockReset();
@@ -318,6 +342,61 @@ describe('POST /api/projects/[id]/integrations', () => {
       url: 'https://example.com/hook',
       headers: { 'X-Auth': 'secret' },
     });
+    expect(call.data.signingSecret).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    const body = await res.json();
+    expect(body.signingSecret).toBe(call.data.signingSecret);
+  });
+
+  it('encrypts a GitHub credential and returns only the selected repository', async () => {
+    process.env.INTEGRATION_ENCRYPTION_KEY = Buffer.alloc(32, 4).toString('base64url');
+    mocks.integration.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+      id: 'int-github', ...data, createdAt: new Date(),
+      lastSuccessAt: null, lastError: null, lastErrorAt: null,
+    }));
+
+    const token = 'github_pat_private_integration_token';
+    const res = await IntegrationsPOST(
+      req('https://markup.ashbi.ca/api/projects/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/integrations', {
+        method: 'POST',
+        body: {
+          kind: 'github',
+          config: { owner: 'acme', repo: 'client-site', labels: ['feedback'], token },
+        },
+      }),
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) },
+    );
+
+    expect(res.status).toBe(201);
+    const call = mocks.integration.create.mock.calls[0][0].data;
+    expect(JSON.parse(call.configJson)).toEqual({ owner: 'acme', repo: 'client-site', labels: ['feedback'] });
+    expect(call.credentialCiphertext).toMatch(/^v1\./);
+    expect(call.credentialCiphertext).not.toContain(token);
+    const body = await res.json();
+    expect(body.configJson).toBe(JSON.stringify({ owner: 'acme', repo: 'client-site', labels: ['feedback'] }));
+    expect(body.credentialConfigured).toBe(true);
+    expect(JSON.stringify(body)).not.toContain(token);
+    expect(body).not.toHaveProperty('credentialCiphertext');
+  });
+
+  it('fails closed before storing GitHub credentials when encryption is unavailable', async () => {
+    delete process.env.INTEGRATION_ENCRYPTION_KEY;
+    const res = await IntegrationsPOST(
+      req('https://markup.ashbi.ca/api/projects/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/integrations', {
+        method: 'POST',
+        body: {
+          kind: 'github',
+          config: {
+            owner: 'acme', repo: 'client-site', labels: [],
+            token: 'github_pat_private_integration_token',
+          },
+        },
+      }),
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) },
+    );
+
+    expect(res.status).toBe(503);
+    expect(mocks.integration.create).not.toHaveBeenCalled();
+    expect(await res.json()).toEqual({ error: 'GitHub credential encryption is not configured' });
   });
 
   it('rejects webhook config with non-string header values', async () => {
@@ -379,12 +458,22 @@ describe('GET /api/projects/[id]/integrations', () => {
         projectId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
         kind: 'slack',
         configJson: JSON.stringify({ webhookUrl: 'https://hooks.slack.com/services/T/B/xxx' }),
+        signingSecret: null,
+        lastSuccessAt: null,
+        lastError: null,
+        lastErrorAt: null,
+        createdAt: new Date('2026-08-08T04:00:00.000Z'),
       },
       {
         id: 'int-2',
         projectId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
         kind: 'discord',
         configJson: JSON.stringify({ webhookUrl: 'https://discord.com/api/webhooks/1/token' }),
+        signingSecret: 'must-never-leave-the-server',
+        lastSuccessAt: null,
+        lastError: null,
+        lastErrorAt: null,
+        createdAt: new Date('2026-08-08T04:00:00.000Z'),
       },
     ];
     mocks.integration.findMany.mockResolvedValue(rows);
@@ -406,6 +495,173 @@ describe('GET /api/projects/[id]/integrations', () => {
       'https://discord.com/••••/••••/••••/••••'
     );
     expect(body[1].configJson).not.toContain('token');
+    expect(body[0]).not.toHaveProperty('signingSecret');
+    expect(body[1]).not.toHaveProperty('signingSecret');
+    expect(JSON.stringify(body)).not.toContain('must-never-leave-the-server');
+  });
+
+  it('reports GitHub credential presence without emitting encrypted material', async () => {
+    mocks.integration.findMany.mockResolvedValue([{
+      id: 'int-github',
+      projectId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      kind: 'github',
+      configJson: JSON.stringify({ owner: 'acme', repo: 'client-site', labels: ['feedback'] }),
+      signingSecret: null,
+      credentialCiphertext: 'v1.private.encrypted.material',
+      lastSuccessAt: null,
+      lastError: null,
+      lastErrorAt: null,
+      createdAt: new Date('2026-08-08T04:00:00.000Z'),
+    }]);
+
+    const res = await IntegrationsGET(
+      req('https://markup.ashbi.ca/api/projects/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/integrations'),
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) },
+    );
+    const body = await res.json();
+    expect(body[0]).toEqual(expect.objectContaining({
+      kind: 'github',
+      configJson: JSON.stringify({ owner: 'acme', repo: 'client-site', labels: ['feedback'] }),
+      credentialConfigured: true,
+    }));
+    expect(JSON.stringify(body)).not.toContain('v1.private.encrypted.material');
+    expect(body[0]).not.toHaveProperty('credentialCiphertext');
+  });
+});
+
+describe('owner integration delivery activity', () => {
+  const deliveryId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+
+  it('lists a bounded safe projection without payloads, configs, or secrets', async () => {
+    mocks.integrationDelivery.findMany.mockResolvedValue([{
+      id: deliveryId,
+      status: 'DEAD_LETTER',
+      attemptCount: 5,
+      retryCycle: 0,
+      nextAttemptAt: new Date('2026-08-08T04:00:00.000Z'),
+      deliveredAt: null,
+      lastStatusCode: 503,
+      lastError: 'Webhook returned 503',
+      externalId: null,
+      externalUrl: null,
+      createdAt: new Date('2026-08-08T03:00:00.000Z'),
+      updatedAt: new Date('2026-08-08T04:00:00.000Z'),
+      integration: { id: 'int-1', kind: 'webhook' },
+      event: { id: 'event-1', type: 'pin.created', occurredAt: new Date('2026-08-08T03:00:00.000Z') },
+    }]);
+
+    const response = await DeliveryLogGET(
+      req('https://markup.ashbi.ca/api/projects/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/integrations/deliveries'),
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) },
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.integrationDelivery.findMany).toHaveBeenCalledWith({
+      where: { integration: { projectId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' } },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: expect.objectContaining({
+        id: true, status: true, attemptCount: true, retryCycle: true,
+        externalId: true, externalUrl: true,
+      }),
+    });
+    const body = await response.json();
+    expect(body).toHaveLength(1);
+    expect(body[0]).toEqual(expect.objectContaining({
+      id: deliveryId, status: 'DEAD_LETTER', attemptCount: 5,
+      integration: { id: 'int-1', kind: 'webhook' },
+      event: { id: 'event-1', type: 'pin.created', occurredAt: '2026-08-08T03:00:00.000Z' },
+    }));
+    expect(JSON.stringify(body)).not.toMatch(/payloadJson|configJson|signingSecret/i);
+  });
+
+  it('returns a validated successful GitHub issue reference', async () => {
+    mocks.integrationDelivery.findMany.mockResolvedValue([{
+      id: deliveryId,
+      status: 'SUCCEEDED', attemptCount: 1, retryCycle: 0,
+      nextAttemptAt: new Date('2026-08-08T04:00:00.000Z'),
+      deliveredAt: new Date('2026-08-08T04:00:00.000Z'),
+      lastStatusCode: 201, lastError: null,
+      externalId: '42', externalUrl: 'https://github.com/acme/client-site/issues/42',
+      createdAt: new Date('2026-08-08T03:00:00.000Z'),
+      updatedAt: new Date('2026-08-08T04:00:00.000Z'),
+      integration: { id: 'int-github', kind: 'github' },
+      event: { id: 'event-1', type: 'pin.created', occurredAt: new Date('2026-08-08T03:00:00.000Z') },
+    }]);
+
+    const response = await DeliveryLogGET(
+      req('https://markup.ashbi.ca/api/projects/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/integrations/deliveries'),
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) },
+    );
+    const body = await response.json();
+    expect(body[0]).toEqual(expect.objectContaining({
+      externalId: '42', externalUrl: 'https://github.com/acme/client-site/issues/42',
+    }));
+  });
+
+  it('drops a malformed external reference instead of emitting an unsafe link', async () => {
+    mocks.integrationDelivery.findMany.mockResolvedValue([{
+      id: deliveryId,
+      status: 'SUCCEEDED', attemptCount: 1, retryCycle: 0,
+      nextAttemptAt: new Date('2026-08-08T04:00:00.000Z'), deliveredAt: new Date(),
+      lastStatusCode: 201, lastError: null,
+      externalId: '42', externalUrl: 'javascript:alert(1)',
+      createdAt: new Date(), updatedAt: new Date(),
+      integration: { id: 'int-github', kind: 'github' },
+      event: { id: 'event-1', type: 'pin.created', occurredAt: new Date() },
+    }]);
+
+    const response = await DeliveryLogGET(
+      req('https://markup.ashbi.ca/api/projects/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/integrations/deliveries'),
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) },
+    );
+    const body = await response.json();
+    expect(body[0].externalId).toBeNull();
+    expect(body[0].externalUrl).toBeNull();
+  });
+
+  it('starts a fresh bounded retry cycle for a project-scoped dead letter', async () => {
+    mocks.integrationDelivery.updateMany.mockResolvedValue({ count: 1 });
+    const response = await DeliveryRetryPOST(
+      req(`https://markup.ashbi.ca/api/projects/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/integrations/deliveries/${deliveryId}/retry`, {
+        method: 'POST', body: {},
+      }),
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', deliveryId }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ queued: true });
+    expect(mocks.integrationDelivery.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: deliveryId,
+        status: 'DEAD_LETTER',
+        integration: { projectId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' },
+      },
+      data: {
+        status: 'PENDING',
+        attemptCount: 0,
+        retryCycle: { increment: 1 },
+        nextAttemptAt: expect.any(Date),
+        lockedAt: null,
+        lockedBy: null,
+        deliveredAt: null,
+        lastStatusCode: null,
+        lastError: null,
+        externalId: null,
+        externalUrl: null,
+      },
+    });
+  });
+
+  it('returns 409 instead of requeueing an active or cross-project delivery', async () => {
+    mocks.integrationDelivery.updateMany.mockResolvedValue({ count: 0 });
+    const response = await DeliveryRetryPOST(
+      req(`https://markup.ashbi.ca/api/projects/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/integrations/deliveries/${deliveryId}/retry`, {
+        method: 'POST', body: {},
+      }),
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', deliveryId }) },
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'Delivery is not available for retry' });
   });
 });
 
@@ -482,13 +738,13 @@ describe('slack adapter', () => {
     expect(body.blocks[0].text.text).toContain('Please fix the menu');
     // Second block: a context row with the author + position
     expect(body.blocks[1].type).toBe('context');
-    expect(body.blocks[1].elements[0].text).toContain('Alice');
-    expect(body.blocks[1].elements[0].text).toContain('25%, 75%');
+    expect(body.blocks[1].elements[0]!.text).toContain('Alice');
+    expect(body.blocks[1].elements[0]!.text).toContain('25%, 75%');
   });
 
   it('handles an empty comment by using the "no comment" placeholder', () => {
     const body = buildSlackBody({ ...SAMPLE_PAYLOAD, commentText: '' });
-    expect(body.blocks[0].text.text).toContain('_no comment_');
+    expect(body.blocks[0]!.text!.text).toContain('_no comment_');
   });
 
   it('throws on a non-2xx response', async () => {
@@ -674,6 +930,39 @@ describe('POST /api/projects/[id]/integrations/test', () => {
     expect(typeof body.lastSuccessAt).toBe('string');
   });
 
+  it('verifies GitHub repository access without creating a test issue', async () => {
+    const key = Buffer.alloc(32, 5);
+    process.env.INTEGRATION_ENCRYPTION_KEY = key.toString('base64url');
+    const token = 'github_pat_private_test_route_token';
+    mocks.integration.findFirst.mockResolvedValue({
+      id: 'int-github',
+      projectId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      kind: 'github',
+      configJson: JSON.stringify({ owner: 'acme', repo: 'client-site', labels: ['feedback'] }),
+      credentialCiphertext: encryptIntegrationCredential(token, key),
+      project: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', name: 'My Site', domain: 'example.com' },
+    });
+    mocks.integration.update.mockResolvedValue({});
+    fetchMock.mockResolvedValueOnce({
+      ok: true, status: 200, headers: new Headers(),
+      json: async () => ({ full_name: 'acme/client-site', has_issues: true }),
+    });
+
+    const res = await IntegrationTestPOST(
+      req('https://markup.ashbi.ca/api/projects/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/integrations/test', {
+        method: 'POST', body: { integrationId: 'int-github' },
+      }),
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(expect.objectContaining({ ok: true }));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.github.com/repos/acme/client-site');
+    expect(fetchMock.mock.calls[0][1].method).toBe('GET');
+    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe(`Bearer ${token}`);
+  });
+
   it('sets lastError on adapter failure and returns ok:false with status 200', async () => {
     mocks.integration.findFirst.mockResolvedValue({
       id: 'int-1',
@@ -721,7 +1010,10 @@ describe('POST /api/pins → integration dispatch', () => {
     // the callback against a fake tx.
     mocks.$transaction = vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => {
       const tx = {
-        screenshot: { create: vi.fn().mockResolvedValue({ id: 'ss-1', pageId: 'page-1' }) },
+        screenshot: { create: vi.fn().mockResolvedValue({
+          id: 'ss-1', pageId: 'page-1', width: 1, height: 1,
+          capturedAt: new Date('2026-06-19T00:00:00.000Z'),
+        }) },
         pin: { create: vi.fn().mockResolvedValue({
           id: 'pin-1',
           xPercent: 50,
@@ -729,18 +1021,21 @@ describe('POST /api/pins → integration dispatch', () => {
           status: 'OPEN',
           authorName: 'Alice',
           createdAt: new Date('2026-06-19T00:00:00.000Z'),
+          comments: [{
+            id: 'comment-1', author: 'Alice', authorRole: 'client', text: 'Great feedback',
+            createdAt: new Date('2026-06-19T00:00:00.000Z'),
+          }],
         }) },
+        integration: { findMany: mocks.txIntegrationFindMany },
+        integrationEvent: { create: mocks.txIntegrationEventCreate },
       };
       return await cb(tx);
     });
   }
 
-  it('triggers the slack integration when a new pin is created (mocked adapter)', async () => {
+  it('queues the integration event inside the pin transaction without direct network dispatch', async () => {
     setupPinMocks();
-    mocks.integration.findMany.mockResolvedValue([
-      { id: 'int-1', kind: 'slack', configJson: JSON.stringify({ webhookUrl: 'https://hooks.slack.com/x' }) },
-    ]);
-    mocks.integration.update.mockResolvedValue({});
+    mocks.txIntegrationFindMany.mockResolvedValue([{ id: 'int-1' }]);
 
     const fd = makeFormData({
       projectId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', path: '/about', xPercent: '50', yPercent: '50',
@@ -755,35 +1050,26 @@ describe('POST /api/pins → integration dispatch', () => {
     const res = await PinsPOST(pinReq);
     expect(res.status).toBe(201);
 
-    // The dispatch is fire-and-forget — give the microtask queue
-    // a chance to drain before we assert.
-    await new Promise((r) => setTimeout(r, 10));
-
-    // The Slack adapter was called.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('https://hooks.slack.com/x');
-    const body = JSON.parse(init.body);
-    expect(body.blocks[0].text.text).toContain('Great feedback');
-
-    // The integration's lastSuccessAt was updated.
-    expect(mocks.integration.update).toHaveBeenCalledWith({
-      where: { id: 'int-1' },
+    expect(mocks.txIntegrationFindMany).toHaveBeenCalledWith({
+      where: { projectId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' },
+      select: { id: true },
+    });
+    expect(mocks.txIntegrationEventCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        lastSuccessAt: expect.any(Date),
-        lastError: null,
-        lastErrorAt: null,
+        projectId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        schema: 'visual-feedback.event.v1',
+        type: 'pin.created',
+        payloadJson: expect.stringContaining('Great feedback'),
+        deliveries: { create: [{ integrationId: 'int-1' }] },
       }),
     });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.integration.update).not.toHaveBeenCalled();
   });
 
-  it('does NOT block the response when the adapter fails', async () => {
+  it('does not call a failing receiver from the pin request', async () => {
     setupPinMocks();
-    mocks.integration.findMany.mockResolvedValue([
-      { id: 'int-1', kind: 'slack', configJson: JSON.stringify({ webhookUrl: 'https://hooks.slack.com/x' }) },
-    ]);
-    mocks.integration.update.mockResolvedValue({});
-    // Adapter returns 500.
+    mocks.txIntegrationFindMany.mockResolvedValue([{ id: 'int-1' }]);
     fetchMock.mockResolvedValueOnce({ ok: false, status: 500, text: async () => 'err' });
 
     const fd = makeFormData({
@@ -795,26 +1081,16 @@ describe('POST /api/pins → integration dispatch', () => {
       headers: { 'X-Api-Key': 'mk_correctkey123' },
       body: fd,
     });
-    // Even though the adapter will fail, the pin POST itself
-    // returns 201 immediately.
     const res = await PinsPOST(pinReq);
     expect(res.status).toBe(201);
-
-    // After the dispatch loop runs, the integration row's
-    // lastError is updated, NOT lastSuccessAt.
-    await new Promise((r) => setTimeout(r, 10));
-    expect(mocks.integration.update).toHaveBeenCalledWith({
-      where: { id: 'int-1' },
-      data: expect.objectContaining({
-        lastError: expect.stringMatching(/500/),
-        lastErrorAt: expect.any(Date),
-      }),
-    });
+    expect(mocks.txIntegrationEventCreate).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.integration.update).not.toHaveBeenCalled();
   });
 
   it('is a no-op when the project has no integrations configured', async () => {
     setupPinMocks();
-    mocks.integration.findMany.mockResolvedValue([]);
+    mocks.txIntegrationFindMany.mockResolvedValue([]);
 
     const fd = makeFormData({
       projectId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', path: '/', xPercent: '50', yPercent: '50',
@@ -830,16 +1106,14 @@ describe('POST /api/pins → integration dispatch', () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mocks.integration.update).not.toHaveBeenCalled();
+    expect(mocks.txIntegrationEventCreate).not.toHaveBeenCalled();
   });
 
-  it('fans out to multiple integrations (slack + discord + webhook)', async () => {
+  it('queues one delivery for each configured Slack, Discord, and webhook target', async () => {
     setupPinMocks();
-    mocks.integration.findMany.mockResolvedValue([
-      { id: 'int-1', kind: 'slack', configJson: JSON.stringify({ webhookUrl: 'https://hooks.slack.com/x' }) },
-      { id: 'int-2', kind: 'discord', configJson: JSON.stringify({ webhookUrl: 'https://discord.com/api/webhooks/x' }) },
-      { id: 'int-3', kind: 'webhook', configJson: JSON.stringify({ url: 'https://example.com/h' }) },
+    mocks.txIntegrationFindMany.mockResolvedValue([
+      { id: 'int-1' }, { id: 'int-2' }, { id: 'int-3' },
     ]);
-    mocks.integration.update.mockResolvedValue({});
 
     const fd = makeFormData({
       projectId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', path: '/', xPercent: '50', yPercent: '50',
@@ -852,13 +1126,15 @@ describe('POST /api/pins → integration dispatch', () => {
     });
     const res = await PinsPOST(pinReq);
     expect(res.status).toBe(201);
-    await new Promise((r) => setTimeout(r, 20));
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    // Each integration's row was updated exactly once.
-    const updates = mocks.integration.update.mock.calls;
-    const updatedIds = updates.map(
-      (c) => (c[0] as { where: { id: string } }).where.id
-    );
-    expect(updatedIds).toEqual(expect.arrayContaining(['int-1', 'int-2', 'int-3']));
+    expect(mocks.txIntegrationEventCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        deliveries: { create: [
+          { integrationId: 'int-1' },
+          { integrationId: 'int-2' },
+          { integrationId: 'int-3' },
+        ] },
+      }),
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

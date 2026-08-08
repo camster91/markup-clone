@@ -6,7 +6,7 @@
 // surface for debugging and tests; the widget itself runs side-effectful
 // (it auto-boots).
 
-import { boot, init, getConfig, getIsFeedbackMode } from './lifecycle';
+import { boot, init, destroy, startFeedback, stopFeedback, getState, getConfig, getIsFeedbackMode } from './lifecycle';
 import { showModal, hideModal, getCurrentModal, getPendingClick } from './form';
 import { readConfig, parseHost, findScriptEl } from './config';
 import { createToggleButton, getCssPath, clearHoverOutline } from './dom';
@@ -16,6 +16,10 @@ const MarkupWidget = {
   // Lifecycle
   boot,
   init,
+  destroy,
+  startFeedback,
+  stopFeedback,
+  getState,
   getConfig,
   getIsFeedbackMode,
   // Config
@@ -35,10 +39,19 @@ const MarkupWidget = {
   getPendingClick,
 };
 
+// The browser SDK intentionally calls a small, stable lifecycle surface on
+// window. Rollup's IIFE wrapper does not publish module exports by itself when
+// the entry is consumed only for side effects, so make that contract explicit.
+if (typeof window !== 'undefined') window.MarkupWidget = MarkupWidget;
+
 export default MarkupWidget;
 export {
   boot,
   init,
+  destroy,
+  startFeedback,
+  stopFeedback,
+  getState,
   getConfig,
   getIsFeedbackMode,
   readConfig,

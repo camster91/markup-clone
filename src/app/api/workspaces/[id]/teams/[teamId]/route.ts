@@ -12,7 +12,9 @@ import { prisma } from '@/lib/prisma';
 import { requireDashboardAuth } from '@/lib/auth';
 import { requireCsrfToken } from '@/lib/csrf';
 import { audit } from '@/lib/audit';
+import { assertTeamRole } from '@/lib/teams';
 import { validateTeamName, validateUuidParam } from '@/lib/validation';
+import { parseReviewDefaults } from '@/lib/review-defaults';
 
 async function findTeam(workspaceId: string, teamId: string) {
   return prisma.team.findFirst({
@@ -37,19 +39,49 @@ export async function PATCH(
     const tidRes = validateUuidParam(teamId, 'teamId');
     if (!tidRes.ok) return NextResponse.json({ error: tidRes.error }, { status: 400 });
 
-    const body = await req.json();
-    const { name } = body as { name?: unknown };
-    const nameRes = validateTeamName(name);
-    if (!nameRes.ok) return NextResponse.json({ error: nameRes.error }, { status: 400 });
+    const access = await assertTeamRole(widRes.value, tidRes.value, ['owner']);
+    if (!access.ok) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+
+    const body = await req.json() as Record<string, unknown>;
+    const data: {
+      name?: string;
+      reviewRoundNameTemplate?: string;
+      reviewRoundCommentsPaused?: boolean;
+    } = {};
+    if (Object.prototype.hasOwnProperty.call(body, 'name')) {
+      const nameRes = validateTeamName(body.name);
+      if (!nameRes.ok) return NextResponse.json({ error: nameRes.error }, { status: 400 });
+      data.name = nameRes.value;
+    }
+    const hasReviewDefaults = Object.prototype.hasOwnProperty.call(body, 'reviewRoundNameTemplate')
+      || Object.prototype.hasOwnProperty.call(body, 'reviewRoundCommentsPaused');
+    if (hasReviewDefaults) {
+      const defaultsRes = parseReviewDefaults(body);
+      if (!defaultsRes.ok) return NextResponse.json({ error: defaultsRes.error }, { status: 400 });
+      Object.assign(data, defaultsRes.value);
+    }
+    if (Object.keys(data).length === 0) {
+      return NextResponse.json({ error: 'No supported team settings supplied' }, { status: 400 });
+    }
 
     const existing = await findTeam(widRes.value, tidRes.value);
     if (!existing) return NextResponse.json({ error: 'Team not found' }, { status: 404 });
 
     const team = await prisma.team.update({
       where: { id: tidRes.value },
-      data: { name: nameRes.value },
+      data,
     });
-    audit({ actor: team.id, action: 'team.update', target: team.id, metadata: { name: team.name } });
+    audit({
+      actor: access.caller.id,
+      action: 'team.update',
+      target: team.id,
+      metadata: {
+        ...(data.name ? { name: data.name } : {}),
+        ...(hasReviewDefaults ? { reviewDefaultsUpdated: true } : {}),
+      },
+    });
     return NextResponse.json(team);
   } catch (error) {
     console.error('Team update error:', error);
@@ -72,6 +104,11 @@ export async function DELETE(
     if (!widRes.ok) return NextResponse.json({ error: widRes.error }, { status: 400 });
     const tidRes = validateUuidParam(teamId, 'teamId');
     if (!tidRes.ok) return NextResponse.json({ error: tidRes.error }, { status: 400 });
+
+    const access = await assertTeamRole(widRes.value, tidRes.value, ['owner']);
+    if (!access.ok) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
 
     const existing = await findTeam(widRes.value, tidRes.value);
     if (!existing) return NextResponse.json({ error: 'Team not found' }, { status: 404 });

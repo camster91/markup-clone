@@ -7,8 +7,8 @@
 // /api/screenshots/[id]/image endpoint, which serves the file at
 // SCREENSHOTS_DIR/<storageKey>.png.
 //
-// Auth: dashboard origin OR matching ?share=<token> (same gate as
-// /api/screenshots/[id]/image and /api/attachments/[id]). Soft-allow
+// Auth: authenticated project access OR the exact link's token-bound HttpOnly
+// cookie (same gate as image and attachment media). Soft-allow
 // for anonymous callers is intentionally removed — a screenshot UUID
 // alone is not enough. Unauthorized returns 404 (not 401) so probes
 // cannot distinguish "exists but forbidden" from "missing".
@@ -38,7 +38,8 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { validateScreenshotId } from '@/lib/validation';
-import { isDashboardOrigin } from '@/lib/auth';
+import { assertProjectAccessible } from '@/lib/teams';
+import { requestHasShareAccess } from '@/lib/share-access';
 
 // Cap at 50 — the task's explicit limit. Larger windows would
 // require pagination; the dashboard's HistoryPanel only renders
@@ -63,7 +64,12 @@ export async function GET(
       page: {
         select: {
           project: {
-            select: { shareToken: true },
+            select: {
+              id: true,
+              shareToken: true,
+              shareExpiresAt: true,
+              sharePasswordHash: true,
+            },
           },
         },
       },
@@ -73,13 +79,19 @@ export async function GET(
     return NextResponse.json({ error: 'screenshot not found' }, { status: 404 });
   }
 
-  const dashboard = isDashboardOrigin(req);
-  const url = new URL(req.url);
-  const shareToken = url.searchParams.get('share');
-  const projectShareToken = ss.page?.project?.shareToken ?? null;
-  const shareTokenValid = !!shareToken && shareToken === projectShareToken;
+  const project = ss.page?.project;
+  const shareAccessValid = !!project?.shareToken && requestHasShareAccess(
+    req,
+    project.shareToken,
+    project.sharePasswordHash,
+    project.shareExpiresAt
+  );
+  const projectId = ss.page?.project?.id ?? null;
+  const memberAccess = !shareAccessValid && projectId
+    ? await assertProjectAccessible(projectId)
+    : null;
 
-  if (!dashboard && !shareTokenValid) {
+  if (!shareAccessValid && !memberAccess?.ok) {
     return NextResponse.json({ error: 'not found' }, { status: 404 });
   }
 
@@ -97,15 +109,18 @@ export async function GET(
     },
   });
 
-  return NextResponse.json({
-    screenshotId: id,
-    versions: versions.map((v) => ({
-      id: v.id,
-      capturedAt: v.capturedAt.toISOString(),
-      width: v.width,
-      height: v.height,
-      storageKey: v.storageKey,
-      createdBy: v.createdBy,
-    })),
-  });
+  return NextResponse.json(
+    {
+      screenshotId: id,
+      versions: versions.map((v) => ({
+        id: v.id,
+        capturedAt: v.capturedAt.toISOString(),
+        width: v.width,
+        height: v.height,
+        storageKey: v.storageKey,
+        createdBy: v.createdBy,
+      })),
+    },
+    { headers: { 'Cache-Control': 'private, no-store', Vary: 'Cookie' } }
+  );
 }

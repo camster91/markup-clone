@@ -4,7 +4,7 @@ import { requireDashboardAuth } from '@/lib/auth';
 import { requireCsrfToken } from '@/lib/csrf';
 import { audit } from '@/lib/audit';
 import { validateSubscriberEmail, validateProjectId } from '@/lib/validation';
-import { assertProjectAccessible } from '@/lib/teams';
+import { assertProjectAdmin } from '@/lib/teams';
 
 export async function DELETE(
   req: Request,
@@ -20,7 +20,7 @@ export async function DELETE(
     const idRes = validateProjectId(projectId);
     if (!idRes.ok) return NextResponse.json({ error: idRes.error }, { status: 400 });
 
-    const access = await assertProjectAccessible(projectId);
+    const access = await assertProjectAdmin(projectId);
     if (!access.ok) {
       return NextResponse.json({ error: access.error }, { status: access.status });
     }

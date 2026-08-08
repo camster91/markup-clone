@@ -37,12 +37,14 @@
 // assertion.
 
 import { test, expect } from '@playwright/test';
+import path from 'node:path';
 
 // Path the widget will POST to. The script-src host (the page's
 // own origin) is what the widget derives the API URL from, so
 // intercepting on '*://*/api/pins' is sufficient and robust to
 // whatever host/port Playwright ends up binding.
 const PINS_PATH = /\/api\/pins/;
+const WIDGET_PATH = path.resolve(process.cwd(), 'public/widget.js');
 
 // The widget's SCRIPT_SRC is the page's own origin (the data: URL
 // has no real src, so we set it explicitly to the same host as
@@ -52,8 +54,7 @@ const PINS_PATH = /\/api\/pins/;
 function buildHostPage(): string {
   // A self-contained page that loads the built widget from the
   // Next.js /public path. We use a relative <script src="/widget.js">
-  // and the test's `page.goto('/widget-host')` step below serves
-  // the same file at the Playwright baseURL — which is the live
+  // after the test establishes the Playwright baseURL origin — which is the live
   // Next dev server's public dir, the same place the embed code
   // would point at in production. The widget then reads
   // `script.src` (resolved to an absolute URL), strips
@@ -80,7 +81,12 @@ function buildHostPage(): string {
 }
 
 test.describe('markup widget — full feedback flow', () => {
-  test('loads the widget, drives the toggle → click → save flow, and posts the right payload to /api/pins', async ({ page }) => {
+  test('loads the widget, drives the toggle → click → save flow, and posts the right payload to /api/pins', async ({ page }, testInfo) => {
+    const browserErrors: string[] = [];
+    page.on('console', (message) => {
+      if (message.type() === 'error') browserErrors.push(message.text());
+    });
+    page.on('pageerror', (error) => browserErrors.push(error.message));
     // Capture every /api/pins request. We use a Promise + a
     // listener so we can both fulfill the response (so the widget
     // doesn't see a 404 and warn) AND inspect the body when the
@@ -109,11 +115,22 @@ test.describe('markup widget — full feedback flow', () => {
         body: JSON.stringify({ id: 'pin-test-123', createdAt: '2026-06-17T00:00:00.000Z' }),
       });
     });
+    // Serve the widget artifact built from the current working tree. The local
+    // production-mode container may intentionally remain on the prior image
+    // during pre-release QA, so relying on its /widget.js would test stale code.
+    await page.route(/\/widget\.js(?:\?.*)?$/, async (route) => {
+      await route.fulfill({ path: WIDGET_PATH, contentType: 'application/javascript' });
+    });
 
-    // Serve a host page that loads /widget.js from the test's
-    // baseURL. The Next dev server (started by webServer) serves
-    // public/widget.js at this path — same as production embed
-    // code would.
+    // Establish a real application origin before document.write/setContent.
+    // Calling setContent on Playwright's initial about:blank page leaves the
+    // relative /widget.js URL without an HTTP origin, so no built widget is
+    // loaded and the test can never exercise its claimed flow.
+    await page.goto('/recapture-test.html');
+
+    // Serve a host page that loads /widget.js from the established baseURL.
+    // The production-mode local server exposes public/widget.js at this path,
+    // exactly like the customer embed code.
     await page.setContent(buildHostPage());
 
     // 1. The widget's IIFE creates the toggle button. The
@@ -143,6 +160,7 @@ test.describe('markup widget — full feedback flow', () => {
     //    textarea that the modal contains.
     const textarea = page.locator('textarea').last();
     await expect(textarea).toBeVisible({ timeout: 10_000 });
+    await page.screenshot({ path: testInfo.outputPath('widget-desktop-dialog.png'), fullPage: false });
 
     // 5. Fill in the comment text.
     const commentText = 'e2e: please change the button color';
@@ -192,6 +210,9 @@ test.describe('markup widget — full feedback flow', () => {
     expect(body).toContain(commentText);
     expect(body).toMatch(/name="xPercent"/);
     expect(body).toMatch(/name="yPercent"/);
+    expect(browserErrors).toEqual([]);
     expect(body).toMatch(/name="screenshot"/);
+    expect(body).toMatch(/filename="capture\.png"/);
+    expect(body).toMatch(/Content-Type: image\/png/i);
   });
 });

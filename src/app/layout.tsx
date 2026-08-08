@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Markup Clone",
-  description: "Website cloning and template replication tool",
+  title: "Visual Feedback for Agencies",
+  description: "Capture contextual website feedback and turn it into clear, developer-ready work.",
   icons: {
     icon: "/favicon.ico",
   },

@@ -36,11 +36,11 @@ function crc32(buf: Buffer): number {
 function pngWidth(filePath: string): number {
   return parseInt(
     execFileSync('python3', ['-c', `
-import struct
-with open('${filePath}', 'rb') as f:
+import struct, sys
+with open(sys.argv[1], 'rb') as f:
     f.seek(16)
     print(struct.unpack('>I', f.read(4))[0])
-`]).toString().trim(),
+`, filePath]).toString().trim(),
     10
   );
 }
@@ -48,11 +48,11 @@ with open('${filePath}', 'rb') as f:
 function pngHeight(filePath: string): number {
   return parseInt(
     execFileSync('python3', ['-c', `
-import struct
-with open('${filePath}', 'rb') as f:
+import struct, sys
+with open(sys.argv[1], 'rb') as f:
     f.seek(20)
     print(struct.unpack('>I', f.read(4))[0])
-`]).toString().trim(),
+`, filePath]).toString().trim(),
     10
   );
 }

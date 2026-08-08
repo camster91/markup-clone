@@ -16,7 +16,15 @@ import { prisma } from '@/lib/prisma';
 import { requireDashboardAuth } from '@/lib/auth';
 import { requireCsrfToken } from '@/lib/csrf';
 import { audit } from '@/lib/audit';
-import { validateWorkspaceName, validateUuidParam } from '@/lib/validation';
+import {
+  validateBrandAccentColor,
+  validateBrandLogoUrl,
+  validateBrandName,
+  validateReviewerWelcome,
+  validateWorkspaceName,
+  validateUuidParam,
+} from '@/lib/validation';
+import { assertOperator } from '@/lib/teams';
 
 export async function PATCH(
   req: Request,
@@ -27,24 +35,61 @@ export async function PATCH(
   const csrfErr = requireCsrfToken(req);
   if (csrfErr) return csrfErr;
 
+  const access = await assertOperator();
+  if (!access.ok) {
+    return NextResponse.json({ error: access.error }, { status: access.status });
+  }
+
   try {
     const { id } = await params;
     const idRes = validateUuidParam(id, 'id');
     if (!idRes.ok) return NextResponse.json({ error: idRes.error }, { status: 400 });
 
-    const body = await req.json();
-    const { name } = body as { name?: unknown };
-    const nameRes = validateWorkspaceName(name);
-    if (!nameRes.ok) return NextResponse.json({ error: nameRes.error }, { status: 400 });
+    const body = await req.json() as Record<string, unknown>;
+    const data: {
+      name?: string;
+      brandName?: string | null;
+      logoUrl?: string | null;
+      accentColor?: string | null;
+      reviewerWelcome?: string | null;
+    } = {};
+    if (Object.hasOwn(body, 'name')) {
+      const result = validateWorkspaceName(body.name);
+      if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
+      data.name = result.value;
+    }
+    const brandingFields = [
+      ['brandName', validateBrandName],
+      ['logoUrl', validateBrandLogoUrl],
+      ['accentColor', validateBrandAccentColor],
+      ['reviewerWelcome', validateReviewerWelcome],
+    ] as const;
+    for (const [field, validate] of brandingFields) {
+      if (!Object.hasOwn(body, field)) continue;
+      const result = validate(body[field]);
+      if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
+      data[field] = result.value;
+    }
+    if (Object.keys(data).length === 0) {
+      return NextResponse.json({ error: 'No supported workspace fields provided' }, { status: 400 });
+    }
 
     const existing = await prisma.workspace.findUnique({ where: { id: idRes.value }, select: { id: true } });
     if (!existing) return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
 
     const workspace = await prisma.workspace.update({
       where: { id: idRes.value },
-      data: { name: nameRes.value },
+      data,
     });
-    audit({ actor: workspace.id, action: 'workspace.update', target: workspace.id, metadata: { name: workspace.name } });
+    audit({
+      actor: access.caller.id,
+      action: 'workspace.update',
+      target: workspace.id,
+      metadata: {
+        changedFields: Object.keys(data),
+        name: workspace.name,
+      },
+    });
     return NextResponse.json(workspace);
   } catch (error) {
     console.error('Workspace update error:', error);
@@ -60,6 +105,11 @@ export async function DELETE(
   if (authErr) return authErr;
   const csrfErr = requireCsrfToken(req);
   if (csrfErr) return csrfErr;
+
+  const access = await assertOperator();
+  if (!access.ok) {
+    return NextResponse.json({ error: access.error }, { status: access.status });
+  }
 
   try {
     const { id } = await params;
