@@ -61,6 +61,7 @@ export default function PinThread({
   pin,
   projectId,
   readOnly = false,
+  canManageComments = false,
   showDeveloperContext = false,
   issueOptions,
   handoffContext,
@@ -68,6 +69,8 @@ export default function PinThread({
   onStatusChange,
   onMetadataChange,
   onCommentAdded,
+  onCommentUpdated,
+  onCommentDeleted,
 }: {
   pin: ThreadPin;
   /**
@@ -86,6 +89,8 @@ export default function PinThread({
    * history — they just can't add to it.
    */
   readOnly?: boolean;
+  /** Explicit project-administrator capability for editing or deleting comments. */
+  canManageComments?: boolean;
   /** Technical capture details are restricted to project administrators. */
   showDeveloperContext?: boolean;
   /** Internal workflow choices; presence also gates the editor to administrators. */
@@ -96,12 +101,26 @@ export default function PinThread({
   onStatusChange: (pinId: string, status: 'OPEN' | 'RESOLVED') => Promise<void>;
   onMetadataChange?: (pinId: string, update: IssueMetadataUpdate) => Promise<void>;
   onCommentAdded: (pinId: string, comment: FeedbackComment) => void;
+  /** Returns the updated comment after a successful administrator edit. */
+  onCommentUpdated?: (pinId: string, commentId: string, text: string) => Promise<FeedbackComment | null>;
+  /** Returns true only after a successful administrator deletion. */
+  onCommentDeleted?: (pinId: string, commentId: string) => Promise<boolean>;
 }) {
   const [reply, setReply] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [author, setAuthor] = useState('Reviewer');
   const [handoffCopyState, setHandoffCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [comments, setComments] = useState<FeedbackComment[]>(pin.comments);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState('');
+  const [deleteConfirmationId, setDeleteConfirmationId] = useState<string | null>(null);
+  const [commentMutationPending, setCommentMutationPending] = useState<string | null>(null);
+  const [commentMutationError, setCommentMutationError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setComments(pin.comments);
+  }, [pin.comments]);
 
   useEffect(() => {
     closeButtonRef.current?.focus();
@@ -184,7 +203,10 @@ export default function PinThread({
           // slow POST + slow SSE race). The ScreenshotView's
           // setPins dedupes the same way, so a duplicate never
           // reaches the user.
-          if (pin.comments.some(c => c.id === payload.comment.id)) return;
+          if (comments.some(c => c.id === payload.comment.id)) return;
+          setComments((current) => current.some((comment) => comment.id === payload.comment.id)
+            ? current
+            : [...current, payload.comment]);
           onCommentAdded(pin.id, payload.comment);
         }
       }
@@ -360,6 +382,60 @@ export default function PinThread({
     onStatusChange(pin.id, next);
   };
 
+  const startCommentEdit = (comment: FeedbackComment) => {
+    if (readOnly || !canManageComments) return;
+    setCommentMutationError(null);
+    setDeleteConfirmationId(null);
+    setEditingCommentId(comment.id);
+    setEditingText(comment.text);
+  };
+
+  const saveCommentEdit = async (commentId: string) => {
+    if (readOnly || !canManageComments || !onCommentUpdated || commentMutationPending) return;
+    const text = editingText.trim();
+    if (!text) {
+      setCommentMutationError('Comment text cannot be empty.');
+      return;
+    }
+    setCommentMutationPending(commentId);
+    setCommentMutationError(null);
+    try {
+      const updated = await onCommentUpdated(pin.id, commentId, text);
+      if (!updated) {
+        setCommentMutationError('Could not save this comment.');
+        return;
+      }
+      setComments((current) => current.map((comment) => comment.id === commentId
+        ? { ...comment, ...updated, attachments: updated.attachments ?? comment.attachments }
+        : comment));
+      setEditingCommentId(null);
+      setEditingText('');
+    } catch (error) {
+      setCommentMutationError(error instanceof Error ? error.message : 'Could not save this comment.');
+    } finally {
+      setCommentMutationPending(null);
+    }
+  };
+
+  const confirmCommentDelete = async (commentId: string) => {
+    if (readOnly || !canManageComments || !onCommentDeleted || commentMutationPending) return;
+    setCommentMutationPending(commentId);
+    setCommentMutationError(null);
+    try {
+      const deleted = await onCommentDeleted(pin.id, commentId);
+      if (!deleted) {
+        setCommentMutationError('Could not delete this comment.');
+        return;
+      }
+      setComments((current) => current.filter((comment) => comment.id !== commentId));
+      setDeleteConfirmationId(null);
+    } catch (error) {
+      setCommentMutationError(error instanceof Error ? error.message : 'Could not delete this comment.');
+    } finally {
+      setCommentMutationPending(null);
+    }
+  };
+
   const copyDeveloperHandoff = async () => {
     if (!handoffContext) return;
     setHandoffCopyState('idle');
@@ -499,7 +575,7 @@ export default function PinThread({
       )}
 
       <div className="space-y-3 mb-4">
-        {pin.comments.map((c) => (
+        {comments.map((c) => (
           <div
             key={c.id}
             className={`p-2 rounded text-sm ${
@@ -519,9 +595,43 @@ export default function PinThread({
                 the UI. Splitting on the full match (including the @)
                 keeps the original characters in the output, so screen
                 readers still read "@alice@example.com" as text. */}
-            <div className="text-gray-800 whitespace-pre-wrap">
-              {renderCommentText(c.text)}
-            </div>
+            {editingCommentId === c.id ? (
+              <div className="mt-2 space-y-2">
+                <label className="block text-xs font-medium text-gray-700" htmlFor={`edit-comment-${c.id}`}>
+                  Edit comment by {c.author}
+                </label>
+                <textarea
+                  id={`edit-comment-${c.id}`}
+                  aria-label={`Edit comment by ${c.author}`}
+                  value={editingText}
+                  onChange={(event) => setEditingText(event.target.value)}
+                  rows={3}
+                  className="w-full rounded border border-gray-300 p-2 text-sm"
+                />
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void saveCommentEdit(c.id)}
+                    disabled={commentMutationPending === c.id}
+                    className="min-h-[44px] rounded bg-blue-700 px-3 text-xs font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+                  >
+                    {commentMutationPending === c.id ? 'Saving…' : 'Save edit'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setEditingCommentId(null); setEditingText(''); setCommentMutationError(null); }}
+                    disabled={commentMutationPending === c.id}
+                    className="min-h-[44px] rounded border border-gray-300 bg-white px-3 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Cancel edit
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="text-gray-800 whitespace-pre-wrap">
+                {renderCommentText(c.text)}
+              </div>
+            )}
             {/* Inline attachments. The server-side Comment response
                 carries `attachments: FeedbackAttachment[]` (see
                 src/lib/types.ts). Each attachment has a relative
@@ -567,9 +677,57 @@ export default function PinThread({
                 })}
               </div>
             )}
+            {canManageComments && !readOnly && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-gray-200 pt-2">
+                {deleteConfirmationId === c.id ? (
+                  <>
+                    <p className="w-full text-xs text-red-800">Delete this comment? This cannot be undone.</p>
+                    <button
+                      type="button"
+                      onClick={() => void confirmCommentDelete(c.id)}
+                      disabled={commentMutationPending === c.id}
+                      className="min-h-[44px] rounded bg-red-700 px-3 text-xs font-medium text-white hover:bg-red-800 disabled:opacity-50"
+                    >
+                      {commentMutationPending === c.id ? 'Deleting…' : 'Confirm delete'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setDeleteConfirmationId(null); setCommentMutationError(null); }}
+                      disabled={commentMutationPending === c.id}
+                      className="min-h-[44px] rounded border border-gray-300 bg-white px-3 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      Keep comment
+                    </button>
+                  </>
+                ) : editingCommentId !== c.id ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => startCommentEdit(c)}
+                      className="min-h-[44px] rounded px-3 text-xs font-medium text-blue-700 hover:bg-blue-100"
+                    >
+                      Edit comment
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setDeleteConfirmationId(c.id); setEditingCommentId(null); setCommentMutationError(null); }}
+                      className="min-h-[44px] rounded px-3 text-xs font-medium text-red-700 hover:bg-red-100"
+                    >
+                      Delete comment
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            )}
           </div>
         ))}
       </div>
+
+      {commentMutationError && (
+        <p role="alert" className="mb-3 rounded border border-red-200 bg-red-50 px-2 py-2 text-xs text-red-800">
+          {commentMutationError}
+        </p>
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-2">
         {/* The reply form is dashboard-only. The /share/[token] view

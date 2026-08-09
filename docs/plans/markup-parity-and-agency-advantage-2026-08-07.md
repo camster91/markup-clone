@@ -10,6 +10,24 @@ come from current first-party MarkUp.io pages. Repository status comes from the
 current schema, routes, components, and tests; it is not a claim about the live
 deployment.
 
+## Core product goal - MarkUp-style SaaS parity
+
+The release goal is a focused visual-review SaaS for websites and common design
+files. A client should be able to open a managed review link, point at the work,
+leave visual feedback, discuss it in context, and approve a review round. An
+agency should be able to organize clients and projects, manage access, monitor
+progress, notify participants, archive completed work, and control its branding
+from one workspace.
+
+The core journey is:
+
+`workspace -> client -> project -> review round -> page or file -> annotation -> discussion -> resolution -> sign-off`
+
+AI-generated fixes, repository source access, GitHub branches, commits, and pull
+requests are not required for this goal. Existing local experiments in those
+areas are parked and must not displace core review, sharing, organization,
+notification, account, or billing work.
+
 ## Current first-party benchmark
 
 MarkUp.io currently advertises unlimited comments and MarkUps, website and file
@@ -71,8 +89,8 @@ coverage; it does not mean feature-for-feature equivalence or production proof.
 
 ## Better-for-agencies product wedge
 
-The first differentiated release should turn a client pin into a development-
-ready issue without asking the client for technical details.
+The first differentiated release should make visual review calmer and easier to
+operate across many client sites without making clients learn development tools.
 
 ### 1. Developer context packet
 
@@ -156,8 +174,21 @@ audit trail.
 12. ~~Replace raw subscribers with self-service role-aware notification
     preferences while preserving external alerts.~~ Completed, migration-rehearsed,
     and browser-verified locally on 2026-08-08; production remains approval-gated.
-13. Evaluate PDF/image/video review only after the website journey passes the
-    production release gate.
+13. Finish the website-review journey: comment editing/deletion rules, annotation
+    polish, thread navigation, resolution, and sign-off with owner/client browser
+    QA.
+14. Add first-class image and PDF review using the same annotation, thread,
+    sharing, role, notification, and approval model as website review.
+15. Add workspace folders and bulk project organization only where the current
+    client/site hierarchy cannot express the agency workflow.
+16. Add SaaS account operations: plan/usage visibility, enforceable limits,
+    subscription lifecycle, and billing administration. Payment-provider setup
+    and live billing remain separately approval-gated.
+17. Evaluate video review after image/PDF review is stable and storage/retention
+    limits are enforced.
+
+Repository execution, AI patch generation, and GitHub delivery are parked
+optional experiments. They are not part of the ordered MarkUp SaaS parity path.
 
 ## Explicit non-claims
 
@@ -165,5 +196,6 @@ audit trail.
 - Local tests and browser checks do not prove the live deployment has these changes.
 - The repository does not currently provide SAML, SCIM, SOC 2 documentation,
   or broad file review.
+- AI and GitHub delivery are not required to ship the MarkUp-style SaaS.
 - “Better” will be earned by tested agency handoff outcomes, not by copying the
   competitor's entire feature list.

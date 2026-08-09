@@ -18,6 +18,7 @@ export default function ScreenshotView({
   projectName,
   projectDomain,
   showDeveloperContext = false,
+  canManageComments = false,
   issueOptions,
   issueFilters,
   onProjectUpdated,
@@ -49,6 +50,8 @@ export default function ScreenshotView({
   projectDomain?: string;
   /** Show privacy-bounded technical capture details to project administrators. */
   showDeveloperContext?: boolean;
+  /** Explicit project-administrator capability for comment edit/delete controls. */
+  canManageComments?: boolean;
   /** Owner/operator-only assignee and reusable tag choices. */
   issueOptions?: IssueOptions;
   /** Owner/operator-only filters applied to the locally live pin collection. */
@@ -236,6 +239,57 @@ export default function ScreenshotView({
     // smuggle state mutations through.
     if (readOnly) return;
     setPins(prev => prev.map(p => p.id === pinId ? { ...p, comments: [...p.comments, comment] } : p));
+  };
+
+  const handleCommentUpdated = async (pinId: string, commentId: string, text: string): Promise<FeedbackComment | null> => {
+    if (readOnly || !canManageComments) return null;
+    const res = await fetch(`/api/pins/${pinId}/comments/${commentId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...dashboardHeaders() },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) {
+      let message = 'Could not save this comment';
+      try {
+        const body = await res.json();
+        if (typeof body?.error === 'string') message = body.error;
+      } catch {
+        // Preserve the generic message when the response is not JSON.
+      }
+      throw new Error(message);
+    }
+    const body = await res.json();
+    const updated = body.data as FeedbackComment;
+    setPins((previous) => previous.map((pin) => pin.id === pinId ? {
+      ...pin,
+      comments: pin.comments.map((comment) => comment.id === commentId
+        ? { ...comment, ...updated, attachments: updated.attachments ?? comment.attachments }
+        : comment),
+    } : pin));
+    return updated;
+  };
+
+  const handleCommentDeleted = async (pinId: string, commentId: string): Promise<boolean> => {
+    if (readOnly || !canManageComments) return false;
+    const res = await fetch(`/api/pins/${pinId}/comments/${commentId}`, {
+      method: 'DELETE',
+      headers: dashboardHeaders(),
+    });
+    if (!res.ok) {
+      let message = 'Could not delete this comment';
+      try {
+        const body = await res.json();
+        if (typeof body?.error === 'string') message = body.error;
+      } catch {
+        // Preserve the generic message when the response is not JSON.
+      }
+      throw new Error(message);
+    }
+    setPins((previous) => previous.map((pin) => pin.id === pinId ? {
+      ...pin,
+      comments: pin.comments.filter((comment) => comment.id !== commentId),
+    } : pin));
+    return true;
   };
 
   // === Annotation rendering ==============================================
@@ -450,7 +504,9 @@ export default function ScreenshotView({
 
         {activePinId && (
           <div
-            className="absolute top-2 right-2 w-80 max-w-[calc(100%-1rem)] bg-white rounded-lg shadow-2xl border border-gray-200 z-20 max-h-[80vh] overflow-y-auto"
+            className={`fixed inset-2 w-auto max-w-none max-h-none bg-white rounded-lg shadow-2xl border border-gray-200 z-20 overflow-y-auto sm:absolute sm:inset-auto sm:top-2 sm:right-2 sm:max-w-[calc(100%-1rem)] sm:max-h-[80vh] ${
+              showDeveloperContext ? 'sm:w-[30rem] lg:w-[34rem]' : 'sm:w-80'
+            }`}
             role="dialog"
             aria-modal="false"
             aria-label="Feedback thread"
@@ -464,6 +520,7 @@ export default function ScreenshotView({
                   projectId={projectId ?? null}
                   readOnly={readOnly}
                   showDeveloperContext={showDeveloperContext}
+                  canManageComments={canManageComments}
                   issueOptions={issueOptions}
                   handoffContext={showDeveloperContext && projectId && projectName && projectDomain ? {
                     project: { id: projectId, name: projectName, domain: projectDomain },
@@ -479,6 +536,8 @@ export default function ScreenshotView({
                   onStatusChange={handlePinStatusChange}
                   onMetadataChange={handlePinMetadataChange}
                   onCommentAdded={handleCommentAdded}
+                  onCommentUpdated={handleCommentUpdated}
+                  onCommentDeleted={handleCommentDeleted}
                 />
               );
             })()}

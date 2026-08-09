@@ -117,6 +117,68 @@ describe('ScreenshotView keyboard journey', () => {
     expect(document.activeElement).toBe(pin);
   });
 
+  it('uses a viewport-sized thread on mobile and restores the screenshot overlay on desktop', async () => {
+    await renderView();
+    const pin = container.querySelector<HTMLButtonElement>('button[aria-label^="Open feedback pin 1"]');
+    await act(async () => pin?.click());
+
+    const thread = container.querySelector<HTMLElement>('[role="dialog"]');
+    expect(thread?.className).toContain('fixed');
+    expect(thread?.className).toContain('inset-2');
+    expect(thread?.className).toContain('sm:absolute');
+    expect(thread?.className).toContain('sm:w-80');
+  });
+
+  it('gives administrator developer workflows a wider desktop review surface', async () => {
+    await renderView({
+      showDeveloperContext: true,
+      projectName: 'Agency site',
+      projectDomain: 'staging.example.test',
+    });
+    const pin = container.querySelector<HTMLButtonElement>('button[aria-label^="Open feedback pin 1"]');
+    await act(async () => pin?.click());
+
+    const thread = container.querySelector<HTMLElement>('[role="dialog"]');
+    expect(thread?.className).toContain('sm:w-[30rem]');
+    expect(thread?.className).toContain('lg:w-[34rem]');
+    expect(thread?.className).not.toContain('sm:w-80');
+  });
+
+  it('passes the explicit administrator capability to the thread comment controls', async () => {
+    await renderView({ canManageComments: true });
+    const pin = container.querySelector<HTMLButtonElement>('button[aria-label^="Open feedback pin 1"]');
+    await act(async () => pin?.click());
+
+    expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Edit comment')).toBe(true);
+    expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Delete comment')).toBe(true);
+  });
+
+  it('sends an administrator comment edit through the nested comment route', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      success: true,
+      data: { ...screenshot.pins[0].comments[0], text: 'Updated heading request' },
+    }), { status: 200 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    await renderView({ canManageComments: true });
+    const pin = container.querySelector<HTMLButtonElement>('button[aria-label^="Open feedback pin 1"]');
+    await act(async () => pin?.click());
+    const edit = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Edit comment');
+    await act(async () => edit?.click());
+    const input = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Edit comment by Client"]');
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      setter?.call(input, 'Updated heading request');
+      input?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const save = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Save edit');
+    await act(async () => save?.click());
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/pins/pin-1/comments/comment-1', expect.objectContaining({
+      method: 'PATCH', body: JSON.stringify({ text: 'Updated heading request' }),
+    }));
+    expect(container.textContent).toContain('Updated heading request');
+  });
+
   it('opens an exact-pin URL and removes only the pin parameter when closed', async () => {
     window.history.replaceState({}, '', '/projects/project-1?view=latest&pin=pin-1#review');
     await renderView();

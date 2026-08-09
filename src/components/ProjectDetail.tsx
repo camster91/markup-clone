@@ -359,6 +359,7 @@ function ProjectDetailCard({
                     projectName={project.name}
                     projectDomain={project.domain}
                     showDeveloperContext={project.canAdmin}
+                    canManageComments={project.canAdmin}
                     issueOptions={project.issueOptions}
                     issueFilters={project.canAdmin ? issueFilters : undefined}
                     onProjectUpdated={onProjectUpdated}

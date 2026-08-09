@@ -147,8 +147,17 @@ for shipped, source-of-truth for the rest.
 
 ## 🚀 Ready (pick from here)
 
+### Complete the core MarkUp-style SaaS journey
+- **Status:** in progress · **Source:** `docs/plans/markup-parity-and-agency-advantage-2026-08-07.md`
+- **Completed local slice:** project administrators can edit or delete scoped
+  comments with dashboard authentication, CSRF, rate limiting, audit evidence,
+  and owner/client browser coverage. Image review uploads are the active next
+  slice.
+- **Boundary:** GitHub, repository access, and AI delivery are parked; they are
+  not part of the MarkUp SaaS release path.
+
 ### Ship the AI-agent integration (README §"Future work")
-- **Status:** ready · **Source:** README §"Future work"
+- **Status:** parked · **Source:** README §"Future work"
 - **Description:** "generate-fix flow, GitHub PR creation." This is
   the natural Phase 5 capstone. No code yet. Subsystems needed:
   - LLM client wrapper (probably `src/lib/ai/`).
