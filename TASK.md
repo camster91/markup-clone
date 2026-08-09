@@ -1,6 +1,6 @@
 # TASK.md — markup-clone task board
 
-**Last updated:** 2026-08-08 (role-aware notifications complete locally; see
+**Last updated:** 2026-08-08 (production release and rollback verified; see
 `docs/plans/agency-product-release-2026-08-07.md`).
 
 **Format:** each item has a status (`shipped`, `ready`, `blocked`,
@@ -94,12 +94,14 @@ for shipped, source-of-truth for the rest.
   preferences and preference-respecting feedback/reply/workflow/assignment/mention
   email dispatch while preserving clearly labeled external alerts. See
   `docs/plans/role-aware-notifications-2026-08-08.md`.
-- **Active slice:** reconcile the content-identical production mode drift on
-  `scripts/prune-screenshots.sh`, exercise the confirmed retained prior SHA image
-  and replace the active self-signed Traefik certificate, exercise the confirmed
-  retained prior SHA image in an approved production rollback window, then make
-  the explicit release decision. Committing, pushing, npm release, host writes,
-  certificate issuance/reload, and production deployment remain approval-gated.
+- **Completed production slice:** normalized the content-identical script-mode
+  drift, replaced the self-signed Traefik certificate with ACME-managed trusted
+  TLS, committed and pushed the release, applied all 26 migrations, deployed the
+  exact SHA image, passed public/cross-browser/widget QA, and exercised rollback
+  plus forward recovery. Production now runs `ce998ae`; npm remains unpublished.
+- **Blocked release slice:** production has zero user accounts. Provision the
+  first operator after Cameron supplies the exact email and password, then run
+  authenticated owner/client production QA before declaring the full goal shipped.
 - **Completed local evidence slice:** added a loopback-only multipart
   pin-ingestion load rehearsal with explicit latency/error thresholds and
   verified cleanup. The measured 24-request/concurrency-6 run passed at 157ms
@@ -130,9 +132,10 @@ for shipped, source-of-truth for the rest.
   Traefik edge. The release now skips legacy Caddy processes/config, validates a
   trusted public certificate before migrations and after startup, retires the
   obsolete Caddy cron in Traefik mode, and no longer changes tracked script modes.
-  Read-only production verification correctly fails on the current self-signed
-  Markup certificate; no live repair was attempted.
-- **Current final-tree evidence:** 896 tests passed with 3 intentional skips;
+  Pre-release read-only production verification correctly failed on the
+  then-active self-signed Markup certificate; no live repair was attempted in
+  that slice.
+- **Current final-tree evidence:** 899 tests passed with 3 intentional skips;
   ESLint is warning-free; Prisma validates; the production dependency audit has
   zero vulnerabilities; all 26 migrations pass from an empty database; and the
   host build, exact Linux image build, and isolated image health/hash probe pass.

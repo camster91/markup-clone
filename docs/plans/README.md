@@ -34,10 +34,10 @@ guessing from chat history.
   production untouched.** Expiring/password-protected review
   links, token-bound HttpOnly media access, secret redaction, and client-safe
   unlock UX.
-- `docs/plans/release-candidate-operational-validation-2026-08-08.md` - **Local
-  implementation complete; prior-image rollback and production approval pending.**
-  Reusable agency defaults, warning-free builds, guarded backup/restore,
-  operational drills, and local release-candidate proof.
+- `docs/plans/release-candidate-operational-validation-2026-08-08.md` - **Deployed
+  and rollback-verified; first operator pending.** Reusable agency defaults,
+  guarded backup/restore, ACME TLS repair, exact-SHA deployment, cross-browser
+  production QA, and controlled rollback/forward-recovery evidence.
 - `docs/plans/public-developer-api-and-browser-sdk-2026-08-08.md` - **Complete
   locally; production and npm untouched.** Hash-only scoped developer tokens,
   versioned read-only issue API, OpenAPI documentation, and a typed browser SDK

@@ -1,8 +1,8 @@
 # Release candidate operational validation — 2026-08-08
 
-**Status:** local implementation complete; final gates and production actions remain approval-gated
+**Status:** production deployed and rollback-verified; first operator provisioning pending
 **Parent:** `docs/plans/agency-product-release-2026-08-07.md` Gates 2 and 3
-**Production:** untouched; Git, npm, and deployment remain approval-gated
+**Production:** `ce998aed8db8ba58c8c2039dbbf52fbb69d7bc5b` live at `markup.ashbi.ca`; npm remains unpublished
 
 ## Outcome
 
@@ -40,9 +40,9 @@ experimenting on production.
 
 ## Out of scope
 
-- Off-host backup-provider credentials or scheduling a live cron job.
-- Automatic production restore, production data access, npm publishing, commit,
-  push, deploy, public release, or declaring broad file/enterprise parity.
+- Off-host backup-provider credentials or automatic production restore.
+- npm publishing, broad file/enterprise parity, and choosing the first operator's
+  email or password without the owner's input.
 
 ## Completion evidence
 
@@ -129,5 +129,37 @@ experimenting on production.
   the Markup static binding so the already-enabled runtime router can populate the
   active ACME store. The strengthened edge helper validates Traefik's loaded
   router, resolver, entrypoint, service, loopback target, trusted certificate, and
-  public health payload; against production it passes runtime validation and
-  stops only on the current self-signed certificate.
+  public health payload; during the pre-release read-only check it passed runtime
+  validation and stopped on the then-active self-signed certificate.
+- The approved production release completed on 2026-08-08 Toronto time. Commit
+  `a07d040badc907af26a6c8fe83f3cd7dfc50a407` shipped the agency/developer
+  platform and all 26 migrations; follow-up commit
+  `ce998aed8db8ba58c8c2039dbbf52fbb69d7bc5b` added the verified browser security
+  header baseline and removed `X-Powered-By` after live QA exposed the gap.
+- Before migrations, PostgreSQL produced a mode-0600 custom-format backup with a
+  passing checksum and `pg_restore --list` catalog. The verified off-host copy
+  has SHA-256
+  `570E963CC7B81F439EAE7574B25D3D415C9BB7F086FEAA13E1E1845327006CCE`.
+- Traefik TLS state was backed up under
+  `/opt/traefik/backups/markup-release-20260808T235612Z`. A known-good certificate
+  restored trusted HTTPS, the obsolete static Markup binding was removed, and
+  the active `letsencrypt` resolver issued a new certificate valid through
+  2026-11-06. The exact Traefik router, service, loopback target, ACME state, and
+  trusted public health checks pass.
+- Production runs image
+  `markup-clone:ce998aed8db8ba58c8c2039dbbf52fbb69d7bc5b` with image ID
+  `sha256:2ee66d7a9689a7bc7b29f1d54325e3901423c9c872af917d50485df7f5813403`;
+  container health, public health, clean Git provenance, 26 finished migrations,
+  durable crons, and retired Caddy guard state all pass.
+- Live Chromium, Firefox, and WebKit checks passed at 1440px and 375px with no
+  horizontal overflow or unexpected browser/network errors. The production
+  widget passed keyboard focus, mobile modal, PNG capture, and an intercepted
+  multipart submission with zero production QA writes. Visual inspection found
+  no clipping, overlap, or cross-engine drift.
+- A controlled rollback launched retained image
+  `a07d040badc907af26a6c8fe83f3cd7dfc50a407` against the additive schema and
+  passed loopback and trusted public health. Forward recovery restored
+  `ce998aed8db8ba58c8c2039dbbf52fbb69d7bc5b` and repeated the edge/health checks.
+- Production currently contains zero `User` rows. Public/widget release evidence
+  is complete, but authenticated live QA and practical dashboard access remain
+  blocked until the owner supplies the first operator email and password.
