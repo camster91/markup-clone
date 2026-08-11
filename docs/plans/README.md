@@ -14,6 +14,9 @@ guessing from chat history.
 
 ## Current plans
 
+- `docs/plans/pdf-review-2026-08-10.md` - **Active discovery and implementation
+  plan.** Extend the shared review model to PDF pages only after a bounded
+  renderer contract is proven in the production image.
 - `docs/plans/comment-lifecycle-2026-08-09.md` - **Complete locally; queued
   for this core-SaaS release.** Project administrators can edit or delete a
   scoped comment while client and share-link reviewers remain read-only.

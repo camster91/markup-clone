@@ -160,6 +160,14 @@ for shipped, source-of-truth for the rest.
 - **Boundary:** GitHub, repository access, and AI delivery are parked; they are
   not part of the MarkUp SaaS release path.
 
+### First-class PDF review
+- **Status:** ready for renderer spike · **Source:**
+  `docs/plans/pdf-review-2026-08-10.md`
+- **Description:** render bounded PDF pages into the existing Page/Screenshot
+  review model, then reuse annotations, threads, managed sharing, and sign-off.
+- **Gate:** prove the selected renderer's Linux-image timeout, page/pixel
+  bounds, and cleanup behavior before accepting any PDF upload.
+
 ### Ship the AI-agent integration (README §"Future work")
 - **Status:** parked · **Source:** README §"Future work"
 - **Description:** "generate-fix flow, GitHub PR creation." This is
