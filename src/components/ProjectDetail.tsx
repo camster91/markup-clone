@@ -35,6 +35,7 @@ import ProjectNotifications from './ProjectNotifications';
 import ReviewWorkflow from './ReviewWorkflow';
 import PresenceList from './PresenceList';
 import IssueFilters from './IssueFilters';
+import ImageReviewUpload from './ImageReviewUpload';
 import { usePresence, type PresenceActivity } from '@/lib/hooks/usePresence';
 import { useLiveEvents } from '@/lib/hooks/useLiveEvents';
 import type { ProjectWithPages } from '@/lib/types';
@@ -329,6 +330,7 @@ function ProjectDetailCard({
       <ReviewWorkflow projectId={project.id} />
 
       <div className="p-6 space-y-6">
+        {project.canAdmin ? <ImageReviewUpload projectId={project.id} onUploaded={onProjectUpdated} /> : null}
         {project.canAdmin ? (
           <IssueFilters
             value={issueFilters}

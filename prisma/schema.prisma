@@ -345,6 +345,7 @@ model Screenshot {
   pageId     String
   page       Page                @relation(fields: [pageId], references: [id], onDelete: Cascade)
   storageKey String              @unique
+  mimeType   String              @default("image/png")
   width      Int
   height     Int
   capturedAt DateTime            @default(now())

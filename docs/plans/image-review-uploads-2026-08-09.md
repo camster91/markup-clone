@@ -8,6 +8,15 @@
 
 **Tech Stack:** Next.js 16 Route Handlers, Prisma 6/PostgreSQL, local disk storage, Vitest, React, Tailwind 4, Playwright. No new image-processing dependency.
 
+## Implementation status — 2026-08-10
+
+Tasks 1–4 are complete locally: the migration, bounded header parser, scoped
+administrator upload route, MIME-preserving media response, audit action, and
+dashboard upload control are implemented. Focused tests, lint, TypeScript,
+Prisma validation, a production build, and the full test suite pass. Task 5
+remains: run the disposable authenticated owner/client browser journey at
+desktop and 375px, then record cleanup and visual evidence before release.
+
 ---
 
 ### Task 1: Specify upload and media contracts with failing tests

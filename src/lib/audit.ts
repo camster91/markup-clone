@@ -26,6 +26,7 @@ export type AuditAction =
   | 'screenshot.history.read'
   | 'subscriber.add' | 'subscriber.remove'
   | 'project.share.create' | 'project.share.revoke' | 'share.view'
+  | 'project.image.upload'
   | 'comment.mention' | 'comment.update' | 'comment.delete'
   | 'integration.create' | 'integration.update' | 'integration.remove'
   | 'integration.test.send' | 'integration.dispatch'

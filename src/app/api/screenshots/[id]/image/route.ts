@@ -34,6 +34,7 @@ export async function GET(
       select: {
         id: true,
         storageKey: true,
+        mimeType: true,
         capturedAt: true,
         page: {
           select: {
@@ -136,7 +137,7 @@ export async function GET(
     return new NextResponse(buf, {
       status: 200,
       headers: {
-        'Content-Type': 'image/png',
+        'Content-Type': ss.mimeType,
         'Content-Length': fileStat.size.toString(),
         'Cache-Control': cacheControl,
         'Vary': 'Cookie',

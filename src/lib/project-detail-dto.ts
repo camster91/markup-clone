@@ -104,6 +104,7 @@ export function serializeProjectDetail(
       screenshots: page.screenshots.map((screenshot) => ({
         id: screenshot.id,
         storageKey: screenshot.storageKey,
+        mimeType: screenshot.mimeType,
         pageId: screenshot.pageId,
         width: screenshot.width,
         height: screenshot.height,

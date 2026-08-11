@@ -17,9 +17,9 @@ guessing from chat history.
 - `docs/plans/comment-lifecycle-2026-08-09.md` - **Complete locally; queued
   for this core-SaaS release.** Project administrators can edit or delete a
   scoped comment while client and share-link reviewers remain read-only.
-- `docs/plans/image-review-uploads-2026-08-09.md` - **Active.** Add
-  first-class PNG, JPEG, GIF, and WebP project review surfaces without a
-  parallel comment or sharing model.
+- `docs/plans/image-review-uploads-2026-08-09.md` - **Implemented locally;
+  browser QA pending.** First-class PNG, JPEG, GIF, and WebP project review
+  surfaces without a parallel comment or sharing model.
 
 - `docs/plans/cross-browser-widget-and-accessibility-qa-2026-08-08.md` - **Complete
   locally; production untouched.** Real built-widget PNG capture, recapture,

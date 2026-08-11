@@ -151,8 +151,11 @@ for shipped, source-of-truth for the rest.
 - **Status:** in progress · **Source:** `docs/plans/markup-parity-and-agency-advantage-2026-08-07.md`
 - **Completed local slice:** project administrators can edit or delete scoped
   comments with dashboard authentication, CSRF, rate limiting, audit evidence,
-  and owner/client browser coverage. Image review uploads are the active next
-  slice.
+  and owner/client browser coverage. Image review uploads now have a local
+  implementation: bounded PNG/JPEG/GIF/WebP parsing, MIME-preserving storage,
+  scoped admin upload, CSRF and per-project/origin rate limits, audit evidence,
+  and a 44px dashboard control. Authenticated owner/client browser QA and
+  disposable-fixture cleanup evidence remain before release.
 - **Boundary:** GitHub, repository access, and AI delivery are parked; they are
   not part of the MarkUp SaaS release path.
 

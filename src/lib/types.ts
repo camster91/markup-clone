@@ -84,6 +84,7 @@ export type Pin = {
 export type ScreenshotWithPins = {
   id: string;
   storageKey: string;
+  mimeType?: string;
   pageId: string;
   width: number;
   height: number;
