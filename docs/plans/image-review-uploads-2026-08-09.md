@@ -10,12 +10,15 @@
 
 ## Implementation status — 2026-08-10
 
-Tasks 1–4 are complete locally: the migration, bounded header parser, scoped
+All five tasks are complete. The migration, bounded header parser, scoped
 administrator upload route, MIME-preserving media response, audit action, and
 dashboard upload control are implemented. Focused tests, lint, TypeScript,
-Prisma validation, a production build, and the full test suite pass. Task 5
-remains: run the disposable authenticated owner/client browser journey at
-desktop and 375px, then record cleanup and visual evidence before release.
+Prisma validation, a production build, and the full test suite pass. The
+disposable `scripts/qa-image-review-upload.cjs` journey verified owner upload
+at 1280px and 375px plus token-bound client sharing at 375px, with no overflow,
+console/request failures, or fixture residue. The runtime feature is deployed;
+authenticated production browser QA remains blocked until the first production
+operator account exists.
 
 ---
 

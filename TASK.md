@@ -154,8 +154,9 @@ for shipped, source-of-truth for the rest.
   and owner/client browser coverage. Image review uploads now have a local
   implementation: bounded PNG/JPEG/GIF/WebP parsing, MIME-preserving storage,
   scoped admin upload, CSRF and per-project/origin rate limits, audit evidence,
-  and a 44px dashboard control. Authenticated owner/client browser QA and
-  disposable-fixture cleanup evidence remain before release.
+  and a 44px dashboard control. Disposable owner/client browser QA at
+  1280px/375px and cleanup verification now pass locally; production
+  authenticated QA remains blocked until an operator account is provisioned.
 - **Boundary:** GitHub, repository access, and AI delivery are parked; they are
   not part of the MarkUp SaaS release path.
 
