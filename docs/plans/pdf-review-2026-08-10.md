@@ -78,3 +78,14 @@ bounds page count at 50, and produces an argument-only 144-DPI command capped
 at 1920 pixels per axis. The full Next.js runner-image build remains a release
 gate: local Docker build clients stalled without producing an image, so no PDF
 upload endpoint exists and no PDF runtime change has been deployed.
+
+## Implementation progress — 2026-08-11
+
+The runner-image gate subsequently passed on the guarded VPS release: the live
+`dad28a5` container exposes Poppler 25.12.0. The next local slice adds a scoped
+PDF endpoint and extends the review upload picker: PDFs are bounded to 16 MB
+and 50 rendered pages, render to capped PNG pages, and become ordinary
+Page/Screenshot records. Focused tests, production compilation, and the full
+suite are green locally. It is not yet deployed: the remaining gates are an
+actual renderer journey with a disposable PDF fixture and owner/share browser
+QA.

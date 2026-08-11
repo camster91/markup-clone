@@ -31,10 +31,10 @@ describe('ImageReviewUpload', () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 201 }));
     await act(async () => root.render(<ImageReviewUpload projectId="11111111-1111-1111-1111-111111111111" onUploaded={onUploaded} />));
 
-    const input = container.querySelector('[aria-label="Upload image for review"]') as HTMLInputElement;
+    const input = container.querySelector('[aria-label="Upload file for review"]') as HTMLInputElement;
     Object.defineProperty(input, 'files', { value: [new File(['image'], 'homepage.png', { type: 'image/png' })] });
     await act(async () => input.dispatchEvent(new Event('change', { bubbles: true })));
-    const button = Array.from(container.querySelectorAll('button')).find((item) => item.textContent === 'Upload image');
+    const button = Array.from(container.querySelectorAll('button')).find((item) => item.textContent === 'Upload for review');
     await act(async () => button?.click());
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -47,13 +47,31 @@ describe('ImageReviewUpload', () => {
   it('shows a local format error without uploading unsupported files', async () => {
     await act(async () => root.render(<ImageReviewUpload projectId="11111111-1111-1111-1111-111111111111" onUploaded={vi.fn()} />));
 
-    const input = container.querySelector('[aria-label="Upload image for review"]') as HTMLInputElement;
+    const input = container.querySelector('[aria-label="Upload file for review"]') as HTMLInputElement;
     Object.defineProperty(input, 'files', { value: [new File(['<svg />'], 'unsafe.svg', { type: 'image/svg+xml' })] });
     await act(async () => input.dispatchEvent(new Event('change', { bubbles: true })));
-    const button = Array.from(container.querySelectorAll('button')).find((item) => item.textContent === 'Upload image');
+    const button = Array.from(container.querySelectorAll('button')).find((item) => item.textContent === 'Upload for review');
     await act(async () => button?.click());
 
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('PNG, JPEG, GIF, or WebP');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('routes a PDF to the bounded document upload endpoint', async () => {
+    const onUploaded = vi.fn();
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 201 }));
+    await act(async () => root.render(<ImageReviewUpload projectId="11111111-1111-1111-1111-111111111111" onUploaded={onUploaded} />));
+
+    const input = container.querySelector('[aria-label="Upload file for review"]') as HTMLInputElement;
+    Object.defineProperty(input, 'files', { value: [new File(['%PDF-1.7'], 'design.pdf', { type: 'application/pdf' })] });
+    await act(async () => input.dispatchEvent(new Event('change', { bubbles: true })));
+    const button = Array.from(container.querySelectorAll('button')).find((item) => item.textContent === 'Upload for review');
+    await act(async () => button?.click());
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/projects/11111111-1111-1111-1111-111111111111/documents',
+      expect.objectContaining({ method: 'POST', body: expect.any(FormData) })
+    );
+    expect(onUploaded).toHaveBeenCalledTimes(1);
   });
 });
