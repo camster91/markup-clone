@@ -59,6 +59,7 @@ RUN apk add --no-cache \
         chromium-headless-shell \
         nss \
         postgresql16-client \
+        poppler-utils \
         dumb-init \
     && ln -sf /usr/bin/chromium-browser /usr/local/bin/chromium 2>/dev/null || true
 

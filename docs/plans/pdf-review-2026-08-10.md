@@ -69,3 +69,12 @@ The rendering runtime is not currently in the dependency graph. The first
 implementation task is intentionally a renderer spike; do not add a PDF npm
 package or an OS renderer until its security/size/timeout behavior is verified
 in the production image.
+
+## Spike evidence — 2026-08-10
+
+The isolated Alpine base accepted `poppler-utils` and exposed `pdfinfo` and
+`pdftoppm` (Poppler 25.12.0). The local contract now rejects non-PDF headers,
+bounds page count at 50, and produces an argument-only 144-DPI command capped
+at 1920 pixels per axis. The full Next.js runner-image build remains a release
+gate: local Docker build clients stalled without producing an image, so no PDF
+upload endpoint exists and no PDF runtime change has been deployed.
