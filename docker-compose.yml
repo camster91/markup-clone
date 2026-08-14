@@ -15,7 +15,6 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: markup-postgres
     environment:
       POSTGRES_USER: markup
       POSTGRES_PASSWORD: markup_dev_pw
@@ -48,7 +47,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: markup-clone
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://markup:markup_dev_pw@postgres:5432/markup_db

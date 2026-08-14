@@ -155,18 +155,21 @@ for shipped, source-of-truth for the rest.
   implementation: bounded PNG/JPEG/GIF/WebP parsing, MIME-preserving storage,
   scoped admin upload, CSRF and per-project/origin rate limits, audit evidence,
   and a 44px dashboard control. Disposable owner/client browser QA at
-  1280px/375px and cleanup verification now pass locally; production
-  authenticated QA remains blocked until an operator account is provisioned.
+  1280px/375px and cleanup verification pass against the clean Linux candidate;
+  production authenticated QA remains blocked until an operator account is
+  provisioned.
 - **Boundary:** GitHub, repository access, and AI delivery are parked; they are
   not part of the MarkUp SaaS release path.
 
 ### First-class PDF review
-- **Status:** ready for renderer spike · **Source:**
+- **Status:** local implementation and browser QA complete · **Source:**
   `docs/plans/pdf-review-2026-08-10.md`
 - **Description:** render bounded PDF pages into the existing Page/Screenshot
   review model, then reuse annotations, threads, managed sharing, and sign-off.
-- **Gate:** prove the selected renderer's Linux-image timeout, page/pixel
-  bounds, and cleanup behavior before accepting any PDF upload.
+- **Completed local slice:** the 16 MB/50-page scoped upload retains its opaque
+  source file and record, renders bounded pages through Poppler 25.12.0, and
+  passes owner/share desktop/mobile browser QA with fixture cleanup.
+- **Remaining gate:** release authorization, then authenticated production QA.
 
 ### Ship the AI-agent integration (README §"Future work")
 - **Status:** parked · **Source:** README §"Future work"

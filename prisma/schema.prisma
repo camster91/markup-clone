@@ -20,6 +20,7 @@ model Project {
   shareExpiresAt      DateTime?
   sharePasswordHash   String?
   pages               Page[]
+  reviewDocuments     ReviewDocument[]
   subscribers         Subscriber[]
   notificationPreferences ProjectNotificationPreference[]
   presences           Presence[]
@@ -51,6 +52,22 @@ model Project {
   updatedAt           DateTime           @updatedAt
 
   @@index([archivedAt])
+}
+
+// The original source for a rendered PDF review. It is deliberately separate
+// from Page/Screenshot: pages remain the common review surface, while this row
+// retains the opaque source file for audit, recovery, and later download work.
+model ReviewDocument {
+  id         String   @id @default(uuid())
+  projectId  String
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  storageKey String   @unique
+  mimeType   String
+  size       Int
+  pageCount  Int
+  createdAt  DateTime @default(now())
+
+  @@index([projectId, createdAt])
 }
 
 // Server-to-server developer credential. The browser-visible Project.apiKey

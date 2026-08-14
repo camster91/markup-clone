@@ -84,8 +84,21 @@ upload endpoint exists and no PDF runtime change has been deployed.
 The runner-image gate subsequently passed on the guarded VPS release: the live
 `dad28a5` container exposes Poppler 25.12.0. The next local slice adds a scoped
 PDF endpoint and extends the review upload picker: PDFs are bounded to 16 MB
-and 50 rendered pages, render to capped PNG pages, and become ordinary
-Page/Screenshot records. Focused tests, production compilation, and the full
-suite are green locally. It is not yet deployed: the remaining gates are an
-actual renderer journey with a disposable PDF fixture and owner/share browser
-QA.
+and 50 rendered pages, retain their opaque source record and file, render to
+capped PNG pages, and become ordinary Page/Screenshot records. Focused tests
+and production compilation are local gates. The disposable
+`scripts/qa-pdf-review-upload.cjs` owner/share journey passes against the
+local Linux image and its Poppler renderer. It is not yet deployed: the
+remaining gate is authenticated production QA after release authorization.
+
+## Verification update — 2026-08-13
+
+The local automated suite completed in serial groups to accommodate the runner:
+908 tests passed with 3 intentional skips (436 unit, 398 integration, and 74
+component). Lint, TypeScript, Prisma schema validation, and the optimized
+production build also passed. The public `markup.ashbi.ca` health endpoint is
+healthy and its deployed `dad28a5` image includes the already-released image
+upload slice; it does not yet include the unpushed PDF upload commit. The
+PDF owner/share journey passed against the real local Linux image, including
+Poppler rendering, desktop/mobile layout checks, and fixture cleanup. The
+remaining proof is authenticated production QA after release authorization.

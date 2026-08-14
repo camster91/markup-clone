@@ -13,11 +13,13 @@
 All five tasks are complete. The migration, bounded header parser, scoped
 administrator upload route, MIME-preserving media response, audit action, and
 dashboard upload control are implemented. Focused tests, lint, TypeScript,
-Prisma validation, a production build, and the full test suite pass. The
-disposable `scripts/qa-image-review-upload.cjs` journey verified owner upload
-at 1280px and 375px plus token-bound client sharing at 375px, with no overflow,
-console/request failures, or fixture residue. The runtime feature is deployed;
-authenticated production browser QA remains blocked until the first production
+Prisma validation, and a production build pass. The runtime feature is deployed
+and the public endpoint rejects an unauthenticated multipart upload. On
+2026-08-13, the disposable fixture was corrected to use the production-format
+43-character share token and current picker accessibility labels required by
+the managed-share opener. Its browser replay now passes against the clean Linux
+candidate at 1280px and 375px, including client sharing and cleanup.
+Authenticated production browser QA remains blocked until the first production
 operator account exists.
 
 ---

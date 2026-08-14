@@ -34,18 +34,32 @@ export async function POST(req: Request, { params }: RouteContext): Promise<Next
     try { assertPdfHeader(source); } catch { return NextResponse.json({ error: 'invalid PDF data' }, { status: 400 }); }
     let pages;
     try { pages = await renderPdfPages(source); } catch { return NextResponse.json({ error: 'PDF could not be rendered safely' }, { status: 400 }); }
-    const documentId = crypto.randomUUID(); const staged: Array<{ id: string; storageKey: string; bytes: Buffer; width: number; height: number }> = pages.map((page) => ({ id: crypto.randomUUID(), storageKey: `${crypto.randomUUID()}.png`, ...page }));
+    const documentId = crypto.randomUUID();
+    const sourceStorageKey = `${documentId}.pdf`;
+    const staged: Array<{ id: string; storageKey: string; bytes: Buffer; width: number; height: number }> = pages.map((page) => ({ id: crypto.randomUUID(), storageKey: `${crypto.randomUUID()}.png`, ...page }));
+    const storedKeys = [sourceStorageKey, ...staged.map((page) => page.storageKey)];
     await mkdir(SCREENSHOTS_DIR, { recursive: true });
-    await Promise.all(staged.map((page) => writeFile(path.join(/* turbopackIgnore: true */ SCREENSHOTS_DIR, page.storageKey), page.bytes)));
+    await writeFile(path.join(/* turbopackIgnore: true */ SCREENSHOTS_DIR, sourceStorageKey), source, { flag: 'wx' });
     try {
-      const created = await prisma.$transaction(async (tx) => Promise.all(staged.map(async (page, index) => {
+      await Promise.all(staged.map((page) => writeFile(path.join(/* turbopackIgnore: true */ SCREENSHOTS_DIR, page.storageKey), page.bytes, { flag: 'wx' })));
+    } catch (error) {
+      await Promise.all(storedKeys.map((storageKey) => unlink(path.join(/* turbopackIgnore: true */ SCREENSHOTS_DIR, storageKey)).catch(() => undefined)));
+      throw error;
+    }
+    try {
+      const created = await prisma.$transaction(async (tx) => {
+        await tx.reviewDocument.create({ data: { id: documentId, projectId: projectId.value, storageKey: sourceStorageKey, mimeType: 'application/pdf', size: file.size, pageCount: staged.length } });
+        const screenshots = [];
+        for (const [index, page] of staged.entries()) {
         const reviewPage = await tx.page.create({ data: { projectId: projectId.value, path: `/documents/${documentId}/page-${index + 1}` }, select: { id: true } });
-        return tx.screenshot.create({ data: { id: page.id, pageId: reviewPage.id, storageKey: page.storageKey, mimeType: 'image/png', width: page.width, height: page.height }, select: { id: true, pageId: true, storageKey: true, mimeType: true, width: true, height: true, capturedAt: true } });
-      })));
+        screenshots.push(await tx.screenshot.create({ data: { id: page.id, pageId: reviewPage.id, storageKey: page.storageKey, mimeType: 'image/png', width: page.width, height: page.height }, select: { id: true, pageId: true, storageKey: true, mimeType: true, width: true, height: true, capturedAt: true } }));
+        }
+        return screenshots;
+      });
       audit({ actor: access.caller.email, action: 'project.pdf.upload', target: documentId, metadata: { projectId: projectId.value, pageCount: created.length, size: file.size } });
       return NextResponse.json({ success: true, data: { documentId, pages: created.map((page) => ({ ...page, capturedAt: page.capturedAt.toISOString() })) } }, { status: 201 });
     } catch (error) {
-      await Promise.all(staged.map((page) => unlink(path.join(/* turbopackIgnore: true */ SCREENSHOTS_DIR, page.storageKey)).catch(() => undefined)));
+      await Promise.all(storedKeys.map((storageKey) => unlink(path.join(/* turbopackIgnore: true */ SCREENSHOTS_DIR, storageKey)).catch(() => undefined)));
       throw error;
     }
   } catch (error) {

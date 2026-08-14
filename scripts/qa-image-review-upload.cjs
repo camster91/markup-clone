@@ -13,7 +13,8 @@ const USER_ID = '98000000-0000-4000-8000-000000000002';
 const EMAIL = 'image-qa-owner@local.test';
 const SESSION_TOKEN = 'local-image-qa-session-token-not-for-production';
 const CSRF_TOKEN = 'local-image-qa-csrf-token-not-for-production';
-const SHARE_TOKEN = 'local_image_review_share_token_1234567890ab';
+// The opener route accepts production-format, 43-character base64url tokens.
+const SHARE_TOKEN = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
 function runContainer(action) {
   return execFileSync('docker', ['compose', 'exec', '-T', '-e', 'QA_IMAGE_IN_CONTAINER=1', 'app', 'node', '/opt/app-scripts/qa-image-review-upload.cjs', action], {
@@ -91,8 +92,8 @@ async function browserJourney() {
         if (!(failure === 'net::ERR_ABORTED' && request.url().includes('_rsc='))) errors.push(`${viewport.width}: ${request.url()} ${failure}`);
       });
       await page.goto(`${baseUrl}/projects/${PROJECT_ID}`, { waitUntil: 'networkidle' });
-      await page.getByLabel('Upload image for review').setInputFiles({ name: 'review.png', mimeType: 'image/png', buffer: png() });
-      await page.getByRole('button', { name: 'Upload image', exact: true }).click();
+      await page.getByLabel('Upload file for review').setInputFiles({ name: 'review.png', mimeType: 'image/png', buffer: png() });
+      await page.getByRole('button', { name: 'Upload for review', exact: true }).click();
       await page.getByText('/uploads/', { exact: false }).waitFor({ timeout: 15_000 });
       const screenshot = page.locator('img[src*="/api/screenshots/"]').first();
       await screenshot.waitFor({ timeout: 15_000 });
