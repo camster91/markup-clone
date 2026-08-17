@@ -231,9 +231,11 @@ function withTmp<T>(
 const FAKE_ENV =
   'DATABASE_URL="postgresql://markup:***@markup-postgres:5432/markup_db"\n';
 
-const hasBash = spawnSync('bash', ['--version'], { stdio: 'ignore' }).status === 0;
+const hasShellPrerequisites =
+  spawnSync('bash', ['--version'], { stdio: 'ignore' }).status === 0 &&
+  spawnSync('python3', ['--version'], { stdio: 'ignore' }).status === 0;
 
-describe.skipIf(!hasBash)('deploy.sh — ensure postgres is running (three-branch decision tree)', () => {
+describe.skipIf(!hasShellPrerequisites)('deploy.sh — ensure postgres is running (three-branch decision tree)', () => {
   it('branch 1: does nothing when `docker ps` shows the container running', () => {
     withTmp({ ps_running: '1', inspect_ok: '0' }, FAKE_ENV, (t) => {
       t.run();
