@@ -14,6 +14,14 @@ guessing from chat history.
 
 ## Current plans
 
+- `docs/plans/finish-the-app-2026-08-17.md` - **Active product completion
+  roadmap.** Production proof, agency onboarding, regression coverage,
+  operations/trust, commercial readiness, and an optional permission-equivalent
+  ChatGPT/MCP surface, tracked as child work under GitHub issue #28.
+- `docs/plans/public-onboarding-and-demo-2026-08-17.md` - **Complete locally;
+  release approved.**
+  Add a public agency-facing product path, a non-mutating review demo, and
+  destination-preserving sign-in after the logged-out production dogfood.
 - `docs/plans/pdf-review-2026-08-10.md` - **Active discovery and implementation
   plan.** Extend the shared review model to PDF pages only after a bounded
   renderer contract is proven in the production image.

@@ -39,9 +39,11 @@ export type AuthState = 'loading' | 'anonymous' | 'authenticated';
 export interface AuthGateProps {
   /** Optional callback when the auth state resolves. */
   onChange?: (state: AuthState, user: AuthUser | null) => void;
+  /** Validated same-origin destination restored after login. */
+  returnTo?: string | null;
 }
 
-export default function AuthGate({ onChange }: AuthGateProps = {}) {
+export default function AuthGate({ onChange, returnTo }: AuthGateProps = {}) {
   const [state, setState] = useState<AuthState>('loading');
   const [user, setUser] = useState<AuthUser | null>(null);
 
@@ -89,7 +91,7 @@ export default function AuthGate({ onChange }: AuthGateProps = {}) {
   }
 
   if (state === 'anonymous') {
-    return <LoginForm onSuccess={() => window.location.reload()} />;
+    return <LoginForm returnTo={returnTo} />;
   }
 
   // authenticated

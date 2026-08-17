@@ -359,7 +359,9 @@ describe('GET / — dashboard home page (RSC refactor)', () => {
     expect(elementJson).not.toContain('acme.com');
     expect(elementJson).not.toContain('proj-1');
     expect(elementJson).not.toContain('mk_abc');
-    expect(elementJson).toContain('Sign in to see the widget snippet');
+    expect(elementJson).toContain('Turn website feedback into developer-ready work.');
+    expect(elementJson).toContain('Explore the review demo');
+    expect(elementJson).toContain('Request agency access');
     expect(elementJson).toContain('Visual Feedback');
   });
 
@@ -371,6 +373,25 @@ describe('GET / — dashboard home page (RSC refactor)', () => {
     const element = await DashboardPage();
     const elementJson = JSON.stringify(element, getCircularReplacer());
     expect(mocks.project.findMany).not.toHaveBeenCalled();
-    expect(elementJson).toContain('Sign in to see the widget snippet');
+    expect(elementJson).toContain('Turn website feedback into developer-ready work.');
+  });
+
+  it('explains and preserves a safe protected destination for anonymous callers', async () => {
+    const element = await DashboardPage({
+      searchParams: Promise.resolve({ next: '/workspaces/client-1' }),
+    });
+    const payload = JSON.stringify(element, getCircularReplacer());
+    expect(payload).toContain('Sign in to continue to ');
+    expect(payload).toContain('agency workspaces');
+    expect(payload).toContain('/workspaces/client-1');
+  });
+
+  it('drops untrusted return destinations from the public sign-in payload', async () => {
+    const element = await DashboardPage({
+      searchParams: Promise.resolve({ next: 'https://evil.example/phish' }),
+    });
+    const payload = JSON.stringify(element, getCircularReplacer());
+    expect(payload).not.toContain('evil.example');
+    expect(payload).not.toContain('return you there automatically');
   });
 });

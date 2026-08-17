@@ -153,7 +153,9 @@ describe('team detail server page', () => {
 
 describe('workspace server-page authorization', () => {
   it('redirects an anonymous workspace index request before querying data', async () => {
-    await expect(WorkspacesPage()).rejects.toMatchObject({ __redirect: '/' });
+    await expect(WorkspacesPage()).rejects.toMatchObject({
+      __redirect: '/?next=%2Fworkspaces#sign-in',
+    });
     expect(mocks.workspace.findMany).not.toHaveBeenCalled();
   });
 
@@ -181,7 +183,9 @@ describe('workspace server-page authorization', () => {
     });
     await expect(
       WorkspaceDetailPage({ params: Promise.resolve({ id: 'workspace-private' }) })
-    ).rejects.toMatchObject({ __redirect: '/' });
+    ).rejects.toMatchObject({
+      __redirect: '/?next=%2Fworkspaces%2Fworkspace-private#sign-in',
+    });
     expect(mocks.workspace.findUnique).not.toHaveBeenCalled();
     expect(mocks.workspace.findFirst).not.toHaveBeenCalled();
   });

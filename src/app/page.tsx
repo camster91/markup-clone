@@ -2,6 +2,7 @@ import NewProjectForm from '@/components/NewProjectForm';
 import WidgetSnippet from '@/components/WidgetSnippet';
 import DashboardPoller from '@/components/DashboardPoller';
 import AuthGate from '@/components/AuthGate';
+import PublicLanding from '@/components/PublicLanding';
 import Link from 'next/link';
 import { prisma } from '@/lib/prisma';
 import type { ProjectSummary } from '@/lib/types';
@@ -13,6 +14,7 @@ import {
 } from '@/lib/teams';
 import { parseHost } from '@/lib/origin';
 import { loadProjectSummaryCounts, projectSummaryCountsOrZero } from '@/lib/project-summary-counts';
+import { returnDestinationLabel, safeReturnPath } from '@/lib/sign-in-redirect';
 
 // / (dashboard home)
 //
@@ -62,7 +64,11 @@ import { loadProjectSummaryCounts, projectSummaryCountsOrZero } from '@/lib/proj
 
 export const dynamic = 'force-dynamic';
 
-export default async function Dashboard() {
+type DashboardProps = {
+  searchParams?: Promise<{ next?: string | string[] }>;
+};
+
+export default async function Dashboard({ searchParams }: DashboardProps = {}) {
   // Server-side fetch. Same compact shape as /api/projects so the
   // client island can replace it atomically on every successful poll.
   //
@@ -72,24 +78,12 @@ export default async function Dashboard() {
   // polling client will see on its first refresh.
   const caller = await getCallerUser();
   if (!caller) {
-    return (
-      <main className="min-h-screen bg-gray-50 p-4 sm:p-8">
-        <div className="max-w-7xl mx-auto">
-          <header className="mb-8 flex justify-between items-center flex-wrap gap-4">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">Visual Feedback</h1>
-              <p className="text-gray-500 mt-2">
-                Review client feedback pins on captured page screenshots.
-              </p>
-            </div>
-            <div className="bg-white px-4 py-2 rounded-lg shadow-sm border border-gray-200 text-xs text-gray-400">
-              Sign in to see the widget snippet
-            </div>
-          </header>
-          <AuthGate />
-        </div>
-      </main>
-    );
+    const query = searchParams ? await searchParams : {};
+    const returnTo = safeReturnPath(query.next);
+    return PublicLanding({
+      returnTo,
+      destinationLabel: returnDestinationLabel(returnTo),
+    });
   }
 
   const teamScope = await getProjectScopeWhere(caller);

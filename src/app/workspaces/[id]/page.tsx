@@ -17,6 +17,7 @@ import { prisma } from '@/lib/prisma';
 import NewTeamForm from '@/components/NewTeamForm';
 import WorkspaceBrandingForm from '@/components/WorkspaceBrandingForm';
 import { getCallerUser, getWorkspaceScopeWhere, normalizeTeamRole } from '@/lib/teams';
+import { signInRedirect } from '@/lib/sign-in-redirect';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,7 +28,7 @@ type PageProps = {
 export default async function WorkspaceDetailPage({ params }: PageProps) {
   const { id } = await params;
   const caller = await getCallerUser();
-  if (!caller) redirect('/');
+  if (!caller) redirect(signInRedirect(`/workspaces/${id}`));
 
   const workspace = await prisma.workspace.findFirst({
     where: {

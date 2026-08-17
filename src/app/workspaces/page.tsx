@@ -23,12 +23,13 @@ import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/prisma';
 import NewWorkspaceForm from '@/components/NewWorkspaceForm';
 import { getCallerUser, getWorkspaceScopeWhere } from '@/lib/teams';
+import { signInRedirect } from '@/lib/sign-in-redirect';
 
 export const dynamic = 'force-dynamic';
 
 export default async function WorkspacesPage() {
   const caller = await getCallerUser();
-  if (!caller) redirect('/');
+  if (!caller) redirect(signInRedirect('/workspaces'));
 
   const workspaces = await prisma.workspace.findMany({
     where: getWorkspaceScopeWhere(caller),

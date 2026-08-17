@@ -1,7 +1,8 @@
 # TASK.md — markup-clone task board
 
-**Last updated:** 2026-08-08 (production release and rollback verified; see
-`docs/plans/agency-product-release-2026-08-07.md`).
+**Last updated:** 2026-08-17 (public onboarding release approved and the
+remaining product roadmap decomposed; see
+`docs/plans/finish-the-app-2026-08-17.md`).
 
 **Format:** each item has a status (`shipped`, `ready`, `blocked`,
 `parked`), a one-line description, and the source — git commit SHA
@@ -146,6 +147,21 @@ for shipped, source-of-truth for the rest.
 ---
 
 ## 🚀 Ready (pick from here)
+
+### Finish the app roadmap
+- **Status:** active · **Source:** `docs/plans/finish-the-app-2026-08-17.md`
+- **Description:** complete authenticated production proof, guided agency setup,
+  durable release/operations coverage, commercial readiness, and an optional
+  permission-equivalent ChatGPT/MCP interface.
+- **Tracking:** GitHub issue #28 remains the parent; bounded child issues carry
+  implementation and acceptance criteria.
+
+### Public onboarding and non-mutating product demo
+- **Status:** complete locally; release approved · **Source:** `docs/plans/public-onboarding-and-demo-2026-08-17.md`
+- **Description:** give agencies and web developers a public way to understand
+  the product, explore the review workflow safely, request access, and return to
+  their intended protected page after signing in.
+- **Boundary:** no self-serve account mutation, billing, AI/MCP, or GitHub work.
 
 ### Complete the core MarkUp-style SaaS journey
 - **Status:** in progress · **Source:** `docs/plans/markup-parity-and-agency-advantage-2026-08-07.md`

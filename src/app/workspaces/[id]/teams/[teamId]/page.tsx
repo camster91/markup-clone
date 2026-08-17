@@ -5,6 +5,7 @@ import TeamAccessManager from '@/components/TeamAccessManager';
 import TeamReviewDefaultsForm from '@/components/TeamReviewDefaultsForm';
 import { prisma } from '@/lib/prisma';
 import { assertTeamRole, getCallerUser } from '@/lib/teams';
+import { signInRedirect } from '@/lib/sign-in-redirect';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,7 +16,7 @@ type PageProps = {
 export default async function TeamDetailPage({ params }: PageProps) {
   const { id: workspaceId, teamId } = await params;
   const caller = await getCallerUser();
-  if (!caller) redirect('/');
+  if (!caller) redirect(signInRedirect(`/workspaces/${workspaceId}/teams/${teamId}`));
 
   const access = await assertTeamRole(workspaceId, teamId);
   if (!access.ok) notFound();

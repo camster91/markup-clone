@@ -28,9 +28,11 @@ export interface LoginFormProps {
    *  page reload — `window.location.reload()` is the default
    *  fallback used when this prop is absent. */
   onSuccess?: () => void;
+  /** Safe same-origin path to open after login. */
+  returnTo?: string | null;
 }
 
-export default function LoginForm({ onSuccess }: LoginFormProps = {}) {
+export default function LoginForm({ onSuccess, returnTo }: LoginFormProps = {}) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -53,6 +55,7 @@ export default function LoginForm({ onSuccess }: LoginFormProps = {}) {
       });
       if (res.ok) {
         if (onSuccess) onSuccess();
+        else if (returnTo) window.location.assign(returnTo);
         else window.location.reload();
         return;
       }

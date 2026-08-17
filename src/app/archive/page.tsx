@@ -4,12 +4,13 @@ import ArchivedSites from '@/components/ArchivedSites';
 import { prisma } from '@/lib/prisma';
 import type { ProjectSummary } from '@/lib/types';
 import { canAdminProject, getCallerAdminTeamIds, getCallerUser, getProjectScopeWhere } from '@/lib/teams';
+import { signInRedirect } from '@/lib/sign-in-redirect';
 
 export const dynamic = 'force-dynamic';
 
 export default async function ArchivePage() {
   const caller = await getCallerUser();
-  if (!caller) redirect('/');
+  if (!caller) redirect(signInRedirect('/archive'));
   const teamScope = await getProjectScopeWhere(caller);
   const adminTeamIds = caller.role === 'operator' ? [] : await getCallerAdminTeamIds(caller.id);
   const rows = await prisma.project.findMany({
