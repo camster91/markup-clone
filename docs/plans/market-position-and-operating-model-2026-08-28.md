@@ -218,7 +218,8 @@ rules, not market claims.
 2. Cameron provisions `cameron@ashbi.ca` locally; complete and clean up
    authenticated production QA.
 3. Select the first pilot and record incumbent baselines, actual subscription
-   cost, reviewer outcome, support friction, timing, and usage.
+   cost, reviewer outcome, support friction, timing, and usage in a dated copy of
+   `docs/qa/client-pilot-record-template.md`.
 4. Fix only launch-blocking or repeatedly observed friction.
 5. Run a second project or 30-day window, export retained SaaS data, and request
    explicit cancellation approval.
