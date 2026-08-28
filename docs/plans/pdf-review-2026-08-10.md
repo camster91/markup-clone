@@ -1,6 +1,6 @@
 # First-Class PDF Review Implementation Plan
 
-**Status:** active implementation; production-image renderer proof is next
+**Status:** active implementation; bounded upload and storage are next
 **Parent:** `docs/plans/launch-and-saas-replacement-roadmap-2026-08-28.md` (L2)
 
 **Goal:** Let project administrators upload a PDF and let owners, invited
@@ -95,6 +95,8 @@ upload endpoint exists and no PDF runtime change has been deployed.
   checks. The focused PDF/integration suites passed 50 tests; the full suite
   passed 927 tests; ESLint, TypeScript, and the Next production webpack build
   passed.
-- The exact Linux runner-image build remains open because this Mac has no
-  working container runtime. Do not start the PDF upload pipeline until a CI or
-  approved Linux build records the network-disabled verifier passing.
+- A temporary isolated Colima profile built the exact Linux/arm64 runner image
+  from commit `523df43`. BuildKit step `RUN --network=none` passed the verifier,
+  and the loaded image repeated it in a `docker run --network none` container.
+  The image was `sha256:99e1cd8322c7c55131d8a04a8d7948ea1795ab7508f51429624f12e2188c8d01`
+  and reported Poppler 25.12.0. L2.1 is complete; the upload pipeline may begin.

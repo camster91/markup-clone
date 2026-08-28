@@ -12,28 +12,17 @@ its stated evidence exists; local tests do not silently close it.
 
 ## In progress
 
-### L2.1 — Prove the bounded PDF renderer in the production image
+### L2.2 — Implement first-class PDF upload and review
 
 - **Status:** in-progress
 - **Source:** `docs/plans/pdf-review-2026-08-10.md`
-- **Completed locally:** fail-closed network-disabled image-build verifier,
-  real one-page render, timeout/page/pixel/cleanup assertions, and an
-  aspect-ratio fix found by the runtime probe.
-- **Remaining:** run the Docker build on the exact Linux runner image. This Mac
-  has no working container runtime; use the repository's PR image build or an
-  approved Linux build host.
-- **Do not:** add a PDF upload endpoint until the exact-image gate passes.
+- **Work:** bounded admin upload, opaque source/page storage, normal
+  Page/Screenshot rows, owner/client UI, migration and cleanup evidence.
+- **Gate now open:** L2.1 passed in the exact Linux runner image.
 
 ---
 
 ## Ready
-
-### L2.2 — Implement first-class PDF upload and review
-
-- **Status:** ready after L2.1
-- **Source:** `docs/plans/pdf-review-2026-08-10.md`
-- **Work:** bounded admin upload, opaque source/page storage, normal
-  Page/Screenshot rows, owner/client UI, migration and cleanup evidence.
 
 ### L5 — Record pilot-driven business improvements
 
@@ -87,6 +76,14 @@ landed on `main`.
 - Top-level plans classified as governing, active, completed evidence,
   product/historical reference, or parked
 - Stale and contradictory task-board priorities removed
+
+### L2.1 (bounded PDF renderer)
+
+- Exact Linux/arm64 production runner image built successfully
+- Build-time renderer probe ran with BuildKit networking disabled
+- Loaded image repeated the probe under `--network none`
+- Poppler 25.12.0 rendered one aspect-preserving 1484x1920 PNG within
+  timeout/page/pixel bounds and removed its temporary directory
 
 ### F1–F3 (recapture + screenshots)
 

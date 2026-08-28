@@ -25,9 +25,9 @@ which are retained as implementation evidence.
 
 ## Active implementation
 
-- `pdf-review-2026-08-10.md` — **Active.** The Poppler contract and image
-  dependency are present on `main`; the next gate is bounded renderer proof in
-  the exact production image before any PDF upload endpoint is accepted.
+- `pdf-review-2026-08-10.md` — **Active.** The exact Linux runner-image
+  renderer gate passed; bounded PDF upload and normal Page/Screenshot storage
+  are the next implementation slice.
 
 ## Launch evidence with an open gate
 
