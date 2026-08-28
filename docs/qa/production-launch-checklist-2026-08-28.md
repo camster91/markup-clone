@@ -96,7 +96,8 @@ widget byte-for-byte by SHA-256 with the checked-out `public/widget.js`.
   `dbe4f2ebbf07f9ddda02b5b38a9a6280972c3ccf06d6c1d739a6fedf1a781518`.
 - No deployment, email, integration delivery, or production data mutation was
   performed during staging. Exact owner approval is required immediately before
-  release `a03b87d8...` is deployed.
+  the exact then-current `main` containing code-bearing merge `a03b87d8...` is
+  deployed.
 
 ## Release identity and approval
 
