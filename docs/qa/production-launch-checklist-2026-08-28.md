@@ -1,6 +1,6 @@
 # Production launch, pilot, and SaaS-exit checklist — 2026-08-28
 
-**Status:** ready for the first authenticated production release
+**Status:** exact-SHA production release deployed; first operator provisioning in progress
 **Governing roadmap:**
 `docs/plans/launch-and-saas-replacement-roadmap-2026-08-28.md`
 
@@ -31,6 +31,31 @@ This proves public reachability and edge posture. It does not prove the
 authenticated application release, its database migration, or any owner/client
 journey.
 
+## 2026-08-28 exact-SHA release record
+
+- Pull request #41 passed Ashbi Local CI and GitGuardian, then merged without a
+  bypass as `e4f8e4eb45017930969e9ba9f46e6100472f9a08`.
+- The clean VPS checkout fast-forwarded to `main` at that exact commit.
+- `scripts/deploy.sh` completed successfully. The healthy application container
+  uses `markup-clone:e4f8e4eb45017930969e9ba9f46e6100472f9a08`, image ID
+  `sha256:b68f4ba7c4578da9c35e4a9b274d6e8101a8bfadb1e6a593f7925186914fdf6a`,
+  started at `2026-08-28T17:11:35.564767054Z`.
+- The retained rollback is
+  `markup-clone:e99b51ee3d57d8e291e121800e6845fec07825ce`, image ID
+  `sha256:56427ce514d74de49b73fdd5cfd546372ce3fb14493f08dc692b447abda3639b`.
+- Production has 29 finished, non-rolled-back migrations, including
+  `20260828120000_add_pdf_review_assets`.
+- That count is 28 migration directories on current `main` plus the previously
+  deployed `20260813103000_add_review_documents` history row from the superseded
+  `codex/public-onboarding` implementation. Its `ReviewDocument` table exists
+  with zero rows; current code uses the new, also-empty `ReviewAsset` table.
+  Remove the superseded table only through a reviewed follow-up migration.
+- The post-deploy `ashbi.public-release.v1` verification passed at
+  `2026-08-28T17:12:03Z`.
+- The private backup `markup-20260828T163040Z.dump` passed its remote catalog and
+  checksum checks and its off-host copy passed SHA-256 verification at
+  `ab335038316a1f5b13ba560712d7593c194da9c94b21d7b22d960d363316bfec`.
+
 Repeat the same fail-closed verification from the exact release checkout before
 and after deployment:
 
@@ -45,27 +70,31 @@ widget byte-for-byte by SHA-256 with the checked-out `public/widget.js`.
 
 ## Release identity and approval
 
-- [ ] The launch pull request is no longer draft, all required checks pass, and
+- [x] The launch pull request is no longer draft, all required checks pass, and
   the approved code is merged without bypassing an unexplained CI failure.
-- [ ] Record the exact 40-character merged commit SHA: `________________`.
-- [ ] The VPS checkout authenticates to Git, is on the intended release branch,
+- [x] Record the exact 40-character merged commit SHA:
+  `e4f8e4eb45017930969e9ba9f46e6100472f9a08`.
+- [x] The VPS checkout authenticates to Git, is on the intended release branch,
   fast-forwards to that SHA, and is clean in both content and file mode.
-- [ ] Record the release operator, start time, and rollback decision owner.
-- [ ] Keep the current paid visual-feedback SaaS active as the pilot fallback.
+- [x] Release operator: Codex acting under Cameron Ashley's approval; release
+  window began with the backup at `2026-08-28T16:30:40Z`; Cameron Ashley remains
+  the rollback decision owner.
+- [x] Keep the current paid visual-feedback SaaS active as the pilot fallback.
 
 ## Read-only host preflight
 
 Run `docs/DEPLOY-RUNBOOK.md` items 1 through 10 from a trusted VPS shell. In
 particular, do not print `.env` values. Record:
 
-- [ ] active edge owner and successful `edge-proxy-preflight.sh verify`;
-- [ ] healthy PostgreSQL and application containers;
-- [ ] current immutable application image tag and image ID;
-- [ ] retained rollback image tag and image ID;
-- [ ] current finished migration count;
-- [ ] free disk space and expected `/data/screenshots` mount;
-- [ ] current cron/worker state and recent logs without repeated failures;
-- [ ] private database backup filename, checksum verification, and off-host copy
+- [x] active edge owner and successful `edge-proxy-preflight.sh verify`;
+- [x] running PostgreSQL and healthy application containers;
+- [x] current immutable application image tag and image ID recorded above;
+- [x] retained rollback image tag and image ID recorded above;
+- [x] current finished migration count: 29;
+- [x] 79 GB free and expected `/data/screenshots` mount present;
+- [x] prune and integration-delivery cron jobs installed, both Ashbi Local CI
+  services active, and recent application logs without repeated failures;
+- [x] private database backup filename, checksum verification, and off-host copy
   destination.
 
 Any missing rollback proof, untrusted TLS, dirty checkout, failed backup, or
@@ -73,16 +102,16 @@ unhealthy dependency is a release stop.
 
 ## Deploy the exact release
 
-- [ ] Run `bash scripts/deploy.sh` from `/root/markup-clone` on the VPS.
-- [ ] Confirm the log ends with `DEPLOY OK: <exact SHA>`.
-- [ ] Confirm the running container uses `markup-clone:<exact SHA>` and not only
+- [x] Run `bash scripts/deploy.sh` from `/root/markup-clone` on the VPS.
+- [x] Confirm the log ends with `DEPLOY OK: <exact SHA>`.
+- [x] Confirm the running container uses `markup-clone:<exact SHA>` and not only
   the mutable `latest` tag.
-- [ ] Confirm all 28 migrations, including
+- [x] Confirm all 29 migrations, including
   `20260828120000_add_pdf_review_assets`, are recorded as finished.
-- [ ] Repeat local-container and public health checks with trusted TLS.
-- [ ] Run `npm run verify:public-release` from the exact deployed checkout and
+- [x] Repeat local-container and public health checks with trusted TLS.
+- [x] Run `npm run verify:public-release` from the exact deployed checkout and
   retain its `ashbi.public-release.v1` JSON output with the release evidence.
-- [ ] Confirm the pruning and integration-delivery jobs were installed and are
+- [x] Confirm the pruning and integration-delivery jobs were installed and are
   operating without a repeated error.
 
 ## Provision the first operator

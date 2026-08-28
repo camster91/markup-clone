@@ -12,13 +12,37 @@ its stated evidence exists; local tests do not silently close it.
 
 ## In progress
 
-No unblocked implementation remains ahead of production proof. Resume L1 as
-soon as the operator identity and secret are supplied through the approved
-secret-handling path.
+### L1 — Provision the first production operator and run authenticated QA
+
+- **Status:** in-progress
+- **Source:** governing roadmap L1 and
+  `release-candidate-operational-validation-2026-08-08.md`
+- **Release evidence:** pull request #41 merged as
+  `e4f8e4eb45017930969e9ba9f46e6100472f9a08`; that exact image is healthy in
+  production; all 29 migrations, the off-host-verified backup, trusted public
+  release verification, retained rollback image, and cron/CI state passed.
+- **Current action:** the stdin-only provisioning command is open in the trusted
+  VPS terminal for `cameron@ashbi.ca`; Cameron must enter the password locally.
+- **Next:** sign in and run owner/client desktop/mobile QA, verify
+  integrations/operations, and remove every disposable record and file.
+- **Execution record:**
+  `docs/qa/production-launch-checklist-2026-08-28.md`.
 
 ---
 
 ## Ready
+
+### Operational hygiene — reconcile the superseded PDF table
+
+- **Status:** ready after L1 authenticated QA
+- **Evidence:** production has 29 finished migration history rows but current
+  `main` has 28 directories. The extra historical migration created an empty
+  `ReviewDocument` table on `codex/public-onboarding`; current code uses the
+  empty `ReviewAsset` table instead.
+- **Work:** add a reviewed fail-closed migration that refuses to drop a nonempty
+  `ReviewDocument` table, removes it when empty, and preserves Prisma history.
+- **Priority:** complete before the next feature release; it does not block the
+  current authenticated journey or first operator provisioning.
 
 ### L5 — Record pilot-driven business improvements
 
@@ -31,30 +55,6 @@ secret-handling path.
 ---
 
 ## Blocked
-
-### L1 — Provision the first production operator and run authenticated QA
-
-- **Status:** blocked
-- **Source:** governing roadmap L1 and
-  `release-candidate-operational-validation-2026-08-08.md`
-- **Mechanism ready:** `scripts/provision-operator.cjs` accepts email/password
-  only over stdin, is idempotent for matching credentials, and refuses implicit
-  promotion or password rotation. The VPS-shell command is documented in
-  `README.md`.
-- **Blocker:** Cameron must run that command in the trusted VPS shell and enter
-  the exact operator email/password locally. The repository and chat must never
-  contain the plaintext password.
-- **After unblock:** provision idempotently, run owner/client desktop/mobile QA
-  against an exact deployed SHA, verify integrations/operations, and remove all
-  disposable records and files.
-- **Execution record:**
-  `docs/qa/production-launch-checklist-2026-08-28.md` contains the ordered,
-  fail-closed production, pilot, cleanup, and SaaS-exit checklist. Its
-  2026-08-28 public baseline is complete; authenticated items remain unchecked.
-- **Repeatable public proof:** `npm run verify:public-release` is read-only and
-  passed live on 2026-08-28. It verifies trusted HTTPS, health, security headers,
-  anonymous page/API boundaries, and exact widget provenance. This does not
-  satisfy the blocked authenticated QA requirement.
 
 ### L3 — Run the first Ashbi client pilot
 
@@ -103,7 +103,8 @@ landed on `main`.
 - Rendered pages reuse Page/Screenshot, pins, annotations, comments, rounds,
   notifications, sharing, and sign-off; dashboard reviewers can click any
   uploaded or rendered image to create a normal feedback pin
-- Exact Linux image and all 28 migrations passed in disposable Compose
+- Exact Linux image and all 28 checked-in migration directories passed in
+  disposable Compose
 - Owner review at 1280px/375px, two-page upload, click-to-pin, managed-share
   review at 375px, no overflow/request/console errors, and product deletion of
   the database rows, source PDF, rendered PNGs, and work directory all passed
@@ -173,6 +174,12 @@ landed on `main`.
   server-derived presence identity
 
 ### Production release evidence
+
+- Pull request #41 merged as `e4f8e4eb45017930969e9ba9f46e6100472f9a08`
+  and that exact source-SHA image was deployed successfully on 2026-08-28.
+- Production has 29 finished migrations, trusted public-release verification,
+  a checksum-verified off-host backup, a retained immutable rollback image, and
+  active cron and local-CI services for this release.
 
 - Exact-SHA deployment, all 26 then-current migrations, trusted TLS,
   backup/restore drill, retained rollback image, controlled rollback/forward
