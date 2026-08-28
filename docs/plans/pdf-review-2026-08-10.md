@@ -1,5 +1,8 @@
 # First-Class PDF Review Implementation Plan
 
+**Status:** local implementation complete; production QA pending under L1
+**Parent:** `docs/plans/launch-and-saas-replacement-roadmap-2026-08-28.md` (L2)
+
 **Goal:** Let project administrators upload a PDF and let owners, invited
 reviewers, and managed-share viewers review each rendered page with the same
 pins, annotations, threads, review rounds, notifications, and sign-off model
@@ -63,12 +66,12 @@ as website and image reviews.
   build, Linux Docker build, and local Compose migration.
 - Browser evidence for the owner and client journeys plus cleanup.
 
-## Open implementation decision
+## Renderer decision
 
-The rendering runtime is not currently in the dependency graph. The first
-implementation task is intentionally a renderer spike; do not add a PDF npm
-package or an OS renderer until its security/size/timeout behavior is verified
-in the production image.
+The renderer is Poppler from Alpine's `poppler-utils`; no PDF npm package is
+used. The runner-image build now contains a fail-closed verification step, but
+the exact Linux image must build successfully before an upload endpoint is
+allowed.
 
 ## Spike evidence — 2026-08-10
 
@@ -78,3 +81,51 @@ bounds page count at 50, and produces an argument-only 144-DPI command capped
 at 1920 pixels per axis. The full Next.js runner-image build remains a release
 gate: local Docker build clients stalled without producing an image, so no PDF
 upload endpoint exists and no PDF runtime change has been deployed.
+
+## Renderer checkpoint — 2026-08-28
+
+- Added a real single-page PDF runtime probe to the runner layer. BuildKit runs
+  it with `--network=none`; it exercises `pdfinfo`, `pdftoppm`, a killed timeout,
+  page count, PNG dimensions, and temporary-directory cleanup.
+- The first runtime probe caught that separate `-scale-to-x 1920` and
+  `-scale-to-y 1920` arguments distorted a portrait page into a square. The
+  contract now uses aspect-preserving `-scale-to 1920` and asserts a non-square
+  fixture remains non-square.
+- Local Poppler produced one bounded 1484x1920 page and passed cleanup/timeout
+  checks. The focused PDF/integration suites passed 50 tests; the full suite
+  passed 927 tests; ESLint, TypeScript, and the Next production webpack build
+  passed.
+- A temporary isolated Colima profile built the exact Linux/arm64 runner image
+  from commit `523df43`. BuildKit step `RUN --network=none` passed the verifier,
+  and the loaded image repeated it in a `docker run --network none` container.
+  The image was `sha256:99e1cd8322c7c55131d8a04a8d7948ea1795ab7508f51429624f12e2188c8d01`
+  and reported Poppler 25.12.0. L2.1 is complete; the upload pipeline may begin.
+
+## Local implementation and journey checkpoint — 2026-08-28
+
+- Added a private `ReviewAsset` source record and explicit natural page number.
+  The original PDF and every rendered PNG use unrelated opaque UUID storage
+  keys; no original filename or PDF text is persisted, returned, or audited.
+- Added the project-admin document route with dashboard auth, CSRF,
+  project/origin rate limiting, exact PDF MIME plus `%PDF-` validation, a 20 MB
+  source cap, bounded `pdfinfo`/`pdftoppm` execution, 50-page and 1920px limits,
+  a 250 MB rendered-output cap, and failure cleanup.
+- Rendered pages are normal Page/Screenshot records. The dashboard and managed
+  share label them as `PDF page n of total` and preserve natural order.
+- Closed the pre-existing uploaded-asset interaction gap with a scoped
+  dashboard click-to-pin endpoint and 44px/mobile pin composer. The new pin is
+  a normal Pin/Comment row, so annotations, threads, review rounds,
+  notifications, filters, sign-off, and managed sharing continue to use the
+  existing system.
+- The full suite passed 936 tests before click-to-pin; the focused final suites
+  passed PDF, dashboard-pin, project/share, hydration, and keyboard coverage.
+  ESLint, TypeScript, Prisma validation, the webpack build, the exact
+  Linux/Turbopack image, and all 28 disposable Compose migrations passed.
+- `scripts/qa-pdf-review-upload.cjs` uploaded a two-page PDF, rendered both
+  pages, added a pin, verified owner views at 1280px and 375px, verified the
+  managed-share view at 375px, found no console/request/overflow failures, and
+  used the product delete route to prove cleanup of the source PDF, page PNGs,
+  work directory, and all related database rows.
+
+The remaining exit item is the same journey against the deployed SHA during
+L1 authenticated production QA.

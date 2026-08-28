@@ -63,6 +63,13 @@ RUN apk add --no-cache \
         dumb-init \
     && ln -sf /usr/bin/chromium-browser /usr/local/bin/chromium 2>/dev/null || true
 
+# Prove the renderer contract in the runner layer itself. BuildKit removes
+# network access for this step; the verifier bounds execution time, page count,
+# output dimensions, and temporary-file lifetime. A release image cannot build
+# when Poppler is absent or violates the contract.
+COPY scripts/verify-pdf-renderer-image.mjs /usr/local/bin/verify-pdf-renderer-image.mjs
+RUN --network=none node /usr/local/bin/verify-pdf-renderer-image.mjs
+
 # Copy the standalone build output
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static

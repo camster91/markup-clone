@@ -70,6 +70,11 @@ export default function ScreenshotView({
   const [height, setHeight] = useState(screenshot.height);
   const [capturedAt, setCapturedAt] = useState(screenshot.capturedAt);
   const [imageKey, setImageKey] = useState(0); // bump to force img reload
+  const [draftPin, setDraftPin] = useState<{ xPercent: number; yPercent: number } | null>(null);
+  const [draftText, setDraftText] = useState('');
+  const [draftAuthor, setDraftAuthor] = useState('Reviewer');
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [draftSubmitting, setDraftSubmitting] = useState(false);
   const visiblePins = useMemo(
     () => issueFilters ? pins.filter((pin) => pinMatchesIssueFilters(pin, issueFilters)) : pins,
     [issueFilters, pins]
@@ -187,6 +192,47 @@ export default function ScreenshotView({
   const handleMouseLeave = useCallback(() => {
     onPresenceActivity?.({ screenshotId: screenshot.id, x: null, y: null });
   }, [onPresenceActivity, screenshot.id]);
+
+  const startPin = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (readOnly || !projectId || event.target !== event.currentTarget.querySelector('img')) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    setDraftPin({
+      xPercent: Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100)),
+      yPercent: Math.max(0, Math.min(100, ((event.clientY - rect.top) / rect.height) * 100)),
+    });
+    setDraftError(null);
+  }, [projectId, readOnly]);
+
+  const submitDraftPin = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!draftPin || !projectId || !draftText.trim() || draftSubmitting) return;
+    setDraftSubmitting(true);
+    setDraftError(null);
+    try {
+      const response = await fetch(
+        `/api/projects/${encodeURIComponent(projectId)}/screenshots/${encodeURIComponent(screenshot.id)}/pins`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...dashboardHeaders() },
+          body: JSON.stringify({ ...draftPin, text: draftText, authorName: draftAuthor }),
+        },
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(typeof body?.error === 'string' ? body.error : 'Could not add feedback');
+      const newPin = body.data as Pin;
+      setPins((previous) => previous.some((pin) => pin.id === newPin.id) ? previous : [...previous, newPin]);
+      setDraftPin(null);
+      setDraftText('');
+      updatePinQuery(newPin.id);
+      setActivePinId(newPin.id);
+      await onProjectUpdated?.();
+    } catch (error) {
+      setDraftError(error instanceof Error ? error.message : 'Could not add feedback');
+    } finally {
+      setDraftSubmitting(false);
+    }
+  };
 
   const handlePinStatusChange = async (pinId: string, status: 'OPEN' | 'RESOLVED') => {
     // Share-link viewers (readOnly) cannot change pin status — the
@@ -436,6 +482,7 @@ export default function ScreenshotView({
         style={{ maxWidth: '100%' }}
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
+        onClick={startPin}
       >
         {/* eslint-disable-next-line @next/next/no-img-element -- served from /api/screenshots/[id]/image with immutable Cache-Control + ETag; the dynamic recapture cache-buster query string and the disk-backed PNG stream are intentional (not a static asset the optimizer can help with). */}
         <img
@@ -445,6 +492,11 @@ export default function ScreenshotView({
           draggable={false}
         />
         {annotationsSvg}
+        {!readOnly && projectId && !draftPin ? (
+          <span className="pointer-events-none absolute bottom-2 left-2 rounded bg-gray-950/75 px-2 py-1 text-xs text-white">
+            Click the image to add feedback
+          </span>
+        ) : null}
         {visiblePins.map((pin, idx) => {
           const isActive = activePinId === pin.id;
           const isResolved = pin.status === 'RESOLVED';
@@ -455,6 +507,7 @@ export default function ScreenshotView({
               aria-label={`${isResolved ? 'Resolved' : 'Open'} feedback pin ${idx + 1}: ${pin.comments[0]?.text || 'No comment'}`}
               aria-expanded={isActive}
               onClick={(event) => {
+                event.stopPropagation();
                 if (isActive) {
                   closePinThread();
                 } else {
@@ -543,6 +596,52 @@ export default function ScreenshotView({
             })()}
           </div>
         )}
+        {draftPin ? (
+          <div
+            role="dialog"
+            aria-label="Add feedback pin"
+            className="fixed inset-2 z-30 overflow-y-auto rounded-lg border border-gray-200 bg-white p-4 shadow-2xl sm:absolute sm:inset-auto sm:right-2 sm:top-2 sm:w-80"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h4 className="text-sm font-semibold text-gray-900">Add feedback</h4>
+            <p className="mt-1 text-xs text-gray-500">The pin will be placed where you clicked.</p>
+            <form onSubmit={submitDraftPin} className="mt-3 space-y-3">
+              <textarea
+                autoFocus
+                aria-label="Feedback for this pin"
+                value={draftText}
+                onChange={(event) => setDraftText(event.target.value)}
+                maxLength={2000}
+                rows={3}
+                className="w-full rounded border border-gray-300 p-2 text-sm"
+              />
+              <input
+                aria-label="Name for this pin"
+                value={draftAuthor}
+                onChange={(event) => setDraftAuthor(event.target.value)}
+                maxLength={100}
+                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+              />
+              {draftError ? <p role="alert" className="text-sm text-red-700">{draftError}</p> : null}
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setDraftPin(null); setDraftError(null); }}
+                  className="min-h-[44px] rounded border border-gray-300 px-3 text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={draftSubmitting || !draftText.trim() || !draftAuthor.trim()}
+                  className="min-h-[44px] rounded bg-blue-700 px-3 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-60"
+                >
+                  {draftSubmitting ? 'Adding...' : 'Add pin'}
+                </button>
+              </div>
+            </form>
+          </div>
+        ) : null}
       </div>
       ) : (
         // History tab — mount HistoryPanel. The panel is unmounted

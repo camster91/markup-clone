@@ -20,6 +20,7 @@ model Project {
   shareExpiresAt      DateTime?
   sharePasswordHash   String?
   pages               Page[]
+  reviewAssets        ReviewAsset[]
   subscribers         Subscriber[]
   notificationPreferences ProjectNotificationPreference[]
   presences           Presence[]
@@ -329,15 +330,37 @@ model ProjectNotificationPreference {
 }
 
 model Page {
-  id          String       @id @default(uuid())
-  projectId   String
-  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  path        String
-  screenshots Screenshot[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id              String       @id @default(uuid())
+  projectId       String
+  project         Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  reviewAssetId   String?
+  reviewAsset     ReviewAsset? @relation(fields: [reviewAssetId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  assetPageNumber Int?
+  path            String
+  screenshots     Screenshot[]
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 
   @@unique([projectId, path])
+  @@unique([reviewAssetId, assetPageNumber])
+  @@index([reviewAssetId])
+}
+
+// Private source metadata for a first-class review document. The original
+// filename and PDF text are deliberately not stored. Rendered pages remain
+// normal Page/Screenshot rows so every existing feedback surface is reused.
+model ReviewAsset {
+  id         String   @id @default(uuid())
+  projectId  String
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  storageKey String   @unique
+  mimeType   String
+  byteCount  Int
+  pageCount  Int
+  pages      Page[]
+  createdAt  DateTime @default(now())
+
+  @@index([projectId, createdAt])
 }
 
 model Screenshot {

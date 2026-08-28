@@ -3,10 +3,12 @@
 import { useRef, useState } from 'react';
 import { dashboardHeaders } from '@/lib/client-origin';
 
-const ALLOWED_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+const PDF_TYPE = 'application/pdf';
 const MAX_IMAGE_UPLOAD_BYTES = 8 * 1024 * 1024;
+const MAX_PDF_UPLOAD_BYTES = 20 * 1024 * 1024;
 
-export default function ImageReviewUpload({
+export default function ReviewAssetUpload({
   projectId,
   onUploaded,
 }: {
@@ -22,19 +24,21 @@ export default function ImageReviewUpload({
     event.preventDefault();
     if (uploading) return;
     if (!file) {
-      setError('Choose an image to upload.');
+      setError('Choose an image or PDF to upload.');
       return;
     }
-    if (!ALLOWED_TYPES.has(file.type)) {
-      setError('Choose a PNG, JPEG, GIF, or WebP image.');
+    const isImage = IMAGE_TYPES.has(file.type);
+    const isPdf = file.type === PDF_TYPE;
+    if (!isImage && !isPdf) {
+      setError('Choose a PNG, JPEG, GIF, WebP, or PDF file.');
       return;
     }
     if (file.size === 0) {
-      setError('The selected image is empty.');
+      setError('The selected file is empty.');
       return;
     }
-    if (file.size > MAX_IMAGE_UPLOAD_BYTES) {
-      setError('The selected image is larger than the 8 MB limit.');
+    if (file.size > (isPdf ? MAX_PDF_UPLOAD_BYTES : MAX_IMAGE_UPLOAD_BYTES)) {
+      setError(isPdf ? 'The selected PDF is larger than the 20 MB limit.' : 'The selected image is larger than the 8 MB limit.');
       return;
     }
 
@@ -43,37 +47,41 @@ export default function ImageReviewUpload({
     try {
       const form = new FormData();
       form.set('file', file);
-      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/images`, {
+      const endpoint = isPdf ? 'documents' : 'images';
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/${endpoint}`, {
         method: 'POST',
         headers: dashboardHeaders(),
         body: form,
       });
       if (!response.ok) {
         const body = await response.json().catch(() => null);
-        throw new Error(typeof body?.error === 'string' ? body.error : 'Image upload failed.');
+        throw new Error(typeof body?.error === 'string' ? body.error : `${isPdf ? 'PDF' : 'Image'} upload failed.`);
       }
       setFile(null);
       if (inputRef.current) inputRef.current.value = '';
       await onUploaded();
     } catch (uploadError) {
-      setError(uploadError instanceof Error ? uploadError.message : 'Image upload failed.');
+      setError(uploadError instanceof Error ? uploadError.message : 'Upload failed.');
     } finally {
       setUploading(false);
     }
   };
 
+  const isPdf = file?.type === PDF_TYPE;
   return (
     <form onSubmit={submit} className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4">
       <div className="flex flex-wrap items-center gap-3">
         <label className="min-w-0 flex-1 text-sm font-medium text-gray-800">
-          <span className="block">Add an image to this review</span>
-          <span className="mt-1 block text-xs font-normal text-gray-500">PNG, JPEG, GIF, or WebP - up to 8 MB</span>
+          <span className="block">Add an image or PDF to this review</span>
+          <span className="mt-1 block text-xs font-normal text-gray-500">
+            Images up to 8 MB; PDFs up to 20 MB and 50 pages. Each PDF page becomes a reviewable image.
+          </span>
           <input
             ref={inputRef}
-            aria-label="Upload image for review"
+            aria-label="Upload image or PDF for review"
             className="mt-2 block w-full text-sm text-gray-700"
             type="file"
-            accept="image/png,image/jpeg,image/gif,image/webp"
+            accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"
             onChange={(event) => {
               setFile(event.target.files?.[0] ?? null);
               setError(null);
@@ -85,9 +93,10 @@ export default function ImageReviewUpload({
           disabled={uploading}
           className="min-h-[44px] rounded bg-blue-700 px-4 text-sm font-medium text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {uploading ? 'Uploading...' : 'Upload image'}
+          {uploading ? (isPdf ? 'Rendering PDF...' : 'Uploading...') : 'Upload for review'}
         </button>
       </div>
+      {uploading && isPdf ? <p role="status" className="mt-3 text-sm text-blue-800">Rendering pages in order. Keep this review open until the upload finishes.</p> : null}
       {error ? <p role="alert" className="mt-3 text-sm text-red-700">{error}</p> : null}
     </form>
   );

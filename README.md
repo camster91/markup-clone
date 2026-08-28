@@ -308,6 +308,28 @@ The `recapture` and `status` route handlers under `src/app/api/screenshots/[id]/
 
 The `.env` file contains credential-shaped strings (`postgresql://user:***@host:5432/db`, an `MAILGUN_API_KEY`, etc). Pasting those values into a `terminal` tool call hits the chat layer's safety filter, which substitutes `***` for the password and can mangle heredocs with `$(...)`. The redaction happens **before** the shell sees the bytes, so quoting tricks don't help.
 
+### Provision the first operator without exposing the password
+
+Run this directly in the trusted VPS shell. Enter the values only at the local
+prompts; do not paste the password into chat, a command argument, an environment
+file, or Git. The shell variables exist only for this command and are unset
+immediately afterward. `printf` is a shell builtin, so the password is delivered
+to the container over stdin rather than exposed in a child-process argument.
+
+```bash
+read -r -p "Operator email: " OPERATOR_EMAIL
+read -r -s -p "Operator password (12-128 characters): " OPERATOR_PASSWORD
+printf '\n'
+printf '%s\n%s\n' "$OPERATOR_EMAIL" "$OPERATOR_PASSWORD" \
+  | docker exec -i markup-clone node /opt/app-scripts/provision-operator.cjs
+unset OPERATOR_EMAIL OPERATOR_PASSWORD
+```
+
+The command creates a new operator or reports `unchanged` when the same
+credentials already exist. It refuses to promote a non-operator account and
+refuses an implicit password change. Intentional password rotation requires the
+same stdin flow plus the explicit `--rotate` argument.
+
 The verified workaround is:
 
 1. **Stage locally** with the `write_file` tool — the secret is in the file contents of a tool call (not in shell argv), so the chat filter leaves it alone.
