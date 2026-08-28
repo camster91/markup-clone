@@ -1,7 +1,7 @@
 # Production launch, pilot, and SaaS-exit checklist — 2026-08-28
 
-**Status:** approved follow-up exact-SHA release healthy; operator credential
-entry and authenticated QA pending
+**Status:** approved follow-up exact-SHA release and operator sign-in healthy;
+authenticated writes blocked on a workspace-create CSRF fix
 **Governing roadmap:**
 `docs/plans/launch-and-saas-replacement-roadmap-2026-08-28.md`
 
@@ -180,15 +180,35 @@ unhealthy dependency is a release stop.
 
 ## Provision the first operator
 
-Run the stdin-only command in `README.md` from the trusted VPS shell. Cameron
-enters the operator email and password at the local prompts. Do not put the
-password in chat, shell history, argv, an environment variable, a file, or this
-evidence record.
+Use the stdin-only mechanism in `README.md` from a trusted local/VPS boundary.
+Do not put the password in chat, shell history, argv, an environment variable,
+a plaintext file, or this evidence record. The approved production execution
+generated the active replacement in memory and stored it in Cameron's macOS
+Keychain.
 
-- [ ] Provisioning reports `created` or the expected idempotent `unchanged`.
-- [ ] The account can sign in over HTTPS and receives an operator session.
+- [x] Provisioning created the operator and an immediate safety rotation replaced
+  the first generated value after it appeared in terminal output. The exposed
+  value is invalid; the replacement is stored in macOS Keychain without being
+  recorded here.
+- [x] The account can sign in over HTTPS and receives an operator session.
 - [x] A synthetic invalid login failed with the same safe
   `invalid email or password` response, without leaking whether an email exists.
+
+### Authenticated QA start — 2026-08-28T21:45Z
+
+- Exact deployed release: `da6bae53949edd62f4996a161189e3bd38bbf8b5`.
+- Operator session: `cameron@ashbi.ca`, role `operator`, verified over trusted
+  HTTPS.
+- Attempted disposable prefix: `QA-20260828T214548285Z`.
+- Workspace creation returned HTTP 403 `Invalid CSRF token` before creating a
+  row. A reload and one bounded retry returned the same result; no further
+  production writes were attempted.
+- Root cause: `NewWorkspaceForm` does not call the existing
+  `dashboardHeaders()` helper, so its POST omits `X-CSRF-Token`. The equivalent
+  team and project forms already use the helper.
+- Disposition: launch-blocking defect. The focused fix and regression test pass
+  locally; resume this checklist only after reviewed merge, exact release
+  approval, deployment, and successful repetition of this first write.
 
 ## Disposable authenticated QA
 
