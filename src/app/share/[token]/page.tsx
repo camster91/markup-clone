@@ -97,10 +97,12 @@ export default async function PublicSharePage({ params, searchParams }: PageProp
       createdAt: true,
       updatedAt: true,
       pages: {
-        orderBy: { createdAt: 'asc' },
+        orderBy: [{ createdAt: 'asc' }, { assetPageNumber: 'asc' }],
         select: {
           id: true,
           path: true,
+          assetPageNumber: true,
+          reviewAsset: { select: { id: true, pageCount: true } },
           createdAt: true,
           updatedAt: true,
           screenshots: {
@@ -317,6 +319,11 @@ export default async function PublicSharePage({ params, searchParams }: PageProp
     pages: project.pages.map((page) => ({
       id: page.id,
       path: page.path,
+      reviewAsset: page.reviewAsset && page.assetPageNumber ? {
+        id: page.reviewAsset.id,
+        pageNumber: page.assetPageNumber,
+        pageCount: page.reviewAsset.pageCount,
+      } : null,
       createdAt: page.createdAt.toISOString(),
       updatedAt: page.updatedAt.toISOString(),
       screenshots: page.screenshots.map((screenshot) => ({
@@ -417,8 +424,10 @@ export default async function PublicSharePage({ params, searchParams }: PageProp
                 className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden"
               >
                 <div className="bg-gray-900 px-6 py-3">
-                  <h2 className="text-base font-semibold text-white font-mono break-all">
-                    {page.path}
+                  <h2 className={`text-base font-semibold text-white break-all ${page.reviewAsset ? '' : 'font-mono'}`}>
+                    {page.reviewAsset
+                      ? `PDF page ${page.reviewAsset.pageNumber} of ${page.reviewAsset.pageCount}`
+                      : page.path}
                   </h2>
                   <p className="text-gray-400 text-xs mt-1">
                     {page.screenshots.length} capture{page.screenshots.length === 1 ? '' : 's'}

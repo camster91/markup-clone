@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   project: { findUnique: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() },
   page: { findMany: vi.fn() },
   screenshot: { findUnique: vi.fn(), delete: vi.fn(), findMany: vi.fn() }, // findMany is used by the DELETE cascade
+  reviewAsset: { findMany: vi.fn() },
   pin: { delete: vi.fn() },
   subscriber: { findMany: vi.fn(), create: vi.fn(), findUnique: vi.fn(), delete: vi.fn() },
   auditLog: { create: vi.fn().mockResolvedValue({ id: 'audit-log-1' }) },
@@ -137,6 +138,8 @@ describe('DELETE /api/projects/[id]', () => {
     mocks.project.findUnique.mockReset();
     mocks.project.delete.mockReset();
     mocks.screenshot.findMany.mockReset();
+    mocks.reviewAsset.findMany.mockReset();
+    mocks.reviewAsset.findMany.mockResolvedValue([]);
   });
 
   it('returns 401 when called from a non-dashboard origin', async () => {
@@ -167,6 +170,7 @@ describe('DELETE /api/projects/[id]', () => {
       { storageKey: 'abc123.png' },
       { storageKey: 'def456.png' },
     ]);
+    mocks.reviewAsset.findMany.mockResolvedValue([{ storageKey: 'source.pdf' }]);
     mocks.project.delete.mockResolvedValue({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' });
 
     const res = await DELETE(req('DELETE', { origin: 'https://markup.ashbi.ca' }),
@@ -185,6 +189,10 @@ describe('DELETE /api/projects/[id]', () => {
     expect(mocks.screenshot.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { page: { projectId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' } } })
     );
+    expect(mocks.reviewAsset.findMany).toHaveBeenCalledWith({
+      where: { projectId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' },
+      select: { storageKey: true },
+    });
   });
 
   it('returns 403 when the project is in a team the caller is not a member of', async () => {

@@ -66,7 +66,8 @@ with no unexplained console/request failures and verified cleanup.
 
 ### L2 — Finish first-class PDF review
 
-**Status:** in progress; exact production-image proof is next
+**Status:** local implementation and journey proof complete on 2026-08-28;
+production repetition is blocked on L1
 
 - Prove Poppler availability, timeout behavior, page/pixel limits, and cleanup
   in the exact production image.
@@ -78,6 +79,13 @@ with no unexplained console/request failures and verified cleanup.
 
 **Exit evidence:** every validation item in
 `docs/plans/pdf-review-2026-08-10.md` passes, including cleanup proof.
+
+**Local checkpoint:** the exact Linux runner and all 28 migrations built, a
+two-page PDF rendered into naturally ordered Page/Screenshot rows, an owner
+placed a normal feedback pin, the 1280px/375px owner and 375px managed-share
+views passed without console/request/overflow errors, and project deletion
+removed the source PDF, rendered PNGs, work directory, and relational rows.
+Production evidence remains part of L1 and must be tied to the deployed SHA.
 
 ### L3 — Run an internal client pilot
 

@@ -6,8 +6,9 @@ import { resolveWorkspaceBranding } from './branding';
 
 export const projectDetailInclude = Prisma.validator<Prisma.ProjectInclude>()({
   pages: {
-    orderBy: { createdAt: 'asc' },
+    orderBy: [{ createdAt: 'asc' }, { assetPageNumber: 'asc' }],
     include: {
+      reviewAsset: { select: { id: true, pageCount: true } },
       screenshots: {
         orderBy: { capturedAt: 'desc' },
         include: {
@@ -101,6 +102,11 @@ export function serializeProjectDetail(
     pages: project.pages.map((page) => ({
       id: page.id,
       path: page.path,
+      reviewAsset: page.reviewAsset && page.assetPageNumber ? {
+        id: page.reviewAsset.id,
+        pageNumber: page.assetPageNumber,
+        pageCount: page.reviewAsset.pageCount,
+      } : null,
       screenshots: page.screenshots.map((screenshot) => ({
         id: screenshot.id,
         storageKey: screenshot.storageKey,

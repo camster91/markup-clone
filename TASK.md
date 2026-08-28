@@ -12,13 +12,9 @@ its stated evidence exists; local tests do not silently close it.
 
 ## In progress
 
-### L2.2 — Implement first-class PDF upload and review
-
-- **Status:** in-progress
-- **Source:** `docs/plans/pdf-review-2026-08-10.md`
-- **Work:** bounded admin upload, opaque source/page storage, normal
-  Page/Screenshot rows, owner/client UI, migration and cleanup evidence.
-- **Gate now open:** L2.1 passed in the exact Linux runner image.
+No unblocked implementation remains ahead of production proof. Resume L1 as
+soon as the operator identity and secret are supplied through the approved
+secret-handling path.
 
 ---
 
@@ -84,6 +80,23 @@ landed on `main`.
 - Loaded image repeated the probe under `--network none`
 - Poppler 25.12.0 rendered one aspect-preserving 1484x1920 PNG within
   timeout/page/pixel bounds and removed its temporary directory
+
+### L2.2-L2.3 (first-class PDF review, local evidence)
+
+- Authenticated project-admin PDF upload with CSRF, per-project/origin rate
+  limiting, MIME and magic-byte checks, a 20 MB source limit, a 50-page limit,
+  bounded Poppler execution, a 1920px page limit, and 250 MB total output limit
+- Opaque source/PDF and rendered-page storage with a private ReviewAsset record;
+  original filename and PDF text never enter the database, DTO, or audit event
+- Rendered pages reuse Page/Screenshot, pins, annotations, comments, rounds,
+  notifications, sharing, and sign-off; dashboard reviewers can click any
+  uploaded or rendered image to create a normal feedback pin
+- Exact Linux image and all 28 migrations passed in disposable Compose
+- Owner review at 1280px/375px, two-page upload, click-to-pin, managed-share
+  review at 375px, no overflow/request/console errors, and product deletion of
+  the database rows, source PDF, rendered PNGs, and work directory all passed
+- **Remaining L2 evidence:** repeat the PDF journey against the deployed SHA
+  during L1 production QA
 
 ### F1–F3 (recapture + screenshots)
 

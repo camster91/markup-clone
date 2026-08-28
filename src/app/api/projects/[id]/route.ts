@@ -82,11 +82,15 @@ export async function DELETE(
       where: { page: { projectId: id } },
       select: { storageKey: true },
     });
+    const reviewAssets = await prisma.reviewAsset.findMany({
+      where: { projectId: id },
+      select: { storageKey: true },
+    });
 
     let filesRemoved = 0;
-    for (const ss of screenshots) {
+    for (const file of [...screenshots, ...reviewAssets]) {
       try {
-        await unlink(`${SCREENSHOTS_DIR}/${ss.storageKey}`);
+        await unlink(`${SCREENSHOTS_DIR}/${file.storageKey}`);
         filesRemoved++;
       } catch {
         // File may already be missing; continue

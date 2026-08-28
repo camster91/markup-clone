@@ -1,6 +1,6 @@
 # First-Class PDF Review Implementation Plan
 
-**Status:** active implementation; bounded upload and storage are next
+**Status:** local implementation complete; production QA pending under L1
 **Parent:** `docs/plans/launch-and-saas-replacement-roadmap-2026-08-28.md` (L2)
 
 **Goal:** Let project administrators upload a PDF and let owners, invited
@@ -100,3 +100,32 @@ upload endpoint exists and no PDF runtime change has been deployed.
   and the loaded image repeated it in a `docker run --network none` container.
   The image was `sha256:99e1cd8322c7c55131d8a04a8d7948ea1795ab7508f51429624f12e2188c8d01`
   and reported Poppler 25.12.0. L2.1 is complete; the upload pipeline may begin.
+
+## Local implementation and journey checkpoint — 2026-08-28
+
+- Added a private `ReviewAsset` source record and explicit natural page number.
+  The original PDF and every rendered PNG use unrelated opaque UUID storage
+  keys; no original filename or PDF text is persisted, returned, or audited.
+- Added the project-admin document route with dashboard auth, CSRF,
+  project/origin rate limiting, exact PDF MIME plus `%PDF-` validation, a 20 MB
+  source cap, bounded `pdfinfo`/`pdftoppm` execution, 50-page and 1920px limits,
+  a 250 MB rendered-output cap, and failure cleanup.
+- Rendered pages are normal Page/Screenshot records. The dashboard and managed
+  share label them as `PDF page n of total` and preserve natural order.
+- Closed the pre-existing uploaded-asset interaction gap with a scoped
+  dashboard click-to-pin endpoint and 44px/mobile pin composer. The new pin is
+  a normal Pin/Comment row, so annotations, threads, review rounds,
+  notifications, filters, sign-off, and managed sharing continue to use the
+  existing system.
+- The full suite passed 936 tests before click-to-pin; the focused final suites
+  passed PDF, dashboard-pin, project/share, hydration, and keyboard coverage.
+  ESLint, TypeScript, Prisma validation, the webpack build, the exact
+  Linux/Turbopack image, and all 28 disposable Compose migrations passed.
+- `scripts/qa-pdf-review-upload.cjs` uploaded a two-page PDF, rendered both
+  pages, added a pin, verified owner views at 1280px and 375px, verified the
+  managed-share view at 375px, found no console/request/overflow failures, and
+  used the product delete route to prove cleanup of the source PDF, page PNGs,
+  work directory, and all related database rows.
+
+The remaining exit item is the same journey against the deployed SHA during
+L1 authenticated production QA.

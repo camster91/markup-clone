@@ -35,7 +35,7 @@ import ProjectNotifications from './ProjectNotifications';
 import ReviewWorkflow from './ReviewWorkflow';
 import PresenceList from './PresenceList';
 import IssueFilters from './IssueFilters';
-import ImageReviewUpload from './ImageReviewUpload';
+import ReviewAssetUpload from './ReviewAssetUpload';
 import { usePresence, type PresenceActivity } from '@/lib/hooks/usePresence';
 import { useLiveEvents } from '@/lib/hooks/useLiveEvents';
 import type { ProjectWithPages } from '@/lib/types';
@@ -330,7 +330,7 @@ function ProjectDetailCard({
       <ReviewWorkflow projectId={project.id} />
 
       <div className="p-6 space-y-6">
-        {project.canAdmin ? <ImageReviewUpload projectId={project.id} onUploaded={onProjectUpdated} /> : null}
+        {project.canAdmin ? <ReviewAssetUpload projectId={project.id} onUploaded={onProjectUpdated} /> : null}
         {project.canAdmin ? (
           <IssueFilters
             value={issueFilters}
@@ -346,7 +346,11 @@ function ProjectDetailCard({
           project.pages.map((page) => (
             <div key={page.id} className="mb-6 last:mb-0">
               <h3 className="text-sm font-semibold text-gray-700 mb-3 pb-2 border-b flex items-center gap-2">
-                <span className="font-mono">{page.path}</span>
+                <span className={page.reviewAsset ? '' : 'font-mono'}>
+                  {page.reviewAsset
+                    ? `PDF page ${page.reviewAsset.pageNumber} of ${page.reviewAsset.pageCount}`
+                    : page.path}
+                </span>
                 <span className="text-xs text-gray-400 font-normal">
                   {page.screenshots.length} capture{page.screenshots.length === 1 ? '' : 's'}
                 </span>

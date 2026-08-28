@@ -25,9 +25,11 @@ which are retained as implementation evidence.
 
 ## Active implementation
 
-- `pdf-review-2026-08-10.md` — **Active.** The exact Linux runner-image
-  renderer gate passed; bounded PDF upload and normal Page/Screenshot storage
-  are the next implementation slice.
+- `pdf-review-2026-08-10.md` — **Production QA pending.** The exact Linux
+  renderer, bounded upload/storage pipeline, normal Page/Screenshot review
+  model, click-to-pin UI, disposable migration, owner/mobile/managed-share
+  journey, and deletion cleanup passed locally. Repeat against the deployed SHA
+  during L1.
 
 ## Launch evidence with an open gate
 

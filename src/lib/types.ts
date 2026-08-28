@@ -95,6 +95,7 @@ export type ScreenshotWithPins = {
 export type PageWithScreenshots = {
   id: string;
   path: string;
+  reviewAsset?: { id: string; pageNumber: number; pageCount: number } | null;
   screenshots: ScreenshotWithPins[];
 };
 
