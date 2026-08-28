@@ -30,10 +30,10 @@ which are retained as implementation evidence.
   model, click-to-pin UI, disposable migration, owner/mobile/managed-share
   journey, and deletion cleanup passed locally. Repeat against the deployed SHA
   during L1.
-- `superseded-review-document-cleanup-2026-08-28.md` — **Review and production
-  deployment pending.** A fail-closed migration is locally proven to remove the
-  empty superseded table, no-op on fresh databases, and preserve any unexpected
-  legacy rows by refusing the migration.
+- `superseded-review-document-cleanup-2026-08-28.md` — **Merged; exact owner
+  approval and production deployment pending.** A fail-closed migration passed
+  review and CI to remove the empty superseded table, no-op on fresh databases,
+  and preserve any unexpected legacy rows by refusing the migration.
 
 ## Launch evidence with an open gate
 
@@ -68,6 +68,12 @@ local completion.
 
 ## Product reference
 
+- `market-position-and-operating-model-2026-08-28.md` — **Researched baseline,
+  not a competing roadmap.** Records the durable product charter, current
+  first-party competitor/pricing snapshot, focused agency position, preliminary
+  commercial hypothesis, access and approval boundaries, decision/risk
+  registers, and pilot metric definitions. Market leadership, willingness to
+  pay, unit economics, and customer validation remain unproven.
 - `markup-parity-and-agency-advantage-2026-08-07.md` — Competitor benchmark,
   product shape, and completed differentiation sequence. It is reference input,
   not an independent execution queue. Revalidate time-sensitive competitor

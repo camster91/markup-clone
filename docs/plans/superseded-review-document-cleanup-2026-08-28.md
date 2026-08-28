@@ -1,7 +1,7 @@
 # Superseded ReviewDocument cleanup — 2026-08-28
 
-**Status:** local implementation and disposable PostgreSQL rehearsal complete;
-review and production deployment pending
+**Status:** merged to `main` after CI and disposable PostgreSQL rehearsal;
+exact owner approval and production deployment pending
 **Governing roadmap:** `launch-and-saas-replacement-roadmap-2026-08-28.md`
 
 ## Context
@@ -46,3 +46,20 @@ Production will then have 30 finished history rows: the 28 migrations in the
 deployed launch release, the historical superseded migration, and this cleanup.
 A fresh database will have 29 rows because it never received the superseded
 migration; both histories truthfully describe their own path.
+
+## Merge and release staging evidence
+
+- Pull request #43 passed Ashbi Local CI and GitGuardian against exact head
+  `9dae91753f67834ccd882f410c23240e1a787b07`.
+- It merged without bypass as
+  `a03b87d8d05db0a69b050c75d05baf383d611fea` on 2026-08-28.
+- Immediately after merge, production still had zero `ReviewDocument` rows and
+  29 finished migrations; the healthy app still ran the prior exact release.
+- Rollback-image, edge/TLS, public-health, and exact-checkout public-release
+  preflights passed.
+- Fresh backup `markup-20260828T191950Z.dump` passed remote catalog/checksum
+  verification and its mode-0600 off-host copy passed SHA-256 verification at
+  `dbe4f2ebbf07f9ddda02b5b38a9a6280972c3ccf06d6c1d739a6fedf1a781518`.
+
+These facts prove release readiness, not production deployment. The release
+remains at the explicit owner-approval boundary.
