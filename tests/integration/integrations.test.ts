@@ -98,6 +98,17 @@ vi.mock('@/lib/events', () => ({
   emit: vi.fn(),
 }));
 
+// Adapter tests must not depend on live DNS. The production URL guard has its
+// own focused coverage; here we supply the already-validated public URLs so the
+// tests exercise only request construction and dispatch behavior.
+vi.mock('@/lib/safe-url', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/safe-url')>();
+  return {
+    ...actual,
+    assertSafeOutboundUrl: vi.fn(async (url: string) => ({ ok: true, value: url })),
+  };
+});
+
 // ===== fetch mock (hoisted, captured per test) =====
 const fetchMock = vi.hoisted(() => vi.fn());
 // Replace global fetch with our mock. We use `vi.stubGlobal` per-test

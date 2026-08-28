@@ -564,7 +564,7 @@ describe('GET /share/[token]', () => {
       name: 'Protected Acme Review',
       domain: 'acme.com',
       shareToken: 'good-token',
-      shareExpiresAt: new Date('2026-08-15T00:00:00.000Z'),
+      shareExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
       sharePasswordHash: 'scrypt$protected',
       createdAt: new Date('2026-01-01T00:00:00Z'),
       updatedAt: new Date('2026-01-01T00:00:00Z'),
