@@ -48,7 +48,8 @@ next implementation slice.
 
 ### L1 — Open and prove authenticated production access
 
-**Status:** blocked on owner-supplied account identity and secret
+**Status:** in progress; exact-SHA release is deployed and secure operator
+credential entry is underway
 
 - Provision the first production operator through a bounded, documented,
   idempotent mechanism. Never commit or echo the password.
@@ -74,6 +75,14 @@ idempotent for matching credentials, refuses implicit privilege escalation or
 password replacement, and documents a trusted VPS-shell flow in `README.md`.
 Its production execution still requires Cameron to enter the secret locally.
 
+**Schema reconciliation note:** production has 29 finished migration history
+rows while current `main` has 28 migration directories. The extra historical
+row created the superseded `ReviewDocument` table from
+`codex/public-onboarding`; the table currently has zero rows and current code
+uses `ReviewAsset`. Land a reviewed fail-closed cleanup migration after L1 and
+before the next feature release; this empty unused table does not block the
+authenticated journey.
+
 ### L2 — Finish first-class PDF review
 
 **Status:** local implementation and journey proof complete on 2026-08-28;
@@ -90,8 +99,9 @@ production repetition is blocked on L1
 **Exit evidence:** every validation item in
 `docs/plans/pdf-review-2026-08-10.md` passes, including cleanup proof.
 
-**Local checkpoint:** the exact Linux runner and all 28 migrations built, a
-two-page PDF rendered into naturally ordered Page/Screenshot rows, an owner
+**Local checkpoint:** the exact Linux runner and all 28 checked-in migration
+directories built, a two-page PDF rendered into naturally ordered
+Page/Screenshot rows, an owner
 placed a normal feedback pin, the 1280px/375px owner and 375px managed-share
 views passed without console/request/overflow errors, and project deletion
 removed the source PDF, rendered PNGs, work directory, and relational rows.

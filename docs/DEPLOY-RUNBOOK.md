@@ -20,10 +20,13 @@ Run through these before kicking off a deploy. Each takes <10s.
    This validates `/opt/traefik/dynamic/routers.yml`, loopback port 3030, the
    public health payload, hostname, expiry, issuer chain, and OS trust. Never add
    `-k` or `--insecure` to turn a certificate failure green.
-3. **`.env` on the VPS has non-empty `POSTGRES_PASSWORD` and `DATABASE_URL`
-   entries.** Check presence without printing either value:
-   `ssh coolify 'for key in POSTGRES_PASSWORD DATABASE_URL; do grep -q "^${key}=." /root/markup-clone/.env || { echo "missing: $key"; exit 1; }; done; echo "database env entries present"'`.
-   Never print the matching lines into a terminal or chat transcript.
+3. **`.env` on the VPS has a non-empty `DATABASE_URL` entry.** Check presence
+   without printing its value:
+   `ssh coolify 'grep -q "^DATABASE_URL=." /root/markup-clone/.env && echo "database URL present"'`.
+   `deploy.sh` extracts the PostgreSQL password from that URL when it must
+   recreate the database container; production does not require a duplicate
+   standalone `POSTGRES_PASSWORD` entry. Never print the matching line into a
+   terminal or chat transcript.
 4. **The `markup-net` Docker bridge exists and has a known subnet.** `ssh coolify 'docker network inspect markup-net -f "{{range .IPAM.Config}}{{.Subnet}}{{end}}"'` — must return a CIDR, not empty.
 5. **Local `npm run lint && npm test` are clean.** Require zero lint warnings
    and use the exact test count from the release evidence; do not rely on the
