@@ -3,6 +3,8 @@
 **Status:** active and authoritative
 **Owner:** Cameron Ashley
 **Execution board:** `TASK.md`
+**Market and operating model:**
+`docs/plans/market-position-and-operating-model-2026-08-28.md`
 
 ## Goal
 
@@ -80,8 +82,9 @@ history rows while its source has 28 migration directories. The extra historical
 row created the superseded `ReviewDocument` table from
 `codex/public-onboarding`; the table currently has zero rows and current code
 uses `ReviewAsset`. The fail-closed cleanup in
-`superseded-review-document-cleanup-2026-08-28.md` is locally proven and awaits
-review plus an approved deployment. This empty unused table does not block the
+`superseded-review-document-cleanup-2026-08-28.md` passed review and CI, merged
+as `a03b87d8d05db0a69b050c75d05baf383d611fea`, and awaits exact owner
+approval plus production deployment. This empty unused table does not block the
 authenticated journey.
 
 ### L2 — Finish first-class PDF review
@@ -165,6 +168,11 @@ Record these from the pilot onward:
 - project-management hours spent per review round;
 - client support questions and failed review attempts.
 
+Metric definitions, evidence sources, pilot decision rules, the current
+first-party pricing snapshot, access boundaries, and risk/decision registers are
+maintained in `market-position-and-operating-model-2026-08-28.md`. That document
+supports this roadmap and does not independently change gate priority.
+
 ## Plan reconciliation
 
 | Classification | Plans |
@@ -173,7 +181,7 @@ Record these from the pilot onward:
 | Active implementation | `pdf-review-2026-08-10.md` |
 | Launch evidence with one remaining production gate | `release-candidate-operational-validation-2026-08-08.md` |
 | Completed implementation evidence | comment lifecycle, image review uploads, review rounds, developer context, structured handoff, internal issue metadata, reliable integration delivery, native GitHub issue delivery, invitations/roles, workspace branding/client mode, client/site archive, managed public review links, public API/SDK, collaboration transport, project summary aggregation, role-aware notifications, local load rehearsal, and cross-browser/accessibility QA |
-| Product reference | `markup-parity-and-agency-advantage-2026-08-07.md` |
+| Product reference | `market-position-and-operating-model-2026-08-28.md`; `markup-parity-and-agency-advantage-2026-08-07.md` |
 | Historical reference | `docs/refactor/*`, `docs/qa/production-grade-assessment.md`, and the current security audit |
 | Parked | AI-generated fixes, repository execution, billing/subscriptions, video review, generic folders, enterprise identity/compliance, analytics, and npm publication |
 

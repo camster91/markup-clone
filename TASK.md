@@ -24,12 +24,15 @@ its stated evidence exists; local tests do not silently close it.
 - **Runtime readiness:** Mailgun is configured. The previously missing delivery
   worker and integration-encryption secrets are now staged in the private VPS
   `.env`, validated against the exact image without printing values, and await
-  the next deployment. `.env.example` is corrected to keep Docker `--env-file`
-  values unquoted so quote characters cannot invalidate runtime configuration.
-- **Current action:** `cameron@ashbi.ca` is selected, but no account exists yet.
-  Cameron must run the stdin-only provisioning command in a user-owned trusted
-  terminal and enter the password locally; the attempted embedded terminal and
-  Hostinger popup could not hand keyboard control back safely.
+  the next deployment. The stale `mg.ashbi.ca` value is corrected to the active
+  Mailgun domain `ashbi.ca`; `.env.example` keeps Docker `--env-file` values
+  unquoted so quote characters cannot invalidate runtime configuration.
+- **Current action:** pull request #43 passed its exact-head CI and security
+  gates and merged as `a03b87d8d05db0a69b050c75d05baf383d611fea`.
+  A fresh private/off-host backup and the release preflight passed; exact owner
+  approval is now required immediately before deploying it. After deployment,
+  Cameron must provision the still-absent `cameron@ashbi.ca` account from a
+  user-owned trusted terminal and enter the password locally.
 - **Next:** sign in and run owner/client desktop/mobile QA, verify
   integrations/operations, and remove every disposable record and file.
 - **Execution record:**
@@ -41,28 +44,37 @@ its stated evidence exists; local tests do not silently close it.
 
 ### Operational hygiene — reconcile the superseded PDF table
 
-- **Status:** local implementation complete; review and production deployment
+- **Status:** merged to `main`; exact owner approval and production deployment
   pending
 - **Source:** `docs/plans/superseded-review-document-cleanup-2026-08-28.md`
 - **Context:** production has 29 finished migration history rows while the
   deployed release contains 28 directories. The extra historical migration
   created an empty `ReviewDocument` table on `codex/public-onboarding`; current
-  code uses the empty `ReviewAsset` table instead. This branch adds the 29th
-  source migration as the guarded cleanup.
+  code uses the empty `ReviewAsset` table instead. Current `main` now contains
+  the 29th source migration as the guarded cleanup.
 - **Implementation:** `20260828180000_drop_superseded_review_document` no-ops
   when the old table is absent, refuses to drop it when any row exists, omits
   `CASCADE`, and removes it only when empty.
 - **Verification:** the unit contract passes; a disposable PostgreSQL 16 rehearsal
   passed absent-table, empty-table, and nonempty-refusal paths while preserving
   the unexpected row.
-- **Next:** pass full repository gates, merge, then deploy only through the
-  normal backup/rollback/preflight sequence after rechecking the production
-  table is still empty.
+- **Review evidence:** pull request #43 passed Ashbi Local CI and GitGuardian
+  against exact head `9dae91753f67834ccd882f410c23240e1a787b07`, then
+  merged without bypass as `a03b87d8d05db0a69b050c75d05baf383d611fea`.
+- **Next:** after exact owner approval, deploy through the normal
+  backup/rollback/preflight sequence, rechecking that the production table is
+  still empty immediately before migration.
 
 ### L5 — Record pilot-driven business improvements
 
 - **Status:** ready after the first pilot begins
 - **Source:** governing roadmap L5
+- **Research baseline:** the dated market/operating-model reference now records
+  the product charter, current first-party competitor and pricing evidence,
+  focused agency position, preliminary commercial hypothesis, access/approval
+  boundaries, risk and decision registers, and measurable pilot contract.
+- **Boundary:** these are researched hypotheses, not customer validation,
+  approved pricing, or a reason to displace L1-L4.
 - **Work:** capture deadlines/reminders, developer-handoff closure, reporting,
   workload, retention, and usage needs as observed problems. Add a dated feature
   plan before implementation.

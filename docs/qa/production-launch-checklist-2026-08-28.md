@@ -1,6 +1,7 @@
 # Production launch, pilot, and SaaS-exit checklist — 2026-08-28
 
-**Status:** exact-SHA production release deployed; operator credential entry pending
+**Status:** current exact-SHA release healthy; follow-up release approval and
+operator credential entry pending
 **Governing roadmap:**
 `docs/plans/launch-and-saas-replacement-roadmap-2026-08-28.md`
 
@@ -49,8 +50,8 @@ journey.
   previously deployed `20260813103000_add_review_documents` history row from
   the superseded `codex/public-onboarding` implementation. Its
   `ReviewDocument` table exists with zero rows; current code uses the new,
-  also-empty `ReviewAsset` table. Remove the superseded table only through a
-  reviewed follow-up migration.
+  also-empty `ReviewAsset` table. The reviewed follow-up cleanup is merged but
+  not yet deployed.
 - The post-deploy `ashbi.public-release.v1` verification passed at
   `2026-08-28T17:12:03Z`.
 - The private backup `markup-20260828T163040Z.dump` passed its remote catalog and
@@ -72,6 +73,30 @@ The verifier makes no writes. It refuses non-TLS public origins, validates the
 health payload and browser security headers, proves `/workspaces` redirects an
 anonymous caller and `/api/workspaces` returns 401, and compares the deployed
 widget byte-for-byte by SHA-256 with the checked-out `public/widget.js`.
+
+## 2026-08-28 follow-up release staging record
+
+- Pull request #43 passed Ashbi Local CI and GitGuardian against exact head
+  `9dae91753f67834ccd882f410c23240e1a787b07`, then merged without bypass as
+  `a03b87d8d05db0a69b050c75d05baf383d611fea`.
+- The merge adds the fail-closed empty `ReviewDocument` cleanup and corrects
+  Docker environment-file examples/tests so quotes cannot enter runtime values.
+- The active Mailgun account reports `ashbi.ca` as active and enabled; the stale
+  nonexistent `mg.ashbi.ca` setting is corrected in the private VPS `.env`.
+  The delivery-worker and integration-encryption secrets remain staged and
+  passed an exact-image, network-disabled shape probe without revealing values.
+- Immediately after merge, the clean VPS checkout remained on current deployed
+  release `e4f8e4eb45017930969e9ba9f46e6100472f9a08`; production had zero
+  `ReviewDocument` rows and 29 finished migrations.
+- Rollback-image and edge/TLS preflights passed. The public health endpoint
+  returned HTTP 200, and `ashbi.public-release.v1` passed from an exact detached
+  checkout of the merged release at `2026-08-28T19:19:44.968Z`.
+- Fresh backup `markup-20260828T191950Z.dump` passed remote catalog and checksum
+  validation. Its mode-0600 off-host copy passed SHA-256 verification at
+  `dbe4f2ebbf07f9ddda02b5b38a9a6280972c3ccf06d6c1d739a6fedf1a781518`.
+- No deployment, email, integration delivery, or production data mutation was
+  performed during staging. Exact owner approval is required immediately before
+  release `a03b87d8...` is deployed.
 
 ## Release identity and approval
 
