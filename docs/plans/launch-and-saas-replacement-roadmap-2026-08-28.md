@@ -49,7 +49,7 @@ next implementation slice.
 ### L1 — Open and prove authenticated production access
 
 **Status:** in progress; exact-SHA release is deployed and secure operator
-credential entry is underway
+credential entry requires Cameron's user-owned terminal
 
 - Provision the first production operator through a bounded, documented,
   idempotent mechanism. Never commit or echo the password.
@@ -75,12 +75,13 @@ idempotent for matching credentials, refuses implicit privilege escalation or
 password replacement, and documents a trusted VPS-shell flow in `README.md`.
 Its production execution still requires Cameron to enter the secret locally.
 
-**Schema reconciliation note:** production has 29 finished migration history
-rows while current `main` has 28 migration directories. The extra historical
+**Schema reconciliation note:** the deployed release has 29 finished migration
+history rows while its source has 28 migration directories. The extra historical
 row created the superseded `ReviewDocument` table from
 `codex/public-onboarding`; the table currently has zero rows and current code
-uses `ReviewAsset`. Land a reviewed fail-closed cleanup migration after L1 and
-before the next feature release; this empty unused table does not block the
+uses `ReviewAsset`. The fail-closed cleanup in
+`superseded-review-document-cleanup-2026-08-28.md` is locally proven and awaits
+review plus an approved deployment. This empty unused table does not block the
 authenticated journey.
 
 ### L2 — Finish first-class PDF review

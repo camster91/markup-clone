@@ -1,6 +1,6 @@
 # Production launch, pilot, and SaaS-exit checklist — 2026-08-28
 
-**Status:** exact-SHA production release deployed; first operator provisioning in progress
+**Status:** exact-SHA production release deployed; operator credential entry pending
 **Governing roadmap:**
 `docs/plans/launch-and-saas-replacement-roadmap-2026-08-28.md`
 
@@ -45,16 +45,21 @@ journey.
   `sha256:56427ce514d74de49b73fdd5cfd546372ce3fb14493f08dc692b447abda3639b`.
 - Production has 29 finished, non-rolled-back migrations, including
   `20260828120000_add_pdf_review_assets`.
-- That count is 28 migration directories on current `main` plus the previously
-  deployed `20260813103000_add_review_documents` history row from the superseded
-  `codex/public-onboarding` implementation. Its `ReviewDocument` table exists
-  with zero rows; current code uses the new, also-empty `ReviewAsset` table.
-  Remove the superseded table only through a reviewed follow-up migration.
+- That count is 28 migration directories in the deployed release plus the
+  previously deployed `20260813103000_add_review_documents` history row from
+  the superseded `codex/public-onboarding` implementation. Its
+  `ReviewDocument` table exists with zero rows; current code uses the new,
+  also-empty `ReviewAsset` table. Remove the superseded table only through a
+  reviewed follow-up migration.
 - The post-deploy `ashbi.public-release.v1` verification passed at
   `2026-08-28T17:12:03Z`.
 - The private backup `markup-20260828T163040Z.dump` passed its remote catalog and
   checksum checks and its off-host copy passed SHA-256 verification at
   `ab335038316a1f5b13ba560712d7593c194da9c94b21d7b22d960d363316bfec`.
+- Mailgun is configured. Fresh delivery-worker and integration-encryption keys
+  are staged in the mode-0600 VPS `.env` and passed an exact-image shape/decode
+  probe without printing values. They are not considered active until the next
+  deployed container loads them and the protected worker endpoint is verified.
 
 Repeat the same fail-closed verification from the exact release checkout before
 and after deployment:
@@ -123,7 +128,8 @@ evidence record.
 
 - [ ] Provisioning reports `created` or the expected idempotent `unchanged`.
 - [ ] The account can sign in over HTTPS and receives an operator session.
-- [ ] An invalid login fails without leaking whether an email exists.
+- [x] A synthetic invalid login failed with the same safe
+  `invalid email or password` response, without leaking whether an email exists.
 
 ## Disposable authenticated QA
 

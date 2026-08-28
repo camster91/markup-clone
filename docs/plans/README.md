@@ -30,6 +30,10 @@ which are retained as implementation evidence.
   model, click-to-pin UI, disposable migration, owner/mobile/managed-share
   journey, and deletion cleanup passed locally. Repeat against the deployed SHA
   during L1.
+- `superseded-review-document-cleanup-2026-08-28.md` — **Review and production
+  deployment pending.** A fail-closed migration is locally proven to remove the
+  empty superseded table, no-op on fresh databases, and preserve any unexpected
+  legacy rows by refusing the migration.
 
 ## Launch evidence with an open gate
 

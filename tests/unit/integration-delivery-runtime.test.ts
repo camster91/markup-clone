@@ -11,15 +11,26 @@ describe('durable integration delivery runtime', () => {
     const env = read('.env.example');
     const compose = read('docker-compose.yml');
     expect(env).toContain('DELIVERY_WORKER_SECRET=');
-    expect(env).toMatch(/DELIVERY_WORKER_SECRET="[A-Za-z0-9_-]{32,}"/);
+    expect(env).toMatch(/^DELIVERY_WORKER_SECRET=[A-Za-z0-9_-]{32,}$/m);
     expect(compose).toMatch(/DELIVERY_WORKER_SECRET:\s*[A-Za-z0-9_-]{32,}/);
   });
 
   it('documents a 32-byte credential encryption key and supplies a local-only Docker value', () => {
     const env = read('.env.example');
     const compose = read('docker-compose.yml');
-    expect(env).toMatch(/INTEGRATION_ENCRYPTION_KEY="[A-Za-z0-9_-]{43}"/);
+    expect(env).toMatch(/^INTEGRATION_ENCRYPTION_KEY=[A-Za-z0-9_-]{43}$/m);
     expect(compose).toMatch(/INTEGRATION_ENCRYPTION_KEY:\s*[A-Za-z0-9_-]{43}/);
+  });
+
+  it('keeps Docker --env-file assignments unquoted', () => {
+    const assignments = read('.env.example')
+      .split('\n')
+      .filter((line) => /^[A-Z][A-Z0-9_]*=/.test(line));
+
+    expect(assignments.length).toBeGreaterThan(0);
+    expect(assignments).not.toEqual(expect.arrayContaining([
+      expect.stringMatching(/^[A-Z][A-Z0-9_]*=["']/),
+    ]));
   });
 
   it('installs an idempotent per-minute worker using a quoted heredoc and in-container secret', () => {
