@@ -1,7 +1,7 @@
 # Production launch, pilot, and SaaS-exit checklist — 2026-08-28
 
-**Status:** current exact-SHA release healthy; follow-up release approval and
-operator credential entry pending
+**Status:** approved follow-up exact-SHA release healthy; operator credential
+entry and authenticated QA pending
 **Governing roadmap:**
 `docs/plans/launch-and-saas-replacement-roadmap-2026-08-28.md`
 
@@ -99,12 +99,44 @@ widget byte-for-byte by SHA-256 with the checked-out `public/widget.js`.
   the exact then-current `main` containing code-bearing merge `a03b87d8...` is
   deployed.
 
+## 2026-08-28 approved follow-up deployment record
+
+- Cameron approved deployment of the frozen `main` release
+  `da6bae53949edd62f4996a161189e3bd38bbf8b5` and continuation of the full
+  internal-adoption program. This approval did not authorize sending external
+  email, contacting a client, changing customer-visible pricing, or cancelling
+  the incumbent SaaS.
+- Immediately before deployment, `ReviewDocument` still had zero rows, the
+  checkout and approved remote SHA matched, trusted edge/TLS and rollback
+  preflights passed, and the running application was healthy.
+- Fresh mode-0600 backup `markup-20260828T210514Z.dump` passed remote checksum
+  and `pg_restore --list` validation. Its off-host copy independently passed
+  SHA-256 verification at
+  `f06d0dbb98e395d0a6dac3582a9f1912ed9f1c51ea779939d587d3ff07e1430e`.
+- `scripts/deploy.sh` completed with `DEPLOY OK` at 2026-08-28T21:08:17Z. The
+  healthy container uses immutable image
+  `markup-clone:da6bae53949edd62f4996a161189e3bd38bbf8b5`, image ID
+  `sha256:c9b98c39d6337fc42542272b2910a1ca8482e4f77b34fe0fe6e428ec14f5bdb9`.
+- The cleanup migration completed atomically. Production now has 30 finished,
+  non-rolled-back migrations, and `ReviewDocument` is absent.
+- The retained rollback remains
+  `markup-clone:e4f8e4eb45017930969e9ba9f46e6100472f9a08`, image ID
+  `sha256:b68f4ba7c4578da9c35e4a9b274d6e8101a8bfadb1e6a593f7925186914fdf6a`.
+- The deployed container loaded `ashbi.ca` and both independent 43-character
+  runtime secrets. A protected worker request returned zero claimed, succeeded,
+  retried, or dead-lettered deliveries. The worker and prune crons are installed,
+  the obsolete Caddy guard is retired under Traefik, 54 GB is free, and recent
+  application logs contain no error/fatal/panic matches.
+- `ashbi.public-release.v1` passed from the exact deployed checkout at
+  2026-08-28T21:09:17.627Z, including trusted HTTPS/security headers, public
+  health, explicit anonymous API denial, and byte-for-byte widget provenance.
+
 ## Release identity and approval
 
 - [x] The launch pull request is no longer draft, all required checks pass, and
   the approved code is merged without bypassing an unexplained CI failure.
 - [x] Record the exact 40-character merged commit SHA:
-  `e4f8e4eb45017930969e9ba9f46e6100472f9a08`.
+  `da6bae53949edd62f4996a161189e3bd38bbf8b5`.
 - [x] The VPS checkout authenticates to Git, is on the intended release branch,
   fast-forwards to that SHA, and is clean in both content and file mode.
 - [x] Release operator: Codex acting under Cameron Ashley's approval; release
@@ -121,8 +153,8 @@ particular, do not print `.env` values. Record:
 - [x] running PostgreSQL and healthy application containers;
 - [x] current immutable application image tag and image ID recorded above;
 - [x] retained rollback image tag and image ID recorded above;
-- [x] current finished migration count: 29;
-- [x] 79 GB free and expected `/data/screenshots` mount present;
+- [x] current finished migration count: 30;
+- [x] 54 GB free and expected `/data/screenshots` mount present;
 - [x] prune and integration-delivery cron jobs installed, both Ashbi Local CI
   services active, and recent application logs without repeated failures;
 - [x] private database backup filename, checksum verification, and off-host copy
@@ -137,8 +169,9 @@ unhealthy dependency is a release stop.
 - [x] Confirm the log ends with `DEPLOY OK: <exact SHA>`.
 - [x] Confirm the running container uses `markup-clone:<exact SHA>` and not only
   the mutable `latest` tag.
-- [x] Confirm all 29 migrations, including
-  `20260828120000_add_pdf_review_assets`, are recorded as finished.
+- [x] Confirm all 30 migrations, including
+  `20260828120000_add_pdf_review_assets` and
+  `20260828180000_drop_superseded_review_document`, are recorded as finished.
 - [x] Repeat local-container and public health checks with trusted TLS.
 - [x] Run `npm run verify:public-release` from the exact deployed checkout and
   retain its `ashbi.public-release.v1` JSON output with the release evidence.
