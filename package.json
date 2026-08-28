@@ -21,6 +21,7 @@
     "test:e2e": "playwright test",
     "test:e2e:list": "playwright test --list",
     "test:load:local": "node scripts/run-local-pin-load.mjs",
+    "verify:public-release": "node scripts/verify-public-release.cjs --origin https://markup.ashbi.ca",
     "build:widget": "vite build",
     "prebuild": "npm run build:widget"
   },

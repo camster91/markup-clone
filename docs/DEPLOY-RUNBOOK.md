@@ -47,6 +47,10 @@ Run through these before kicking off a deploy. Each takes <10s.
    `markup-clone:<40-character-sha>`, that the image is still local, and that
    the tag still resolves to the exact running image ID. The deploy records the
    result in `/data/markup-clone/rollback-image.env` with mode `0600`.
+11. **The public artifact matches the release checkout.** From the exact local
+   release commit, run `npm run verify:public-release`. It verifies trusted
+   HTTPS, health, security headers, anonymous page redirection plus API denial,
+   and the deployed `widget.js` SHA-256 without making a production write.
 
 If any item fails, fix it *before* you start — these are the failure modes below.
 

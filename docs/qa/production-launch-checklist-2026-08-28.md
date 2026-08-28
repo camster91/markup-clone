@@ -18,13 +18,30 @@ Read-only verification on 2026-08-28 established all of the following:
   `YR1`, valid from 2026-08-08 through 2026-11-06.
 - HSTS, CSP, `X-Content-Type-Options`, `X-Frame-Options`, Referrer Policy, and
   Permissions Policy headers were present.
+- An anonymous `/workspaces` request produced the expected Next.js sign-in
+  redirect boundary, while `/api/workspaces` directly returned HTTP 401 with an
+  `Unauthorized` JSON response.
 - The public `widget.js` SHA-256 was
   `b00a1efc1a0fc63f22fd0a133b28b5257468d4b5043acf39f288424241a9ffa9`,
   exactly matching `public/widget.js` in the release branch.
+- The checked-in `ashbi.public-release.v1` verifier repeated all of these
+  assertions successfully at 2026-08-28T15:44:26Z.
 
 This proves public reachability and edge posture. It does not prove the
 authenticated application release, its database migration, or any owner/client
 journey.
+
+Repeat the same fail-closed verification from the exact release checkout before
+and after deployment:
+
+```bash
+npm run verify:public-release
+```
+
+The verifier makes no writes. It refuses non-TLS public origins, validates the
+health payload and browser security headers, proves `/workspaces` redirects an
+anonymous caller and `/api/workspaces` returns 401, and compares the deployed
+widget byte-for-byte by SHA-256 with the checked-out `public/widget.js`.
 
 ## Release identity and approval
 
@@ -63,6 +80,8 @@ unhealthy dependency is a release stop.
 - [ ] Confirm all 28 migrations, including
   `20260828120000_add_pdf_review_assets`, are recorded as finished.
 - [ ] Repeat local-container and public health checks with trusted TLS.
+- [ ] Run `npm run verify:public-release` from the exact deployed checkout and
+  retain its `ashbi.public-release.v1` JSON output with the release evidence.
 - [ ] Confirm the pruning and integration-delivery jobs were installed and are
   operating without a repeated error.
 

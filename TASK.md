@@ -51,6 +51,10 @@ secret-handling path.
   `docs/qa/production-launch-checklist-2026-08-28.md` contains the ordered,
   fail-closed production, pilot, cleanup, and SaaS-exit checklist. Its
   2026-08-28 public baseline is complete; authenticated items remain unchecked.
+- **Repeatable public proof:** `npm run verify:public-release` is read-only and
+  passed live on 2026-08-28. It verifies trusted HTTPS, health, security headers,
+  anonymous page/API boundaries, and exact widget provenance. This does not
+  satisfy the blocked authenticated QA requirement.
 
 ### L3 — Run the first Ashbi client pilot
 
