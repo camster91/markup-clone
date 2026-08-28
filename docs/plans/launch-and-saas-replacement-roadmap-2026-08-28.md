@@ -64,6 +64,11 @@ next implementation slice.
 **Exit evidence:** dated production-QA record tied to an exact deployed SHA,
 with no unexplained console/request failures and verified cleanup.
 
+**Execution checklist:**
+`docs/qa/production-launch-checklist-2026-08-28.md` is the single ordered
+operator record for L1 through L4. Its public baseline is current as of
+2026-08-28, but its authenticated items remain intentionally unchecked.
+
 **Provisioning mechanism:** `scripts/provision-operator.cjs` is stdin-only,
 idempotent for matching credentials, refuses implicit privilege escalation or
 password replacement, and documents a trusted VPS-shell flow in `README.md`.
@@ -164,6 +169,8 @@ Record these from the pilot onward:
 ## Change discipline
 
 - `TASK.md` is the current execution board; choose the highest unblocked item.
+- `docs/qa/production-launch-checklist-2026-08-28.md` governs the production,
+  pilot, and SaaS-exit evidence sequence once access is available.
 - Completed plans are evidence, not a reason to repeat work.
 - Production writes, account secrets, subscription cancellation, payment setup,
   npm publication, and client communications retain their explicit owner approval

@@ -20,7 +20,10 @@ Run through these before kicking off a deploy. Each takes <10s.
    This validates `/opt/traefik/dynamic/routers.yml`, loopback port 3030, the
    public health payload, hostname, expiry, issuer chain, and OS trust. Never add
    `-k` or `--insecure` to turn a certificate failure green.
-3. **`.env` on the VPS has the current `POSTGRES_PASSWORD` and `DATABASE_URL`.** `ssh coolify 'grep -E "^(POSTGRES_PASSWORD|DATABASE_URL)=" /root/markup-clone/.env'` — both lines present, no `***` from chat-layer redaction.
+3. **`.env` on the VPS has non-empty `POSTGRES_PASSWORD` and `DATABASE_URL`
+   entries.** Check presence without printing either value:
+   `ssh coolify 'for key in POSTGRES_PASSWORD DATABASE_URL; do grep -q "^${key}=." /root/markup-clone/.env || { echo "missing: $key"; exit 1; }; done; echo "database env entries present"'`.
+   Never print the matching lines into a terminal or chat transcript.
 4. **The `markup-net` Docker bridge exists and has a known subnet.** `ssh coolify 'docker network inspect markup-net -f "{{range .IPAM.Config}}{{.Subnet}}{{end}}"'` — must return a CIDR, not empty.
 5. **Local `npm run lint && npm test` are clean.** Require zero lint warnings
    and use the exact test count from the release evidence; do not rely on the
@@ -47,20 +50,19 @@ Run through these before kicking off a deploy. Each takes <10s.
 
 If any item fails, fix it *before* you start — these are the failure modes below.
 
-The 2026-08-08 read-only preflight found one current stop condition: production
+The 2026-08-08 read-only preflight found one release stop condition: production
 `scripts/prune-screenshots.sh` has byte-for-byte identical content to Git but is
 mode `0755` while the checked-in mode is `0644`. The host therefore appears dirty.
 Choose and approve one of these before deployment: commit the executable bit as
 intentional, or restore the host mode to the committed value. Do not bypass the
 clean-tree guard.
 
-The same preflight found a second release stop: public HTTPS currently serves a
-self-signed `CN=markup.ashbi.ca` certificate (verification result 18). The active
-Traefik router names the `letsencrypt` resolver, but `/opt/traefik/dynamic/tls.yml`
-explicitly loads the self-signed certificate and the active ACME store has no
-Markup certificate. The app remains healthy on loopback and returns HTTP 200 only
-when certificate verification is bypassed. Repairing the live certificate and
-reloading Traefik require explicit production approval.
+That preflight also found a self-signed `CN=markup.ashbi.ca` certificate. This is
+resolved release history, not a current stop condition: a normal trusted client
+verified the public route on 2026-08-28, which served a Let's Encrypt `YR1`
+certificate for `markup.ashbi.ca` valid from 2026-08-08 through 2026-11-06. Run
+`edge-proxy-preflight.sh verify` again immediately before every deployment; live
+host evidence, not this historical note, governs the release decision.
 
 A read-only recovery inventory found a known-good certificate/key pair at
 `/opt/traefik/certs/.bak.20260723_192747/markup.ashbi.ca.{crt,key}`. The pair
@@ -72,7 +74,8 @@ The inactive `/data/coolify/proxy/acme.json` also contains a different valid
 Markup certificate through 2026-09-03; do not edit Traefik's active ACME JSON by
 hand when the verified file-pair rollback is available.
 
-For an approved TLS repair window:
+The recovery sequence below is retained only for a future recurrence. For an
+approved TLS repair window:
 
 1. Back up the active Markup certificate/key, `tls.yml`, and active ACME JSON.
 2. Atomically restore the verified archived pair to the active certificate paths

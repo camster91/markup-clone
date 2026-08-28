@@ -47,6 +47,10 @@ secret-handling path.
 - **After unblock:** provision idempotently, run owner/client desktop/mobile QA
   against an exact deployed SHA, verify integrations/operations, and remove all
   disposable records and files.
+- **Execution record:**
+  `docs/qa/production-launch-checklist-2026-08-28.md` contains the ordered,
+  fail-closed production, pilot, cleanup, and SaaS-exit checklist. Its
+  2026-08-28 public baseline is complete; authenticated items remain unchecked.
 
 ### L3 — Run the first Ashbi client pilot
 
