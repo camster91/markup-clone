@@ -45,15 +45,17 @@ real customer behavior supports them.
   managed sharing, role-safe workspaces/teams/projects, agency branding,
   notifications, developer context, GitHub and webhook delivery, an audit log,
   and backup/rollback tooling.
-- The production release `e4f8e4eb45017930969e9ba9f46e6100472f9a08`
-  is healthy and publicly verified. The schema-cleanup and Docker environment
-  correction merged as `a03b87d8d05db0a69b050c75d05baf383d611fea`
-  but are not released yet.
+- The production release `da6bae53949edd62f4996a161189e3bd38bbf8b5` is
+  healthy and publicly verified. Its schema cleanup completed atomically, its
+  corrected runtime configuration is active, and production has 30 finished,
+  non-rolled-back migrations.
 - The exact merged head passed the repository test, lint, schema, build, local
   CI, secret-scanning, and disposable PostgreSQL migration gates recorded in
   `TASK.md` and the production checklist.
-- No production operator exists yet, so authenticated production behavior and a
-  real client journey are not proven.
+- The production operator exists and HTTPS sign-in passes. The first workspace
+  write failed closed because its client form omitted the shared CSRF header;
+  later authenticated owner/client behavior and a real client journey remain
+  unproven.
 - No real pilot, retention window, subscription export, or cancellation has
   occurred.
 
@@ -156,10 +158,10 @@ and customer-visible pricing remain separately approval-gated.
 | Capability | Current evidence | Approval or owner boundary | Status |
 |---|---|---|---|
 | Repository and GitHub | Local checkout, authenticated remote, checks and PRs working | Normal reviewed source changes are in scope | available |
-| Production SSH/hosting | Dedicated SSH key and healthy VPS/container verified | Exact owner approval immediately before every production release | available; release approval pending |
-| Production operator | Provisioning command exists; user row is absent | Cameron must enter the password in a trusted user-owned terminal | blocked on owner action |
-| Production email | Mailgun key valid; `ashbi.ca` active; corrected domain staged | Sending any real test or client email requires approval | configured; unsent |
-| Integrations | Worker/encryption secrets staged; GitHub/webhook code tested | Per-project credentials and external deliveries require owner/client approval | production proof pending |
+| Production SSH/hosting | Dedicated SSH key and healthy exact-SHA VPS/container verified | Exact owner approval immediately before every production release | available; next fix release unapproved |
+| Production operator | Operator row, protected Keychain credential, and HTTPS session verified | Keep credentials out of repository, logs, argv, and evidence | available; write flow blocked on CSRF fix |
+| Production email | Mailgun key valid; `ashbi.ca` active in the deployed container | Sending any real test or client email requires approval | configured; unsent |
+| Integrations | Worker/encryption secrets active; protected zero-work request and GitHub/webhook code verified | Per-project credentials and external deliveries require owner/client approval | runtime ready; external proof pending |
 | Client pilot | Plan and success gates exist | Cameron selects the project/reviewer and approves communication | blocked on owner selection |
 | Paid SaaS account | No verified subscription or export inventory available | Cameron provides account access and separately approves cancellation | unavailable |
 | Usage/business analytics | Audit and project data exist; no pilot baseline exists | Aggregate only necessary data; avoid sensitive content | definitions ready; baseline missing |
@@ -169,9 +171,9 @@ and customer-visible pricing remain separately approval-gated.
 
 | Risk | Severity | Evidence and consequence | Mitigation / release rule |
 |---|---:|---|---|
-| No authenticated production proof | High | No operator row exists; public health cannot prove the owner/client journey | Provision in trusted terminal, run the full dated QA checklist, and clean up disposable data |
-| Release candidate not yet deployed | High | Merged schema/env corrections are not live | Deploy only after exact approval, fresh preflight/backup, then verify exact SHA and rollback state |
-| Email or integration misconfiguration | High | Corrected Mailgun domain and integration secrets are staged but not live | Shape-check after deploy; send only an approved bounded test; verify delivery logs without exposing secrets |
+| Authenticated production write blocked | High | Operator sign-in passes, but workspace creation returns invalid CSRF and creates no row | Merge the focused client-header fix, deploy only after exact approval, then restart the disposable QA journey |
+| Credential exposure during setup | High | The first generated value appeared in terminal output | Treat it as compromised; completed immediate rotation and Keychain replacement before authenticated QA |
+| Email or integration misconfiguration | High | Corrected Mailgun domain and integration secrets are active; no external delivery has been approved | Send only an approved bounded test; verify delivery logs without exposing secrets |
 | No real customer validation | High | Feature presence does not prove ease, trust, retention, or willingness to switch | Complete one pilot, then a second project or 30-day window before replacement claims |
 | Subscription dependency or data loss | High | Current projects, exports, retention needs, and renewal date are unknown | Inventory and export before cancellation; retain checksummed copy and obtain explicit approval |
 | Single-host operations | Medium | App, database, CI, and other fleet services share one VPS | Keep off-host backups, immutable rollback images, health checks, disk monitoring, and recovery ownership |
@@ -213,11 +215,10 @@ rules, not market claims.
 
 ## Next evidence sequence
 
-1. Resolve the exact then-current `main` containing code-bearing cleanup merge
-   `a03b87d8...`, obtain approval for that exact SHA, deploy it, and verify the
-   cleanup, runtime configuration, public artifact, backup, and rollback state.
-2. Cameron provisions `cameron@ashbi.ca` locally; complete and clean up
-   authenticated production QA.
+1. Review and merge the workspace-create CSRF fix, obtain approval for its exact
+   release SHA, deploy it, and repeat the failed authenticated write first.
+2. Continue and clean up the full owner/client production QA journey tied to the
+   deployed fix SHA.
 3. Select the first pilot and record incumbent baselines, actual subscription
    cost, reviewer outcome, support friction, timing, and usage in a dated copy of
    `docs/qa/client-pilot-record-template.md`.

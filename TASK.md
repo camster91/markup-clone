@@ -27,17 +27,22 @@ its stated evidence exists; local tests do not silently close it.
 - **Runtime readiness:** Mailgun is configured. The previously missing delivery
   worker and integration-encryption secrets are active in the exact deployed
   container and passed shape checks plus a protected zero-work worker request
-  without printing values. The stale `mg.ashbi.ca` value is corrected to the active
-  Mailgun domain `ashbi.ca`; `.env.example` keeps Docker `--env-file` values
-  unquoted so quote characters cannot invalidate runtime configuration.
-- **Current action:** pull request #43 passed its exact-head CI and security
-  gates and merged as `a03b87d8d05db0a69b050c75d05baf383d611fea`.
-  Cameron approved the frozen follow-up release, and the normal backup,
-  rollback, migration, deployment, and verification sequence passed. A secure
-  trusted-terminal prompt is open for Cameron to provision the still-absent
-  `cameron@ashbi.ca` account by entering the password locally.
-- **Next:** sign in and run owner/client desktop/mobile QA, verify
-  integrations/operations, and remove every disposable record and file.
+  without printing values. The stale `mg.ashbi.ca` value is corrected to the
+  active Mailgun domain `ashbi.ca`; `.env.example` keeps Docker `--env-file`
+  values unquoted so quote characters cannot invalidate runtime configuration.
+- **Authenticated checkpoint:** `cameron@ashbi.ca` now exists as an operator and
+  successfully received a production HTTPS session. A generated credential that
+  appeared in terminal output during the first automated handoff was treated as
+  compromised, immediately rotated, and replaced in macOS Keychain; it is no
+  longer valid.
+- **Current blocker:** the first disposable workspace write returned HTTP 403
+  `Invalid CSRF token` twice, including after a fresh authenticated page load.
+  `NewWorkspaceForm` omitted the existing `dashboardHeaders()` helper used by
+  the equivalent team and project forms. The focused fix and regression test
+  pass locally on `codex/workspace-csrf-qa-blocker`.
+- **Next:** review and merge the CSRF fix, obtain exact owner approval for the
+  new production SHA, deploy it through the normal release gates, then resume
+  owner/client desktop/mobile QA and verified disposable-data cleanup.
 - **Execution record:**
   `docs/qa/production-launch-checklist-2026-08-28.md`.
 

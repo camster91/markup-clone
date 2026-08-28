@@ -14,6 +14,7 @@
 // forms (NewProjectForm etc.).
 
 import { useState } from 'react';
+import { dashboardHeaders } from '@/lib/client-origin';
 
 export default function NewWorkspaceForm() {
   const [name, setName] = useState('');
@@ -29,7 +30,7 @@ export default function NewWorkspaceForm() {
     try {
       const res = await fetch('/api/workspaces', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...dashboardHeaders() },
         body: JSON.stringify({ name: trimmed }),
       });
       if (!res.ok) {

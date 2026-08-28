@@ -50,8 +50,8 @@ next implementation slice.
 
 ### L1 — Open and prove authenticated production access
 
-**Status:** in progress; exact-SHA release is deployed and secure operator
-credential entry requires Cameron's user-owned terminal
+**Status:** in progress; exact-SHA release and operator sign-in are proven, and
+the first authenticated write is blocked on a workspace-create CSRF fix
 
 - Provision the first production operator through a bounded, documented,
   idempotent mechanism. Never commit or echo the password.
@@ -70,22 +70,24 @@ with no unexplained console/request failures and verified cleanup.
 **Execution checklist:**
 `docs/qa/production-launch-checklist-2026-08-28.md` is the single ordered
 operator record for L1 through L4. Its public baseline is current as of
-2026-08-28, but its authenticated items remain intentionally unchecked.
+2026-08-28. Provisioning and sign-in now pass; later authenticated items remain
+unchecked after the first workspace write failed closed.
 
 **Provisioning mechanism:** `scripts/provision-operator.cjs` is stdin-only,
 idempotent for matching credentials, refuses implicit privilege escalation or
 password replacement, and documents a trusted VPS-shell flow in `README.md`.
-Its production execution still requires Cameron to enter the secret locally.
+The production operator now exists and HTTPS sign-in passed. The active
+credential is stored in Cameron's macOS Keychain rather than the repository,
+deployment environment, command arguments, or evidence records.
 
-**Schema reconciliation note:** the deployed release has 29 finished migration
-history rows while its source has 28 migration directories. The extra historical
-row created the superseded `ReviewDocument` table from
-`codex/public-onboarding`; the table currently has zero rows and current code
-uses `ReviewAsset`. The fail-closed cleanup in
-`superseded-review-document-cleanup-2026-08-28.md` passed review and CI, merged
-as `a03b87d8d05db0a69b050c75d05baf383d611fea`, and awaits exact owner
-approval plus production deployment. This empty unused table does not block the
-authenticated journey.
+**Current production finding:** the first workspace POST failed closed with an
+invalid-CSRF response because `NewWorkspaceForm` omitted the shared dashboard
+CSRF header helper. No workspace was created. A focused fix and regression test
+are under review; production QA resumes only after an approved exact-SHA release.
+
+**Schema reconciliation note:** production now has 30 finished,
+non-rolled-back migrations. The guarded cleanup removed the confirmed-empty
+superseded `ReviewDocument` table; current PDF review uses `ReviewAsset`.
 
 ### L2 — Finish first-class PDF review
 

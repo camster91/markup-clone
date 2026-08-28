@@ -30,16 +30,12 @@ which are retained as implementation evidence.
   model, click-to-pin UI, disposable migration, owner/mobile/managed-share
   journey, and deletion cleanup passed locally. Repeat against the deployed SHA
   during L1.
-- `superseded-review-document-cleanup-2026-08-28.md` — **Merged; exact owner
-  approval and production deployment pending.** A fail-closed migration passed
-  review and CI to remove the empty superseded table, no-op on fresh databases,
-  and preserve any unexpected legacy rows by refusing the migration.
-
 ## Launch evidence with an open gate
 
 - `release-candidate-operational-validation-2026-08-08.md` — Production was
-  deployed and rollback-verified. The remaining launch gate is first-operator
-  provisioning followed by authenticated owner/client production QA.
+  deployed and rollback-verified. Operator provisioning and HTTPS sign-in now
+  pass; authenticated owner/client production QA is blocked on the reviewed
+  workspace-create CSRF fix.
 
 ## Completed implementation evidence
 
@@ -47,6 +43,9 @@ These plans describe work already implemented on `main`. Their individual
 production notes remain authoritative; do not infer live deployment merely from
 local completion.
 
+- `superseded-review-document-cleanup-2026-08-28.md` — deployed and verified in
+  exact release `da6bae53949edd62f4996a161189e3bd38bbf8b5`; the fail-closed
+  migration removed the confirmed-empty superseded table.
 - `comment-lifecycle-2026-08-09.md`
 - `image-review-uploads-2026-08-09.md`
 - `review-rounds-workflow-2026-08-07.md`
