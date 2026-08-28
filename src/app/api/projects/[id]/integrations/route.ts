@@ -43,7 +43,7 @@ function redactUrl(raw: string): string {
  * Webhook URLs keep host; path token segments become ••••.
  * Custom headers are fully redacted.
  */
-export function redactConfig(kind: string, configJson: string): string {
+function redactConfig(kind: string, configJson: string): string {
   try {
     const cfg = JSON.parse(configJson) as Record<string, unknown>;
     if (kind === 'slack' || kind === 'discord') {

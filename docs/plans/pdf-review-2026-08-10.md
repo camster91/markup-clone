@@ -1,5 +1,8 @@
 # First-Class PDF Review Implementation Plan
 
+**Status:** active implementation; production-image renderer proof is next
+**Parent:** `docs/plans/launch-and-saas-replacement-roadmap-2026-08-28.md` (L2)
+
 **Goal:** Let project administrators upload a PDF and let owners, invited
 reviewers, and managed-share viewers review each rendered page with the same
 pins, annotations, threads, review rounds, notifications, and sign-off model
@@ -63,12 +66,12 @@ as website and image reviews.
   build, Linux Docker build, and local Compose migration.
 - Browser evidence for the owner and client journeys plus cleanup.
 
-## Open implementation decision
+## Renderer decision
 
-The rendering runtime is not currently in the dependency graph. The first
-implementation task is intentionally a renderer spike; do not add a PDF npm
-package or an OS renderer until its security/size/timeout behavior is verified
-in the production image.
+The renderer is Poppler from Alpine's `poppler-utils`; no PDF npm package is
+used. The runner-image build now contains a fail-closed verification step, but
+the exact Linux image must build successfully before an upload endpoint is
+allowed.
 
 ## Spike evidence — 2026-08-10
 
@@ -78,3 +81,20 @@ bounds page count at 50, and produces an argument-only 144-DPI command capped
 at 1920 pixels per axis. The full Next.js runner-image build remains a release
 gate: local Docker build clients stalled without producing an image, so no PDF
 upload endpoint exists and no PDF runtime change has been deployed.
+
+## Renderer checkpoint — 2026-08-28
+
+- Added a real single-page PDF runtime probe to the runner layer. BuildKit runs
+  it with `--network=none`; it exercises `pdfinfo`, `pdftoppm`, a killed timeout,
+  page count, PNG dimensions, and temporary-directory cleanup.
+- The first runtime probe caught that separate `-scale-to-x 1920` and
+  `-scale-to-y 1920` arguments distorted a portrait page into a square. The
+  contract now uses aspect-preserving `-scale-to 1920` and asserts a non-square
+  fixture remains non-square.
+- Local Poppler produced one bounded 1484x1920 page and passed cleanup/timeout
+  checks. The focused PDF/integration suites passed 50 tests; the full suite
+  passed 927 tests; ESLint, TypeScript, and the Next production webpack build
+  passed.
+- The exact Linux runner-image build remains open because this Mac has no
+  working container runtime. Do not start the PDF upload pipeline until a CI or
+  approved Linux build records the network-disabled verifier passing.

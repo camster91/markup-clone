@@ -1,6 +1,7 @@
 # MarkUp.io parity and agency advantage — 2026-08-07
 
-**Status:** active product definition
+**Status:** product reference; execution priority is governed by
+`docs/plans/launch-and-saas-replacement-roadmap-2026-08-28.md`
 **Parent plan:** `docs/plans/agency-product-release-2026-08-07.md`
 **Evidence date:** 2026-08-07
 

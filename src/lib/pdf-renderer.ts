@@ -17,7 +17,7 @@ export function parsePdfPageCount(pdfInfoOutput: string): number {
 /** Arguments for pdftoppm; always use spawn/execFile with no shell. */
 export function pdfRenderCommand(inputPath: string, outputPrefix: string): string[] {
   return [
-    '-png', '-r', '144', '-scale-to-x', '1920', '-scale-to-y', '1920',
+    '-png', '-r', '144', '-scale-to', '1920',
     '-f', '1', '-l', String(MAX_PDF_PAGES), inputPath, outputPrefix,
   ];
 }

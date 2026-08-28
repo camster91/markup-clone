@@ -1,6 +1,7 @@
 # Agency product release plan — 2026-08-07
 
-**Status:** active
+**Status:** release candidate deployed; authenticated launch adoption continues
+under `docs/plans/launch-and-saas-replacement-roadmap-2026-08-28.md`
 **Owner:** repository maintainers
 **Objective:** ship the Visual Feedback Tool as a secure, production-ready
 MarkUp.io alternative with a stronger workflow for web developers and agencies.

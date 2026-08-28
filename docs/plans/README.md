@@ -1,126 +1,104 @@
 # Plans — index
 
-This directory is the **landing zone for project plans**. Anything that
-informs "what to build next" lives here, in version control, so any
-agent that clones the repo lands on the current truth rather than
-guessing from chat history.
+This directory is the repository's planning source of truth. `TASK.md` is the
+execution board; this index explains which documents govern current work and
+which are retained as implementation evidence.
 
-## Layout
+## Reading order
 
-| Path | Purpose | Status |
-|---|---|---|
-| `archive/` | Superseded dev plans. Quarantined so they can't poison the next agent. **Read the warning in `archive/README.md` before opening anything here.** | active |
-| `<name>-<YYYY-MM-DD>.md` | Active plans, dated. Newest first. | active |
+1. `launch-and-saas-replacement-roadmap-2026-08-28.md`
+2. `TASK.md`
+3. The plan linked by the highest-priority unblocked task
+4. `agency-product-release-2026-08-07.md` for release-gate detail
+5. Relevant current security or historical audit only when the task touches
+   that surface
 
-## Current plans
+## Governing roadmap
 
-- `docs/plans/pdf-review-2026-08-10.md` - **Active discovery and implementation
-  plan.** Extend the shared review model to PDF pages only after a bounded
-  renderer contract is proven in the production image.
-- `docs/plans/comment-lifecycle-2026-08-09.md` - **Complete locally; queued
-  for this core-SaaS release.** Project administrators can edit or delete a
-  scoped comment while client and share-link reviewers remain read-only.
-- `docs/plans/image-review-uploads-2026-08-09.md` - **Deployed; local browser
-  QA complete.** First-class PNG, JPEG, GIF, and WebP project review surfaces
-  without a parallel comment or sharing model. Production authenticated QA is
-  pending the first operator account.
+- `launch-and-saas-replacement-roadmap-2026-08-28.md` — **Active and
+  authoritative.** Orders plan reconciliation, authenticated production proof,
+  PDF review, an Ashbi client pilot, paid-SaaS replacement, and evidence-led
+  business improvements.
+- `agency-product-release-2026-08-07.md` — **Release-gate specification.** The
+  release candidate was deployed and rollback-tested; authenticated launch
+  adoption continues under the governing roadmap.
 
-- `docs/plans/cross-browser-widget-and-accessibility-qa-2026-08-08.md` - **Complete
-  locally; production untouched.** Real built-widget PNG capture, recapture,
-  keyboard, focus, overflow, and visual QA across Chromium, Firefox, and WebKit.
-- `docs/plans/local-pin-ingestion-load-rehearsal-2026-08-08.md` - **Complete
-  locally; production untouched.** Reproducible multipart pin-ingestion capacity
-  evidence with loopback enforcement, thresholds, and verified cleanup.
-- `docs/plans/role-aware-notifications-2026-08-08.md` - **Complete locally;
-  production untouched.** Self-service project-member email
-  preferences and role-aware presets for feedback, replies, workflow, assignment,
-  and mention events while preserving external pin alerts.
-- `docs/plans/project-summary-aggregation-2026-08-08.md` - **Complete locally;
-  production untouched.** Replaced overview relation-tree hydration with one
-  authorization-scoped aggregate while preserving the compact role-safe DTO.
-- `docs/plans/collaboration-transport-consolidation-2026-08-08.md` - **Complete
-  locally; production untouched.** One truthful presence heartbeat
-  and one SSE stream per focused project, with no false list-page presence.
-- `docs/plans/managed-public-review-links-2026-08-08.md` - **Complete locally;
-  production untouched.** Expiring/password-protected review
-  links, token-bound HttpOnly media access, secret redaction, and client-safe
-  unlock UX.
-- `docs/plans/release-candidate-operational-validation-2026-08-08.md` - **Deployed
-  and rollback-verified; first operator pending.** Reusable agency defaults,
-  guarded backup/restore, ACME TLS repair, exact-SHA deployment, cross-browser
-  production QA, and controlled rollback/forward-recovery evidence.
-- `docs/plans/public-developer-api-and-browser-sdk-2026-08-08.md` - **Complete
-  locally; production and npm untouched.** Hash-only scoped developer tokens,
-  versioned read-only issue API, OpenAPI documentation, and a typed browser SDK
-  lifecycle, with clean/upgrade migration and browser verification.
-- `docs/plans/client-site-organization-and-archive-2026-08-08.md` - **Complete
-  locally; production untouched.** Agency/client/site/review-round information
-  architecture and reversible site archiving with active-by-default lists.
-- `docs/plans/workspace-branding-and-client-review-mode-2026-08-08.md` - **Complete
-  locally; production untouched.** Validated agency identity, operator-owned branding,
-  and a simpler role-redacted client/guest project experience.
-- `docs/plans/invitation-claiming-and-agency-roles-2026-08-08.md` - **Complete
-  locally; production untouched.** Expiring hash-only invitations, invite-only account
-  creation, canonical agency/client roles, project-scoped guests, and role-safe
-  team/project UI.
-- `docs/plans/native-github-issue-delivery-2026-08-08.md` - **Completed
-  locally.** Encrypted repository credentials, safe repository
-  verification, deterministic issue handoff, retry deduplication, and retained
-  GitHub issue links; production remains approval-gated.
-- `docs/plans/reliable-integration-delivery-2026-08-08.md` - **Completed
-  locally.** Versioned events, transactional outbox delivery, webhook signing,
-  bounded retries, immutable attempts, and an owner-visible delivery log;
-  production remains approval-gated.
-- `docs/plans/developer-context-packet-2026-08-07.md` - **Completed locally.**
-  Privacy-bounded widget context, server validation, role-safe DTOs, and
-  administrator-only developer context UI; production remains approval-gated.
-- `docs/plans/structured-developer-handoff-2026-08-07.md` - **Completed
-  locally.** Versioned issue payload, safe Markdown adapter, administrator copy
-  action, and exact-pin dashboard deep links; external delivery remains pending.
-- `docs/plans/internal-issue-metadata-2026-08-07.md` - **Completed locally.**
-  Owner-only priority, claimed-team assignee, reusable project tags, combined
-  filters, and role-safe developer-handoff enrichment; production remains
-  approval-gated.
+## Active implementation
 
-- `docs/plans/review-rounds-workflow-2026-08-07.md` — **Active implementation
-  plan.** Durable review rounds, status, attributable sign-off, and paused-new-pin
-  behavior with role and migration boundaries.
-- `docs/plans/markup-parity-and-agency-advantage-2026-08-07.md` — **Active
-  product definition.** First-party-verified competitor matrix and the ordered
-  agency/developer differentiation slices.
-- `docs/plans/agency-product-release-2026-08-07.md` — **Active release
-  plan.** Security/reliability gates first, then core workflow parity,
-  agency/developer differentiation, and production-readiness evidence.
-- `docs/qa/2026-07-24-production-security-audit.md` — **Current**
-  production security / reliability audit. Critical + High items
-  patched on `cursor/production-security-audit-4eb8`. Read before
-  any auth, integrations, or screenshot-serving change.
-- `docs/refactor/2026-06-15-refactor-plan.md` — R0.x structural work,
-  P0/P1/P2 prioritized. Most P0 items merged; P1 partially merged in
-  the 2026-06-16/17 P1-wave audit cycle. See the R0 audit comment in
-  `README.md` for what landed. R1.2 (CSRF) landed in the 2026-07-24
-  security audit.
-- `docs/refactor/2026-06-17-p1-audit.md` — Verification of the 4 fix
-  cards from 2026-06-16 plus a P1-wave regression sweep. Read for
-  context before touching the validators in `src/lib/validation.ts`.
-- `docs/qa/production-grade-assessment.md` — Earlier (2026-06-12)
-  production-readiness assessment. Superseded for auth/SSRF/CSRF by
-  the 2026-07-24 audit; still useful for historical gap notes.
-- `docs/rate-limit-limitations.md` — In-process rate-limit caveats.
-  Read before scaling horizontally.
+- `pdf-review-2026-08-10.md` — **Active.** The Poppler contract and image
+  dependency are present on `main`; the next gate is bounded renderer proof in
+  the exact production image before any PDF upload endpoint is accepted.
 
-## Pending planning
+## Launch evidence with an open gate
 
-The active agency product release plan now governs post-July work.
-Feature-specific design documents should still be added before a
-release gate expands into implementation work that is not specified
-there.
+- `release-candidate-operational-validation-2026-08-08.md` — Production was
+  deployed and rollback-verified. The remaining launch gate is first-operator
+  provisioning followed by authenticated owner/client production QA.
 
-## Don't
+## Completed implementation evidence
 
-- Don't open the root `CONSOLIDATION-PLAN.md` — it's an orphaned FFH
-  WordPress consolidation plan, unrelated to this repo. It is scheduled
-  for deletion; do not act on it.
-- Don't trust any plan dated before 2026-06-15 without re-validating
-  against `git log --oneline` — much of the F1–F9 / P2.2 work has
-  changed what was assumed.
+These plans describe work already implemented on `main`. Their individual
+production notes remain authoritative; do not infer live deployment merely from
+local completion.
+
+- `comment-lifecycle-2026-08-09.md`
+- `image-review-uploads-2026-08-09.md`
+- `review-rounds-workflow-2026-08-07.md`
+- `developer-context-packet-2026-08-07.md`
+- `structured-developer-handoff-2026-08-07.md`
+- `internal-issue-metadata-2026-08-07.md`
+- `reliable-integration-delivery-2026-08-08.md`
+- `native-github-issue-delivery-2026-08-08.md`
+- `invitation-claiming-and-agency-roles-2026-08-08.md`
+- `workspace-branding-and-client-review-mode-2026-08-08.md`
+- `client-site-organization-and-archive-2026-08-08.md`
+- `managed-public-review-links-2026-08-08.md`
+- `public-developer-api-and-browser-sdk-2026-08-08.md`
+- `collaboration-transport-consolidation-2026-08-08.md`
+- `project-summary-aggregation-2026-08-08.md`
+- `role-aware-notifications-2026-08-08.md`
+- `local-pin-ingestion-load-rehearsal-2026-08-08.md`
+- `cross-browser-widget-and-accessibility-qa-2026-08-08.md`
+
+## Product reference
+
+- `markup-parity-and-agency-advantage-2026-08-07.md` — Competitor benchmark,
+  product shape, and completed differentiation sequence. It is reference input,
+  not an independent execution queue. Revalidate time-sensitive competitor
+  claims before using them for a new requirement.
+
+## Historical and security references
+
+- `docs/qa/2026-07-24-production-security-audit.md` — current security and
+  reliability audit for auth, integrations, and screenshot-serving work.
+- `docs/refactor/2026-06-15-refactor-plan.md` and
+  `docs/refactor/2026-06-17-p1-audit.md` — historical structural plans; verify
+  every old gap against current code before acting.
+- `docs/qa/production-grade-assessment.md` — historical readiness assessment;
+  later audit and release evidence supersede many gaps.
+- `docs/rate-limit-limitations.md` — current warning for horizontal scaling.
+- `archive/` — superseded plans quarantined from execution. Read
+  `archive/README.md` before opening anything there.
+
+## Parked themes
+
+These are not launch work unless pilot evidence creates a business case and a
+new dated plan is added:
+
+- AI-generated fixes and repository write access
+- billing/subscription administration
+- video review
+- generic nested folders
+- enterprise SSO/SCIM/compliance claims
+- analytics integrations
+- npm publication
+
+## Maintenance rules
+
+- New material work needs a dated plan and an entry here.
+- Update `TASK.md` when work changes state.
+- Keep completed plans as evidence; do not reclassify them as active because
+  production QA is pending.
+- Do not execute root `CONSOLIDATION-PLAN.md`; it is an unrelated FFH WordPress
+  artifact.
+- Do not start work from `archive/`.
