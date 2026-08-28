@@ -64,6 +64,11 @@ next implementation slice.
 **Exit evidence:** dated production-QA record tied to an exact deployed SHA,
 with no unexplained console/request failures and verified cleanup.
 
+**Provisioning mechanism:** `scripts/provision-operator.cjs` is stdin-only,
+idempotent for matching credentials, refuses implicit privilege escalation or
+password replacement, and documents a trusted VPS-shell flow in `README.md`.
+Its production execution still requires Cameron to enter the secret locally.
+
 ### L2 — Finish first-class PDF review
 
 **Status:** local implementation and journey proof complete on 2026-08-28;

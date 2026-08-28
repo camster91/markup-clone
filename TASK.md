@@ -37,9 +37,13 @@ secret-handling path.
 - **Status:** blocked
 - **Source:** governing roadmap L1 and
   `release-candidate-operational-validation-2026-08-08.md`
-- **Blocker:** Cameron must supply the exact operator email and password through
-  the approved secret-handling path. The repository and chat must never contain
-  the plaintext password.
+- **Mechanism ready:** `scripts/provision-operator.cjs` accepts email/password
+  only over stdin, is idempotent for matching credentials, and refuses implicit
+  promotion or password rotation. The VPS-shell command is documented in
+  `README.md`.
+- **Blocker:** Cameron must run that command in the trusted VPS shell and enter
+  the exact operator email/password locally. The repository and chat must never
+  contain the plaintext password.
 - **After unblock:** provision idempotently, run owner/client desktop/mobile QA
   against an exact deployed SHA, verify integrations/operations, and remove all
   disposable records and files.
