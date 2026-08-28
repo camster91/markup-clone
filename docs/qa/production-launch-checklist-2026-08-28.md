@@ -216,6 +216,11 @@ dated and tied to the deployed SHA.
 
 ## First client pilot
 
+Create a dated copy of `docs/qa/client-pilot-record-template.md` before inviting
+the reviewer. It is the evidence record for the baseline, journey, measurements,
+failures, cleanup, retrospective, and L4 decision; this checklist remains the
+gate index.
+
 - [ ] Cameron selects one low-risk active Ashbi project, one cooperative client
   reviewer, a reversible review window, and the old SaaS fallback.
 - [ ] Define the project's success threshold and baseline: current SaaS cost,

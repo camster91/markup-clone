@@ -89,6 +89,10 @@ its stated evidence exists; local tests do not silently close it.
 - **Source:** governing roadmap L3
 - **Blocker:** choose one low-risk real client site, a cooperative reviewer, and
   a reversible review window.
+- **Evidence readiness:** `docs/qa/client-pilot-record-template.md` is ready to
+  capture approval, exact release identity, incumbent baseline, observed
+  journey, metric results, failures/recovery, cleanup, and the explicit
+  second-project/30-day decision without inventing customer validation.
 
 ### L4 — Replace and cancel the paid SaaS
 
