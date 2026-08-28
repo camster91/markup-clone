@@ -213,7 +213,8 @@ rules, not market claims.
 
 ## Next evidence sequence
 
-1. Obtain exact approval and deploy merged release `a03b87d8...`; verify the
+1. Resolve the exact then-current `main` containing code-bearing cleanup merge
+   `a03b87d8...`, obtain approval for that exact SHA, deploy it, and verify the
    cleanup, runtime configuration, public artifact, backup, and rollback state.
 2. Cameron provisions `cameron@ashbi.ca` locally; complete and clean up
    authenticated production QA.

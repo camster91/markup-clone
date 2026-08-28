@@ -30,9 +30,10 @@ its stated evidence exists; local tests do not silently close it.
 - **Current action:** pull request #43 passed its exact-head CI and security
   gates and merged as `a03b87d8d05db0a69b050c75d05baf383d611fea`.
   A fresh private/off-host backup and the release preflight passed; exact owner
-  approval is now required immediately before deploying it. After deployment,
-  Cameron must provision the still-absent `cameron@ashbi.ca` account from a
-  user-owned trusted terminal and enter the password locally.
+  approval is now required immediately before deploying the exact then-current
+  `main` that contains it. After deployment, Cameron must provision the
+  still-absent `cameron@ashbi.ca` account from a user-owned trusted terminal and
+  enter the password locally.
 - **Next:** sign in and run owner/client desktop/mobile QA, verify
   integrations/operations, and remove every disposable record and file.
 - **Execution record:**
