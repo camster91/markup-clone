@@ -21,6 +21,11 @@ its stated evidence exists; local tests do not silently close it.
   `e4f8e4eb45017930969e9ba9f46e6100472f9a08`; that exact image is healthy in
   production; all 29 migrations, the off-host-verified backup, trusted public
   release verification, retained rollback image, and cron/CI state passed.
+- **Runtime readiness:** Mailgun is configured. The previously missing delivery
+  worker and integration-encryption secrets are now staged in the private VPS
+  `.env`, validated against the exact image without printing values, and await
+  the next deployment. `.env.example` is corrected to keep Docker `--env-file`
+  values unquoted so quote characters cannot invalidate runtime configuration.
 - **Current action:** `cameron@ashbi.ca` is selected, but no account exists yet.
   Cameron must run the stdin-only provisioning command in a user-owned trusted
   terminal and enter the password locally; the attempted embedded terminal and

@@ -93,6 +93,11 @@ The last 12 commits since `d569b1a`, newest first (audit sweep D5/D7/D8 + F3/F4/
 
 All env vars consumed by the app and the deploy scripts are documented in **`.env.example`**. Copy it to `.env` locally or `/root/markup-clone/.env` on the VPS and fill in the values.
 
+Keep values in that file unquoted. The VPS uses Docker `--env-file`, which
+passes quote characters literally; a value written as `KEY="value"` reaches the
+application with the quotes included and can invalidate paths, hosts, URLs, or
+fixed-length keys.
+
 Required at runtime:
 
 - `DATABASE_URL` — PostgreSQL connection string (consumed by Prisma)

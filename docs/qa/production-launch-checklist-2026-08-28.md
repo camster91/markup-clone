@@ -56,6 +56,10 @@ journey.
 - The private backup `markup-20260828T163040Z.dump` passed its remote catalog and
   checksum checks and its off-host copy passed SHA-256 verification at
   `ab335038316a1f5b13ba560712d7593c194da9c94b21d7b22d960d363316bfec`.
+- Mailgun is configured. Fresh delivery-worker and integration-encryption keys
+  are staged in the mode-0600 VPS `.env` and passed an exact-image shape/decode
+  probe without printing values. They are not considered active until the next
+  deployed container loads them and the protected worker endpoint is verified.
 
 Repeat the same fail-closed verification from the exact release checkout before
 and after deployment:
