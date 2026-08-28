@@ -21,8 +21,10 @@ its stated evidence exists; local tests do not silently close it.
   `e4f8e4eb45017930969e9ba9f46e6100472f9a08`; that exact image is healthy in
   production; all 29 migrations, the off-host-verified backup, trusted public
   release verification, retained rollback image, and cron/CI state passed.
-- **Current action:** the stdin-only provisioning command is open in the trusted
-  VPS terminal for `cameron@ashbi.ca`; Cameron must enter the password locally.
+- **Current action:** `cameron@ashbi.ca` is selected, but no account exists yet.
+  Cameron must run the stdin-only provisioning command in a user-owned trusted
+  terminal and enter the password locally; the attempted embedded terminal and
+  Hostinger popup could not hand keyboard control back safely.
 - **Next:** sign in and run owner/client desktop/mobile QA, verify
   integrations/operations, and remove every disposable record and file.
 - **Execution record:**
@@ -34,15 +36,23 @@ its stated evidence exists; local tests do not silently close it.
 
 ### Operational hygiene — reconcile the superseded PDF table
 
-- **Status:** ready after L1 authenticated QA
-- **Evidence:** production has 29 finished migration history rows but current
-  `main` has 28 directories. The extra historical migration created an empty
-  `ReviewDocument` table on `codex/public-onboarding`; current code uses the
-  empty `ReviewAsset` table instead.
-- **Work:** add a reviewed fail-closed migration that refuses to drop a nonempty
-  `ReviewDocument` table, removes it when empty, and preserves Prisma history.
-- **Priority:** complete before the next feature release; it does not block the
-  current authenticated journey or first operator provisioning.
+- **Status:** local implementation complete; review and production deployment
+  pending
+- **Source:** `docs/plans/superseded-review-document-cleanup-2026-08-28.md`
+- **Context:** production has 29 finished migration history rows while the
+  deployed release contains 28 directories. The extra historical migration
+  created an empty `ReviewDocument` table on `codex/public-onboarding`; current
+  code uses the empty `ReviewAsset` table instead. This branch adds the 29th
+  source migration as the guarded cleanup.
+- **Implementation:** `20260828180000_drop_superseded_review_document` no-ops
+  when the old table is absent, refuses to drop it when any row exists, omits
+  `CASCADE`, and removes it only when empty.
+- **Verification:** the unit contract passes; a disposable PostgreSQL 16 rehearsal
+  passed absent-table, empty-table, and nonempty-refusal paths while preserving
+  the unexpected row.
+- **Next:** pass full repository gates, merge, then deploy only through the
+  normal backup/rollback/preflight sequence after rechecking the production
+  table is still empty.
 
 ### L5 — Record pilot-driven business improvements
 
