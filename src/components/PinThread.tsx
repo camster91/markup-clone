@@ -5,6 +5,7 @@ import type { FeedbackComment, IssueOptions, Pin } from '@/lib/types';
 import { useLiveEvents } from '@/lib/hooks/useLiveEvents';
 import { MENTION_RE } from '@/lib/mentions';
 import { formatDateTime } from '@/lib/date-format';
+import { dashboardHeaders } from '@/lib/client-origin';
 import {
   buildIssueHandoffV1,
   renderIssueHandoffMarkdown,
@@ -279,6 +280,7 @@ export default function PinThread({
       if (projectId) fd.append('projectId', projectId);
       const res = await fetch('/api/attachments', {
         method: 'POST',
+        headers: dashboardHeaders(),
         body: fd,
       });
       if (!res.ok) {
@@ -345,21 +347,31 @@ export default function PinThread({
     if (!reply.trim() && pendingAttachments.length === 0) return;
     if (submitting || uploadsInFlight > 0) return;
     setSubmitting(true);
-    const res = await fetch(`/api/pins/${pin.id}/comments`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text: reply,
-        author,
-        authorRole: 'reviewer',
-        // The comment-create route's `connect: [{ id }]` binds
-        // these orphan attachments to the new comment. After
-        // the response, we revoke the preview ObjectURLs and
-        // clear the local state so the next reply starts clean.
-        attachmentIds: pendingAttachments.map((a) => a.id),
-      }),
-    });
-    if (res.ok) {
+    setCommentMutationError(null);
+    try {
+      const res = await fetch(`/api/pins/${pin.id}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...dashboardHeaders() },
+        body: JSON.stringify({
+          text: reply,
+          author,
+          authorRole: 'reviewer',
+          // The comment-create route's `connect: [{ id }]` binds
+          // these orphan attachments to the new comment. After
+          // the response, we revoke the preview ObjectURLs and
+          // clear the local state so the next reply starts clean.
+          attachmentIds: pendingAttachments.map((a) => a.id),
+        }),
+      });
+      if (!res.ok) {
+        let message = `Could not send this reply (${res.status}).`;
+        try {
+          const body = await res.json();
+          if (typeof body?.error === 'string' && body.error.trim()) message = body.error;
+        } catch { /* keep the status-based fallback */ }
+        setCommentMutationError(message);
+        return;
+      }
       const data = await res.json();
       onCommentAdded(pin.id, data.data);
       setReply('');
@@ -372,8 +384,11 @@ export default function PinThread({
       }
       pendingPreviewsRef.current.clear();
       setPendingAttachments([]);
+    } catch (error) {
+      setCommentMutationError(error instanceof Error ? error.message : 'Could not send this reply.');
+    } finally {
+      setSubmitting(false);
     }
-    setSubmitting(false);
   };
 
   const toggleStatus = () => {

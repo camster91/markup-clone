@@ -19,11 +19,11 @@ its stated evidence exists; local tests do not silently close it.
   `release-candidate-operational-validation-2026-08-08.md`
 - **Release evidence:** pull request #41 merged as
   `e4f8e4eb45017930969e9ba9f46e6100472f9a08`; that exact image is healthy in
-  production. The approved follow-up `main` release
-  `da6bae53949edd62f4996a161189e3bd38bbf8b5` was deployed on 2026-08-28;
+  production. The approved workspace-CSRF follow-up `main` release
+  `8030d6bc378d4f7523400d2ef7a66cbe4f82ad0a` was deployed on 2026-08-28;
   all 30 finished migrations, the off-host-verified backup, trusted public
-  release verification, retained rollback image, worker/cron, and clean-log
-  checks passed.
+  release verification, retained `da6bae5...` rollback image, worker/cron, and
+  clean-log checks passed.
 - **Runtime readiness:** Mailgun is configured. The previously missing delivery
   worker and integration-encryption secrets are active in the exact deployed
   container and passed shape checks plus a protected zero-work worker request
@@ -35,14 +35,20 @@ its stated evidence exists; local tests do not silently close it.
   appeared in terminal output during the first automated handoff was treated as
   compromised, immediately rotated, and replaced in macOS Keychain; it is no
   longer valid.
-- **Current blocker:** the first disposable workspace write returned HTTP 403
-  `Invalid CSRF token` twice, including after a fresh authenticated page load.
-  `NewWorkspaceForm` omitted the existing `dashboardHeaders()` helper used by
-  the equivalent team and project forms. The focused fix and regression test
-  pass locally on `codex/workspace-csrf-qa-blocker`.
-- **Next:** review and merge the CSRF fix, obtain exact owner approval for the
-  new production SHA, deploy it through the normal release gates, then resume
-  owner/client desktop/mobile QA and verified disposable-data cleanup.
+- **Authenticated progress:** the formerly blocked workspace write now succeeds
+  in production. The operator created a timestamped workspace, client account,
+  site, review round, uploaded image, feedback pin, and internal metadata on the
+  exact deployed release.
+- **Current blocker:** the first dashboard reply did not persist. `PinThread`
+  omitted `dashboardHeaders()` from both comment creation and pasted-attachment
+  upload, and comment creation swallowed the resulting 403. The focused branch
+  `fix/pin-thread-csrf` adds both headers, visible failure handling, and two
+  regression tests; the full 139-file/954-test suite, ESLint, Prisma validation,
+  widget build, package builds, Next.js webpack build, and TypeScript pass.
+- **Next:** review and merge the PinThread CSRF fix, obtain exact owner approval
+  for the resulting production SHA, deploy it through the normal release gates,
+  then repeat the failed reply before resuming broader owner/client QA and
+  verified disposable-data cleanup.
 - **Execution record:**
   `docs/qa/production-launch-checklist-2026-08-28.md`.
 
@@ -202,7 +208,7 @@ landed on `main`.
 
 - Pull request #41 merged as `e4f8e4eb45017930969e9ba9f46e6100472f9a08`
   and that exact source-SHA image was deployed successfully on 2026-08-28.
-- Production has 29 finished migrations, trusted public-release verification,
+- That release had 29 finished migrations, trusted public-release verification,
   a checksum-verified off-host backup, a retained immutable rollback image, and
   active cron and local-CI services for this release.
 

@@ -32,6 +32,8 @@ describe('PinThread comment lifecycle controls', () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    vi.unstubAllGlobals();
+    document.cookie = 'markup.csrf=; Max-Age=0; path=/';
   });
 
   async function render(overrides: Partial<React.ComponentProps<typeof PinThread>> = {}) {
@@ -99,5 +101,73 @@ describe('PinThread comment lifecycle controls', () => {
     await render({ readOnly: true });
     expect(container.textContent).not.toContain('Edit comment');
     expect(container.textContent).not.toContain('Delete comment');
+  });
+
+  it('includes the dashboard CSRF header when submitting a reply', async () => {
+    document.cookie = 'markup.csrf=reply-csrf-token; path=/';
+    const replyComment = {
+      id: 'comment-2',
+      text: 'QA reply',
+      author: 'Reviewer',
+      authorRole: 'reviewer',
+      createdAt: '2026-08-29T03:30:00.000Z',
+      attachments: [],
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ data: replyComment }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const onCommentAdded = vi.fn();
+    await render({ onCommentAdded });
+
+    const reply = container.querySelector('textarea[aria-label="Reply to this feedback"]') as HTMLTextAreaElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      setter?.call(reply, 'QA reply');
+      reply.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const submit = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Reply');
+    await act(async () => submit?.click());
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/pins/pin-1/comments', expect.objectContaining({
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': 'reply-csrf-token',
+      },
+    }));
+    expect(onCommentAdded).toHaveBeenCalledWith('pin-1', replyComment);
+  });
+
+  it('includes the dashboard CSRF header when uploading a pasted attachment', async () => {
+    document.cookie = 'markup.csrf=attachment-csrf-token; path=/';
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        data: { id: 'attachment-1', url: '/api/attachments/attachment-1', kind: 'image', size: 3 },
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    class QaUrl extends URL {
+      static createObjectURL = vi.fn().mockReturnValue('blob:qa-preview');
+      static revokeObjectURL = vi.fn();
+    }
+    vi.stubGlobal('URL', QaUrl);
+    await render({ projectId: 'project-1' });
+
+    const reply = container.querySelector('textarea[aria-label="Reply to this feedback"]') as HTMLTextAreaElement;
+    const image = new File(['png'], 'qa.png', { type: 'image/png' });
+    const paste = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, 'clipboardData', {
+      value: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => image }] },
+    });
+    await act(async () => reply.dispatchEvent(paste));
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/attachments', expect.objectContaining({
+      method: 'POST',
+      headers: { 'X-CSRF-Token': 'attachment-csrf-token' },
+      body: expect.any(FormData),
+    }));
   });
 });
