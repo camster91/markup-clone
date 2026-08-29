@@ -1,7 +1,7 @@
 # Production launch, pilot, and SaaS-exit checklist — 2026-08-28
 
-**Status:** approved follow-up exact-SHA release and operator sign-in healthy;
-authenticated writes blocked on a workspace-create CSRF fix
+**Status:** workspace-create fix deployed and verified; authenticated QA paused
+at a newly found dashboard reply/attachment CSRF defect
 **Governing roadmap:**
 `docs/plans/launch-and-saas-replacement-roadmap-2026-08-28.md`
 
@@ -131,12 +131,40 @@ widget byte-for-byte by SHA-256 with the checked-out `public/widget.js`.
   2026-08-28T21:09:17.627Z, including trusted HTTPS/security headers, public
   health, explicit anonymous API denial, and byte-for-byte widget provenance.
 
+## 2026-08-28 approved workspace-CSRF deployment record
+
+- Pull request #48 passed Ashbi Local CI and GitGuardian, then merged as exact
+  `main` SHA `8030d6bc378d4f7523400d2ef7a66cbe4f82ad0a`. Cameron explicitly approved
+  deployment of that frozen SHA; the approval did not authorize external email,
+  client communication, pricing changes, purchases, or SaaS cancellation.
+- Fresh mode-0600 backup `markup-20260828T220914Z.dump` passed remote checksum
+  and `pg_restore --list` validation. Its off-host copy independently passed
+  SHA-256 verification at
+  `6382c540ced005c2ddb0e8694aefa189ff7a9c067c90180d617d71aca1390143`.
+- The first deploy invocation stopped before build/restart because the release
+  checkout contained one untracked rollback-metadata file accidentally created
+  by the preflight command. That exact QA-created file was removed; the old
+  container remained healthy throughout, and the clean retry completed with
+  `DEPLOY OK` at 2026-08-29T03:28:04Z.
+- The healthy container now uses immutable image
+  `markup-clone:8030d6bc378d4f7523400d2ef7a66cbe4f82ad0a`, image ID
+  `sha256:965e1460befea599bf9fcd2a15a6854146576a1a37eabe15df4bb8466f38562d`.
+  The retained rollback is
+  `markup-clone:da6bae53949edd62f4996a161189e3bd38bbf8b5`.
+- Production remains at 30 finished, non-rolled-back migrations with
+  `ReviewDocument` absent. The protected worker returned zero claimed,
+  succeeded, retried, or dead-lettered deliveries; worker and prune cron jobs
+  are installed; recent application logs contain no error/fatal/panic matches.
+- `ashbi.public-release.v1` passed after deployment at
+  2026-08-29T03:28:44.573Z, including trusted HTTPS/security headers, public
+  health, explicit anonymous API denial, and byte-for-byte widget provenance.
+
 ## Release identity and approval
 
 - [x] The launch pull request is no longer draft, all required checks pass, and
   the approved code is merged without bypassing an unexplained CI failure.
 - [x] Record the exact 40-character merged commit SHA:
-  `da6bae53949edd62f4996a161189e3bd38bbf8b5`.
+  `8030d6bc378d4f7523400d2ef7a66cbe4f82ad0a`.
 - [x] The VPS checkout authenticates to Git, is on the intended release branch,
   fast-forwards to that SHA, and is clean in both content and file mode.
 - [x] Release operator: Codex acting under Cameron Ashley's approval; release
@@ -209,6 +237,33 @@ Keychain.
 - Disposition: launch-blocking defect. The focused fix and regression test pass
   locally; resume this checklist only after reviewed merge, exact release
   approval, deployment, and successful repetition of this first write.
+
+### Authenticated QA resume — 2026-08-29T03:29Z
+
+- Exact deployed release:
+  `8030d6bc378d4f7523400d2ef7a66cbe4f82ad0a`.
+- Repeated the formerly failed workspace write first. Disposable workspace
+  `QA-20260829T032956609Z Ashbi` was created successfully as database ID
+  `40de0331-753b-46ac-85c8-9a820bb118c8`, proving the release fix in production.
+- The operator then created disposable client account
+  `35ee3ac4-ec23-47e0-8913-fba4068825fc`, site
+  `deb1292b-0517-4d59-988c-e1d7149e26f8`, the first review round, an 800x600
+  image review, and feedback pin `b108f5a3-da2b-4b70-a303-a67f4a019983`.
+  Image upload, pin creation, high-priority metadata, and tags `qa` and
+  `contrast` persisted.
+- The first dashboard reply did not persist after two bounded submit attempts;
+  the database still contained only the original pin comment. Source review
+  showed that `PinThread` omitted `dashboardHeaders()` from comment creation and
+  pasted-attachment upload, while comment creation also ignored non-OK
+  responses. Broader QA stopped at this first failure.
+- Focused branch `fix/pin-thread-csrf` adds CSRF headers to both writes, surfaces
+  reply failures, and includes regression coverage for both request shapes.
+  The full 139-file/954-test suite, ESLint, Prisma validation, widget build,
+  shared-package builds, Next.js webpack production build, and TypeScript pass.
+- Resume only after reviewed merge, exact release approval, deployment, and a
+  successful repetition of the reply. The disposable inventory above remains
+  isolated for that retest and must be removed through the product before L1 is
+  closed.
 
 ## Disposable authenticated QA
 
