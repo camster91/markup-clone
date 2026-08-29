@@ -5,12 +5,20 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ScreenshotWithPins } from '@/lib/types';
 
+const liveEventState = vi.hoisted(() => ({
+  onEvent: undefined as undefined | ((event: unknown) => void),
+}));
+
 vi.mock('@/lib/hooks/usePresence', () => ({
   usePresence: () => ({ myUserId: 'reviewer-1', others: [] }),
   colorForUserId: () => 'bg-blue-500',
   shortLabelForUserId: () => 'reviewer',
 }));
-vi.mock('@/lib/hooks/useLiveEvents', () => ({ useLiveEvents: () => undefined }));
+vi.mock('@/lib/hooks/useLiveEvents', () => ({
+  useLiveEvents: (options: { onEvent?: (event: unknown) => void }) => {
+    liveEventState.onEvent = options.onEvent;
+  },
+}));
 vi.mock('@/lib/hooks/useRecaptureStatus', () => ({
   useRecaptureStatus: () => ({
     status: 'idle',
@@ -56,6 +64,7 @@ describe('ScreenshotView keyboard journey', () => {
   let root: Root;
 
   beforeEach(() => {
+    liveEventState.onEvent = undefined;
     window.history.replaceState({}, '', '/projects/project-1');
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -177,6 +186,42 @@ describe('ScreenshotView keyboard journey', () => {
       method: 'PATCH', body: JSON.stringify({ text: 'Updated heading request' }),
     }));
     expect(container.textContent).toContain('Updated heading request');
+  });
+
+  it('deduplicates a comment delivered by both SSE and the POST response', async () => {
+    const newComment = {
+      id: 'comment-2',
+      author: 'Reviewer',
+      authorRole: 'reviewer',
+      text: 'One persisted reply',
+      attachments: [],
+      createdAt: '2026-08-29T07:41:00.000Z',
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === '/api/pins/pin-1/comments') {
+        liveEventState.onEvent?.({
+          type: 'new-comment',
+          payload: { pinId: 'pin-1', comment: newComment },
+        });
+        return new Response(JSON.stringify({ success: true, data: newComment }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ versions: [] }), { status: 200 });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    await renderView();
+    const pin = container.querySelector<HTMLButtonElement>('button[aria-label^="Open feedback pin 1"]');
+    await act(async () => pin?.click());
+    const reply = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Reply to this feedback"]');
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      setter?.call(reply, newComment.text);
+      reply?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const submit = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Reply');
+    await act(async () => submit?.click());
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/pins/pin-1/comments', expect.objectContaining({ method: 'POST' }));
+    expect(container.textContent?.split(newComment.text)).toHaveLength(2);
   });
 
   it('opens an exact-pin URL and removes only the pin parameter when closed', async () => {

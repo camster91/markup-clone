@@ -51,8 +51,8 @@ next implementation slice.
 ### L1 — Open and prove authenticated production access
 
 **Status:** in progress; exact-SHA release, operator sign-in, workspace/client/
-site/image/pin creation are proven, and reply/attachment QA is blocked on a
-PinThread CSRF fix
+site/image/pin/reply persistence are proven, and live reply QA is blocked on an
+SSE/POST state-deduplication fix
 
 - Provision the first production operator through a bounded, documented,
   idempotent mechanism. Never commit or echo the password.
@@ -71,9 +71,10 @@ with no unexplained console/request failures and verified cleanup.
 **Execution checklist:**
 `docs/qa/production-launch-checklist-2026-08-28.md` is the single ordered
 operator record for L1 through L4. Its public baseline is current as of
-2026-08-28. Provisioning and sign-in pass. The formerly failed workspace write
-now succeeds on exact deployed SHA `8030d6bc378d4f7523400d2ef7a66cbe4f82ad0a`;
-later authenticated items remain unchecked after the first reply failed closed.
+2026-08-28. Provisioning and sign-in pass. The formerly failed reply now
+persists on exact deployed SHA `26d906b512b43d25bea79846139aca9972d0abfc`;
+later authenticated items remain unchecked after its first live render showed a
+transient duplicate.
 
 **Provisioning mechanism:** `scripts/provision-operator.cjs` is stdin-only,
 idempotent for matching credentials, refuses implicit privilege escalation or
@@ -82,10 +83,10 @@ The production operator now exists and HTTPS sign-in passed. The active
 credential is stored in Cameron's macOS Keychain rather than the repository,
 deployment environment, command arguments, or evidence records.
 
-**Current production finding:** the workspace POST fix is deployed and verified.
-The first dashboard reply did not persist because `PinThread` omitted the shared
-dashboard CSRF header helper from comment creation and pasted-attachment upload,
-and the reply UI ignored non-OK responses. A focused fix and regression tests
+**Current production finding:** workspace and reply CSRF fixes are deployed and
+verified. One new reply produced one database row, but the live thread rendered
+it twice until reload because the SSE event and POST response both appended the
+same comment to parent state. A focused idempotent append and regression test
 pass locally; production QA resumes only after review and an approved exact-SHA
 release.
 

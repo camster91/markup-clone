@@ -45,7 +45,7 @@ real customer behavior supports them.
   managed sharing, role-safe workspaces/teams/projects, agency branding,
   notifications, developer context, GitHub and webhook delivery, an audit log,
   and backup/rollback tooling.
-- The production release `8030d6bc378d4f7523400d2ef7a66cbe4f82ad0a` is
+- The production release `26d906b512b43d25bea79846139aca9972d0abfc` is
   healthy and publicly verified. Its schema cleanup remains complete, its
   corrected runtime configuration is active, and production has 30 finished,
   non-rolled-back migrations.
@@ -53,10 +53,10 @@ real customer behavior supports them.
   CI, secret-scanning, and disposable PostgreSQL migration gates recorded in
   `TASK.md` and the production checklist.
 - The production operator exists and HTTPS sign-in passes. Workspace, client,
-  site, review-round, image, pin, and issue-metadata writes pass. The first reply
-  failed closed because `PinThread` omitted the shared CSRF header from reply and
-  pasted-attachment writes; later authenticated owner/client behavior and a real
-  client journey remain unproven.
+  site, review-round, image, pin, issue-metadata, and reply persistence pass. The
+  first live reply rendered twice until reload because SSE and POST response
+  state were not deduplicated; later authenticated owner/client behavior and a
+  real client journey remain unproven.
 - No real pilot, retention window, subscription export, or cancellation has
   occurred.
 
@@ -160,7 +160,7 @@ and customer-visible pricing remain separately approval-gated.
 |---|---|---|---|
 | Repository and GitHub | Local checkout, authenticated remote, checks and PRs working | Normal reviewed source changes are in scope | available |
 | Production SSH/hosting | Dedicated SSH key and healthy exact-SHA VPS/container verified | Exact owner approval immediately before every production release | available; next fix release unapproved |
-| Production operator | Operator row, protected Keychain credential, and HTTPS session verified | Keep credentials out of repository, logs, argv, and evidence | available; reply flow blocked on CSRF fix |
+| Production operator | Operator row, protected Keychain credential, and HTTPS session verified | Keep credentials out of repository, logs, argv, and evidence | available; live reply blocked on dedupe fix |
 | Production email | Mailgun key valid; `ashbi.ca` active in the deployed container | Sending any real test or client email requires approval | configured; unsent |
 | Integrations | Worker/encryption secrets active; protected zero-work request and GitHub/webhook code verified | Per-project credentials and external deliveries require owner/client approval | runtime ready; external proof pending |
 | Client pilot | Plan and success gates exist | Cameron selects the project/reviewer and approves communication | blocked on owner selection |
@@ -172,7 +172,7 @@ and customer-visible pricing remain separately approval-gated.
 
 | Risk | Severity | Evidence and consequence | Mitigation / release rule |
 |---|---:|---|---|
-| Authenticated production reply blocked | High | Workspace through issue metadata pass, but reply creation omits CSRF and creates no row | Merge the focused PinThread fix, deploy only after exact approval, then repeat the failed reply before continuing QA |
+| Live production reply duplicates transiently | High | One reply creates one database row but SSE plus POST response render it twice until reload | Merge the focused idempotent append, deploy only after exact approval, then repeat the live reply before continuing QA |
 | Credential exposure during setup | High | The first generated value appeared in terminal output | Treat it as compromised; completed immediate rotation and Keychain replacement before authenticated QA |
 | Email or integration misconfiguration | High | Corrected Mailgun domain and integration secrets are active; no external delivery has been approved | Send only an approved bounded test; verify delivery logs without exposing secrets |
 | No real customer validation | High | Feature presence does not prove ease, trust, retention, or willingness to switch | Complete one pilot, then a second project or 30-day window before replacement claims |
@@ -216,8 +216,8 @@ rules, not market claims.
 
 ## Next evidence sequence
 
-1. Review and merge the PinThread reply/attachment CSRF fix, obtain approval for
-   its exact release SHA, deploy it, and repeat the failed reply first.
+1. Review and merge the live-comment dedupe fix, obtain approval for its exact
+   release SHA, deploy it, and repeat the live reply first.
 2. Continue and clean up the full owner/client production QA journey tied to the
    deployed fix SHA.
 3. Select the first pilot and record incumbent baselines, actual subscription

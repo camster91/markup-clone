@@ -35,8 +35,8 @@ which are retained as implementation evidence.
 - `release-candidate-operational-validation-2026-08-08.md` — Production was
   deployed and rollback-verified. Operator provisioning and HTTPS sign-in now
   pass; workspace/client/site/image/pin creation now pass in production.
-  Authenticated owner/client production QA is paused on the focused PinThread
-  reply/attachment CSRF fix.
+  Reply persistence now passes; authenticated owner/client production QA is
+  paused on the focused live-comment deduplication fix.
 
 ## Completed implementation evidence
 
