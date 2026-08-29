@@ -1,6 +1,6 @@
 # TASK.md — markup-clone execution board
 
-**Last updated:** 2026-08-28
+**Last updated:** 2026-08-29
 **Governing roadmap:**
 `docs/plans/launch-and-saas-replacement-roadmap-2026-08-28.md`
 
@@ -19,10 +19,10 @@ its stated evidence exists; local tests do not silently close it.
   `release-candidate-operational-validation-2026-08-08.md`
 - **Release evidence:** pull request #41 merged as
   `e4f8e4eb45017930969e9ba9f46e6100472f9a08`; that exact image is healthy in
-  production. The approved workspace-CSRF follow-up `main` release
-  `8030d6bc378d4f7523400d2ef7a66cbe4f82ad0a` was deployed on 2026-08-28;
+  production. The approved PinThread-CSRF follow-up `main` release
+  `26d906b512b43d25bea79846139aca9972d0abfc` was deployed on 2026-08-29;
   all 30 finished migrations, the off-host-verified backup, trusted public
-  release verification, retained `da6bae5...` rollback image, worker/cron, and
+  release verification, retained `8030d6b...` rollback image, worker/cron, and
   clean-log checks passed.
 - **Runtime readiness:** Mailgun is configured. The previously missing delivery
   worker and integration-encryption secrets are active in the exact deployed
@@ -39,16 +39,17 @@ its stated evidence exists; local tests do not silently close it.
   in production. The operator created a timestamped workspace, client account,
   site, review round, uploaded image, feedback pin, and internal metadata on the
   exact deployed release.
-- **Current blocker:** the first dashboard reply did not persist. `PinThread`
-  omitted `dashboardHeaders()` from both comment creation and pasted-attachment
-  upload, and comment creation swallowed the resulting 403. The focused branch
-  `fix/pin-thread-csrf` adds both headers, visible failure handling, and two
-  regression tests; the full 139-file/954-test suite, ESLint, Prisma validation,
-  widget build, package builds, Next.js webpack build, and TypeScript pass.
-- **Next:** review and merge the PinThread CSRF fix, obtain exact owner approval
-  for the resulting production SHA, deploy it through the normal release gates,
-  then repeat the failed reply before resuming broader owner/client QA and
-  verified disposable-data cleanup.
+- **Authenticated progress:** the formerly blocked reply now persists in
+  production. The database advanced from one to two distinct comments and a
+  reload renders the single new reply once.
+- **Current blocker:** before reload, the live thread rendered that one persisted
+  reply twice because the SSE event and POST response both appended it to
+  `ScreenshotView` state. The focused branch `fix/live-comment-dedup` makes the
+  parent append idempotent by comment ID and includes a regression test that
+  reproduces the SSE/POST race.
+- **Next:** review, merge, and validate the live-comment dedupe fix; obtain exact
+  owner approval for its production SHA; deploy it; then repeat the live reply
+  before resuming broader owner/client QA and verified disposable-data cleanup.
 - **Execution record:**
   `docs/qa/production-launch-checklist-2026-08-28.md`.
 

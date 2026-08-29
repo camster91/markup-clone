@@ -284,7 +284,14 @@ export default function ScreenshotView({
     // future change that wires the form back in shouldn't be able to
     // smuggle state mutations through.
     if (readOnly) return;
-    setPins(prev => prev.map(p => p.id === pinId ? { ...p, comments: [...p.comments, comment] } : p));
+    setPins((previous) => previous.map((pin) => pin.id === pinId
+      ? {
+          ...pin,
+          comments: pin.comments.some((existing) => existing.id === comment.id)
+            ? pin.comments
+            : [...pin.comments, comment],
+        }
+      : pin));
   };
 
   const handleCommentUpdated = async (pinId: string, commentId: string, text: string): Promise<FeedbackComment | null> => {

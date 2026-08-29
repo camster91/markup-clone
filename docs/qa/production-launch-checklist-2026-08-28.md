@@ -1,7 +1,7 @@
 # Production launch, pilot, and SaaS-exit checklist — 2026-08-28
 
-**Status:** workspace-create fix deployed and verified; authenticated QA paused
-at a newly found dashboard reply/attachment CSRF defect
+**Status:** workspace and reply CSRF fixes deployed and verified; authenticated
+QA paused at a newly found live-comment deduplication defect
 **Governing roadmap:**
 `docs/plans/launch-and-saas-replacement-roadmap-2026-08-28.md`
 
@@ -159,12 +159,41 @@ widget byte-for-byte by SHA-256 with the checked-out `public/widget.js`.
   2026-08-29T03:28:44.573Z, including trusted HTTPS/security headers, public
   health, explicit anonymous API denial, and byte-for-byte widget provenance.
 
+## 2026-08-29 approved PinThread-CSRF deployment record
+
+- Pull request #49 passed Ashbi Local CI and GitGuardian, then merged without
+  bypass as exact `main` SHA `26d906b512b43d25bea79846139aca9972d0abfc`.
+  Cameron explicitly approved deployment of that frozen SHA; the approval did
+  not authorize external email, client communication, pricing changes,
+  purchases, or SaaS cancellation.
+- Fresh mode-0600 backup `markup-20260829T073844Z.dump` passed remote checksum
+  and `pg_restore --list` validation. Its off-host copy independently passed
+  SHA-256 verification at
+  `46c15d8c2418e212d0b11e6a69eaad7d1fa2bb25b5113376bce7f57f6174e912`.
+- Final preflight matched clean local/remote `main`, the four completed PR
+  checks, healthy `8030d6b...` production image, trusted TLS, 30 clean
+  migrations, zero delivery queue, valid runtime-secret shapes, and exactly the
+  expected isolated QA workspace/client/site inventory.
+- `scripts/deploy.sh` completed with `DEPLOY OK` at
+  2026-08-29T07:41:11Z. The healthy container uses immutable image
+  `markup-clone:26d906b512b43d25bea79846139aca9972d0abfc`, image ID
+  `sha256:ebd5d3d243ef63389a7a7468b430b634234059fc0e6983f52c97d5a222e3e98f`.
+  The retained rollback is
+  `markup-clone:8030d6bc378d4f7523400d2ef7a66cbe4f82ad0a`.
+- Production remains at 30 finished, non-rolled-back migrations with
+  `ReviewDocument` absent. The protected worker returned zero claimed,
+  succeeded, retried, or dead-lettered deliveries; worker and prune cron jobs
+  are installed; recent application logs contain no error/fatal/panic matches.
+- `ashbi.public-release.v1` passed after deployment at
+  2026-08-29T07:41:32.911Z, including trusted HTTPS/security headers, public
+  health, explicit anonymous API denial, and byte-for-byte widget provenance.
+
 ## Release identity and approval
 
 - [x] The launch pull request is no longer draft, all required checks pass, and
   the approved code is merged without bypassing an unexplained CI failure.
 - [x] Record the exact 40-character merged commit SHA:
-  `8030d6bc378d4f7523400d2ef7a66cbe4f82ad0a`.
+  `26d906b512b43d25bea79846139aca9972d0abfc`.
 - [x] The VPS checkout authenticates to Git, is on the intended release branch,
   fast-forwards to that SHA, and is clean in both content and file mode.
 - [x] Release operator: Codex acting under Cameron Ashley's approval; release
@@ -262,6 +291,32 @@ Keychain.
   shared-package builds, Next.js webpack production build, and TypeScript pass.
 - Resume only after reviewed merge, exact release approval, deployment, and a
   successful repetition of the reply. The disposable inventory above remains
+  isolated for that retest and must be removed through the product before L1 is
+  closed.
+
+### Authenticated QA resume — 2026-08-29T07:41Z
+
+- Exact deployed release:
+  `26d906b512b43d25bea79846139aca9972d0abfc`.
+- Independent post-deploy verification confirmed exact image/checkout identity,
+  a healthy container, trusted TLS, 30 clean migrations, retained rollback,
+  installed cron jobs, zero delivery queue, zero worker claims, no recent
+  error/fatal/panic log matches, passing public provenance, and unchanged
+  isolated QA inventory.
+- Before the retest, feedback pin
+  `b108f5a3-da2b-4b70-a303-a67f4a019983` had exactly one comment. One bounded
+  dashboard reply then persisted successfully: the database advanced to two
+  distinct comment IDs and a reload rendered the new reply exactly once. This
+  proves the PinThread CSRF fix.
+- Before reload, the live thread rendered that one persisted reply twice. The
+  defect is transient client state, not duplicate database data: the SSE event
+  and POST response both call the parent append path, which did not deduplicate
+  by comment ID. Broader QA stopped at this first failure.
+- Focused branch `fix/live-comment-dedup` makes the parent append idempotent by
+  comment ID. Its regression test reproduces simultaneous SSE and POST delivery
+  and asserts one visible reply.
+- Resume only after reviewed merge, exact release approval, deployment, and a
+  successful live reply without duplication. The disposable inventory remains
   isolated for that retest and must be removed through the product before L1 is
   closed.
 
