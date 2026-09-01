@@ -1,7 +1,7 @@
 # Mobile dashboard accessibility — 2026-09-01
 
-**Status:** implemented and verified; merged code awaiting the consolidated
-release-safety candidate
+**Status:** deployed in the consolidated release; authenticated production
+repetition pending
 **Parent:** governing roadmap L1
 **Production finding:** exact release
 `e3f9c4d12986da641b01f758316c84e43013b3d8`
@@ -69,10 +69,12 @@ The accepted screenshot evidence is
 2. [x] Review through pull request #54 and require all repository checks.
 3. [x] Freeze the reviewed mobile-code merge
    `fa73b968fde3649c7f72c0ffaccd2397e383cff1`.
-4. Run fresh backup, rollback, edge, migration, delivery-queue, and clean-tree
+4. [x] Run fresh backup, rollback, edge, migration, delivery-queue, and clean-tree
    preflight; resolve any release stop before requesting exact-artifact approval.
-5. Deploy only the approved SHA, then repeat the failed 375px check first.
-6. Resume the remaining owner/client L1 journey only after the mobile contract
+5. [x] Deploy only the approved exact SHA
+   `81836384c0245fb3e445847a36bda2c377acf71b`.
+6. Repeat the failed authenticated 375px check first.
+7. Resume the remaining owner/client L1 journey only after the mobile contract
    passes in production.
 
 ## Verification record
@@ -99,13 +101,17 @@ The accepted screenshot evidence is
   running production runtime trees. Track the upstream tooling upgrade, but do
   not treat this non-runtime build/config dependency as an accepted production
   request-path risk.
-- Production remains unchanged on exact SHA
-  `e3f9c4d12986da641b01f758316c84e43013b3d8`. No deployment is implied by the
-  merge or by this verification record.
+- Consolidated exact release
+  `81836384c0245fb3e445847a36bda2c377acf71b` deployed successfully on
+  2026-09-01 as healthy image
+  `sha256:3914eb31be8145f4e00bafd45b612f603d193f838feed5f5716a77a5e924b465`.
+  The public 375x812 sign-in surface has zero horizontal overflow. The owner
+  surface still requires operator sign-in and repetition of every 16px/44px
+  assertion before this plan is production-verified.
 - Exact-candidate preflight later found that the host's global nightly image
   prune had removed the prior rollback image. The mobile implementation remains
-  verified, but deployment is now additionally gated by
-  `rollback-image-retention-2026-09-01.md` and a newly frozen consolidated SHA.
+  verified. `rollback-image-retention-2026-09-01.md` is now production-verified;
+  its retainer preserves the prior `e3f9c4d...` image.
 
 ## Boundaries
 

@@ -1,7 +1,7 @@
 # Production launch, pilot, and SaaS-exit checklist — 2026-08-28
 
-**Status:** live-comment deduplication verified in production; a mobile owner
-accessibility defect blocks broader owner/client QA and cleanup
+**Status:** consolidated mobile/rollback release deployed and publicly verified;
+authenticated 375px owner repetition blocks broader owner/client QA and cleanup
 **Governing roadmap:**
 `docs/plans/launch-and-saas-replacement-roadmap-2026-08-28.md`
 
@@ -284,6 +284,40 @@ widget byte-for-byte by SHA-256 with the checked-out `public/widget.js`.
   and request a new exact-artifact approval. No backup, checkout change,
   retainer creation, deployment, or production QA write has occurred yet.
 
+### 2026-09-01 approved consolidated deployment record
+
+- Cameron approved exact merged `main` SHA
+  `81836384c0245fb3e445847a36bda2c377acf71b`. The approval covered this
+  deployment and its recovery verification; it did not authorize external
+  email, integration delivery, client communication, pricing, purchases,
+  production QA writes, or SaaS cancellation.
+- Final preflight matched clean local/remote `main`, healthy exact prior image
+  `e3f9c4d...`, trusted Traefik/TLS, 30 finished and zero rolled-back
+  migrations, zero delivery/lock/due counts, active cron/CI, and zero recent
+  error/fatal/panic log matches.
+- Fresh mode-0600 backup `markup-20260901T124257Z.dump` passed remote checksum
+  and `pg_restore --list` validation. Its mode-0600 off-host copy independently
+  passed SHA-256 verification at
+  `6b4aca9cf6435abcde1670976af5f754216bc7dadbb8fbd83a13667fa3bbf384`.
+- Before replacement, `scripts/retain-rollback-image.sh` created the stopped,
+  labelled, network-disabled, restart-disabled retainer for exact prior image
+  `markup-clone:e3f9c4d12986da641b01f758316c84e43013b3d8`, image ID
+  `sha256:8718bfa28b62f949515e27dad48a093ac071e06a4c4dbdeb9a44602ca2790dda`,
+  with zero mounts or published ports.
+- `scripts/deploy.sh` completed with `DEPLOY OK` at
+  `2026-09-01T12:47:49Z`. The healthy container uses immutable image
+  `markup-clone:81836384c0245fb3e445847a36bda2c377acf71b`, image ID
+  `sha256:3914eb31be8145f4e00bafd45b612f603d193f838feed5f5716a77a5e924b465`.
+- Post-deploy verification matched the checkout, container tag/image ID,
+  mode-0600 rollback pointer, retained prior image, trusted public edge, local
+  health, 30 clean migrations, empty delivery queue, cron/CI state, backup
+  checksum, and zero new error/fatal/panic log matches.
+- `ashbi.public-release.v1` passed from the exact release checkout at
+  `2026-09-01T12:48:24.851Z`. A read-only 375x812 in-app-browser check found
+  zero horizontal overflow on the public sign-in surface. The browser is not
+  signed in, so the authenticated owner mobile contract remains open and no
+  production QA write was made.
+
 - [x] The launch pull request is no longer draft, all required checks pass, and
   the approved code is merged without bypassing an unexplained CI failure.
 - [x] Record the exact 40-character merged commit SHA:
@@ -453,6 +487,18 @@ Keychain.
   `docs/plans/mobile-dashboard-accessibility-2026-09-01.md`. Resume by deploying
   a reviewed, explicitly approved exact release and repeating this failed mobile
   check first.
+
+### Authenticated QA resume — 2026-09-01T12:48Z
+
+- Exact consolidated release
+  `81836384c0245fb3e445847a36bda2c377acf71b` is healthy and its deployment,
+  backup, rollback-retainer, edge, migration, queue, cron/CI, log, and public
+  provenance gates pass as recorded above.
+- The selected in-app browser is at the trusted production sign-in page. At
+  375x812, the public surface has zero horizontal overflow.
+- The operator session is absent. Cameron must sign in through this protected
+  browser before the failed authenticated 16px form-control and 44px target
+  contract can be repeated. No authenticated production mutation was attempted.
 
 ## Disposable authenticated QA
 

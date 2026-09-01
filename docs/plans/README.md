@@ -25,20 +25,14 @@ which are retained as implementation evidence.
 
 ## Active implementation
 
-- `rollback-image-retention-2026-09-01.md` — **Release-safety blocker found in
-  exact-candidate preflight.** The shared host's nightly image-prune job removed
-  the previously documented rollback image because no container referenced it.
-  The focused, fail-closed retainer helper and deterministic regression coverage
-  are implemented, verified, and merged through pull request #56. Production
-  remains unchanged until the current exact `main` artifact is explicitly
-  approved.
-- `mobile-dashboard-accessibility-2026-09-01.md` — **Verified merged release
-  code awaiting a consolidated release.** The exact deployed reply-dedup
+- `mobile-dashboard-accessibility-2026-09-01.md` — **Deployed; authenticated
+  production repetition pending.** The exact deployed reply-dedup
   release passed its live repetition, then the 375px owner surface exposed
   sub-16px form controls and sub-44px interactive targets. Pull request #54
   implements and verifies the shared mobile interaction contract. Pull request
-  #56 closes the rollback-retention blocker above; production remains unchanged
-  until the consolidated exact `main` artifact is explicitly approved.
+  #56 closes the rollback-retention blocker. Consolidated exact release
+  `81836384c0245fb3e445847a36bda2c377acf71b` is healthy in production; repeat
+  the failed authenticated 375px contract after operator sign-in.
 - `pdf-review-2026-08-10.md` — **Production QA pending.** The exact Linux
   renderer, bounded upload/storage pipeline, normal Page/Screenshot review
   model, click-to-pin UI, disposable migration, owner/mobile/managed-share
@@ -62,6 +56,10 @@ local completion.
 - `superseded-review-document-cleanup-2026-08-28.md` — deployed and verified in
   exact release `da6bae53949edd62f4996a161189e3bd38bbf8b5`; the fail-closed
   migration removed the confirmed-empty superseded table.
+- `rollback-image-retention-2026-09-01.md` — deployed and verified in exact
+  release `81836384c0245fb3e445847a36bda2c377acf71b`; the stopped isolated
+  retainer preserves prior exact image `e3f9c4d...` across nightly pruning and
+  the protected rollback pointer matches it.
 - `comment-lifecycle-2026-08-09.md`
 - `image-review-uploads-2026-08-09.md`
 - `review-rounds-workflow-2026-08-07.md`

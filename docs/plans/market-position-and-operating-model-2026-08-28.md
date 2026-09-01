@@ -45,19 +45,20 @@ real customer behavior supports them.
   managed sharing, role-safe workspaces/teams/projects, agency branding,
   notifications, developer context, GitHub and webhook delivery, an audit log,
   and backup/rollback tooling.
-- The production release `e3f9c4d12986da641b01f758316c84e43013b3d8` is
+- The production release `81836384c0245fb3e445847a36bda2c377acf71b` is
   healthy and publicly verified. Its schema cleanup remains complete, its
   corrected runtime configuration is active, production has 30 finished,
-  non-rolled-back migrations, and the previous `26d906b...` image is retained
-  for rollback.
+  non-rolled-back migrations, and previous exact image `e3f9c4d...` is retained
+  by a stopped isolated container for rollback.
 - The exact merged head passed the repository test, lint, schema, build, local
   CI, secret-scanning, and disposable PostgreSQL migration gates recorded in
   `TASK.md` and the production checklist.
 - The production operator exists and HTTPS sign-in previously passed. Workspace,
   client, site, review-round, image, pin, issue-metadata, and reply persistence
-  pass. The SSE/POST deduplication fix is released and its automated race
-  regression passes; the authenticated production repetition, later owner/client
-  behavior, and a real client journey remain unproven.
+  pass. The SSE/POST deduplication fix and authenticated production repetition
+  pass. The mobile remediation is deployed, but its authenticated 375px
+  repetition, later owner/client behavior, and a real client journey remain
+  unproven.
 - No real pilot, retention window, subscription export, or cancellation has
   occurred.
 
@@ -161,7 +162,7 @@ and customer-visible pricing remain separately approval-gated.
 |---|---|---|---|
 | Repository and GitHub | Local checkout, authenticated remote, checks and PRs working | Normal reviewed source changes are in scope | available |
 | Production SSH/hosting | Dedicated SSH key and healthy exact-SHA VPS/container verified | Exact owner approval immediately before every production release | available; current approved release deployed |
-| Production operator | Operator row, protected Keychain credential, and prior HTTPS sign-in verified | Keep credentials out of repository, logs, argv, and evidence | available; current browser session requires sign-in before live reply repetition |
+| Production operator | Operator row, protected Keychain credential, and prior HTTPS sign-in verified | Keep credentials out of repository, logs, argv, and evidence | available; current in-app browser session requires sign-in before the authenticated mobile repetition |
 | Production email | Mailgun key valid; `ashbi.ca` active in the deployed container | Sending any real test or client email requires approval | configured; unsent |
 | Integrations | Worker/encryption secrets active; protected zero-work request and GitHub/webhook code verified | Per-project credentials and external deliveries require owner/client approval | runtime ready; external proof pending |
 | Client pilot | Plan and success gates exist | Cameron selects the project/reviewer and approves communication | blocked on owner selection |
@@ -173,7 +174,7 @@ and customer-visible pricing remain separately approval-gated.
 
 | Risk | Severity | Evidence and consequence | Mitigation / release rule |
 |---|---:|---|---|
-| Live production reply duplicates transiently | High | One reply on the prior release created one database row but SSE plus POST response rendered it twice until reload | Exact-SHA fix is released; repeat the live reply before continuing QA and close this risk only if pre/post-reload rendering and database cardinality agree |
+| Live production reply duplicates transiently | Closed for current code | The exact-SHA fix rendered one new reply once before reload and once after reload while the database gained exactly one distinct row | Preserve the regression and authenticated evidence; reopen only on a new mismatch |
 | Credential exposure during setup | High | The first generated value appeared in terminal output | Treat it as compromised; completed immediate rotation and Keychain replacement before authenticated QA |
 | Email or integration misconfiguration | High | Corrected Mailgun domain and integration secrets are active; no external delivery has been approved | Send only an approved bounded test; verify delivery logs without exposing secrets |
 | No real customer validation | High | Feature presence does not prove ease, trust, retention, or willingness to switch | Complete one pilot, then a second project or 30-day window before replacement claims |
@@ -194,6 +195,7 @@ and customer-visible pricing remain separately approval-gated.
 | 2026-08-28 | approved | Require production proof before the pilot and pilot proof before cancellation | Security, recovery, and real-customer evidence hierarchy | Never reverse; only strengthen the gate | Cameron |
 | 2026-08-28 | approved in roadmap | Keep AI, video, billing, and enterprise work parked | No pilot or unit-economic evidence supports them yet | Measured demand justifies a dated plan and approval | Cameron |
 | 2026-08-28 | proposed | Treat $59-$99/month as a research range, not a price | Current first-party agency pricing spans roughly $67-$150/month for relevant tiers | Cost, support, or willingness-to-pay evidence supports a different range | Cameron |
+| 2026-09-01 | approved and executed | Deploy consolidated exact release `81836384...` with a fresh off-host backup and retained prior image | Deployment, trusted public verification, clean migrations/queue/logs, protected pointer, and isolated retainer all pass | A release regression requires the documented rollback path | Cameron |
 
 ## Measurement contract
 
@@ -217,11 +219,11 @@ rules, not market claims.
 
 ## Next evidence sequence
 
-1. Sign in through the trusted production browser and repeat the live reply
-   first against deployed SHA `e3f9c4d...`; require one render before reload,
-   one new database row, and one render after reload.
+1. Sign in through the selected trusted in-app browser and repeat the failed
+   authenticated 375px form-control and interaction-target contract first
+   against deployed SHA `81836384...`.
 2. If that passes, continue and clean up the full owner/client production QA
-   journey tied to the deployed fix SHA.
+   journey tied to the deployed SHA.
 3. Select the first pilot and record incumbent baselines, actual subscription
    cost, reviewer outcome, support friction, timing, and usage in a dated copy of
    `docs/qa/client-pilot-record-template.md`.
