@@ -1,7 +1,7 @@
 # Production launch, pilot, and SaaS-exit checklist — 2026-08-28
 
-**Status:** workspace and reply CSRF fixes deployed and verified; authenticated
-QA paused at a newly found live-comment deduplication defect
+**Status:** live-comment deduplication fix deployed on an exact SHA;
+authenticated live repetition, broader owner/client QA, and cleanup remain
 **Governing roadmap:**
 `docs/plans/launch-and-saas-replacement-roadmap-2026-08-28.md`
 
@@ -188,12 +188,48 @@ widget byte-for-byte by SHA-256 with the checked-out `public/widget.js`.
   2026-08-29T07:41:32.911Z, including trusted HTTPS/security headers, public
   health, explicit anonymous API denial, and byte-for-byte widget provenance.
 
+## 2026-08-29 approved live-comment-dedup deployment record
+
+- Pull request #50 passed Ashbi Local CI and GitGuardian, then merged without
+  bypass as exact `main` SHA
+  `e3f9c4d12986da641b01f758316c84e43013b3d8`. Cameron explicitly approved
+  deployment of that frozen SHA; the approval did not authorize external email,
+  client communication, pricing changes, purchases, or SaaS cancellation.
+- Fresh mode-0600 backup `markup-20260829T082217Z.dump` passed remote checksum
+  and `pg_restore --list` validation. Its off-host copy independently passed
+  SHA-256 verification at
+  `2e95060c015af7f0548fdf20065537a8223522d3d34b12f4bc7f3a2727c02d8c`.
+- Final preflight matched clean local/remote `main`, the four completed PR
+  checks, healthy `26d906b...` production image, trusted TLS, 30 clean
+  migrations, zero delivery queue, and exactly the expected isolated QA
+  workspace/client/site/pin inventory with two distinct comments.
+- `scripts/deploy.sh` completed with `DEPLOY OK` at
+  `2026-08-29T08:28:22Z`. The healthy container uses immutable image
+  `markup-clone:e3f9c4d12986da641b01f758316c84e43013b3d8`, image ID
+  `sha256:8718bfa28b62f949515e27dad48a093ac071e06a4c4dbdeb9a44602ca2790dda`.
+  The retained rollback is
+  `markup-clone:26d906b512b43d25bea79846139aca9972d0abfc`, image ID
+  `sha256:ebd5d3d243ef63389a7a7468b430b634234059fc0e6983f52c97d5a222e3e98f`.
+- A post-deploy verification command accidentally refreshed the private
+  rollback pointer to the current image. The previous immutable image had not
+  been removed or retagged; its exact tag and image ID were reverified and the
+  mode-0600 pointer was atomically restored before QA continued.
+- Production remains at 30 finished, non-rolled-back migrations with zero
+  failed/rolled-back rows. The worker and prune cron jobs are installed, the
+  delivery queue is empty, the edge route is healthy, and the isolated QA
+  inventory remained unchanged.
+- `ashbi.public-release.v1` passed after deployment at
+  `2026-08-29T08:29:43.506Z`. A fresh read-only repetition on
+  `2026-09-01T01:47:35.442Z` again passed trusted HTTPS/security headers,
+  public health, explicit anonymous API denial, and byte-for-byte widget
+  provenance.
+
 ## Release identity and approval
 
 - [x] The launch pull request is no longer draft, all required checks pass, and
   the approved code is merged without bypassing an unexplained CI failure.
 - [x] Record the exact 40-character merged commit SHA:
-  `26d906b512b43d25bea79846139aca9972d0abfc`.
+  `e3f9c4d12986da641b01f758316c84e43013b3d8`.
 - [x] The VPS checkout authenticates to Git, is on the intended release branch,
   fast-forwards to that SHA, and is clean in both content and file mode.
 - [x] Release operator: Codex acting under Cameron Ashley's approval; release
@@ -319,6 +355,27 @@ Keychain.
   successful live reply without duplication. The disposable inventory remains
   isolated for that retest and must be removed through the product before L1 is
   closed.
+
+### Authenticated QA resume — 2026-09-01T01:47Z
+
+- Exact deployed release:
+  `e3f9c4d12986da641b01f758316c84e43013b3d8`.
+- Pull request #50, exact local/GitHub/VPS identity, healthy immutable container,
+  trusted edge, 30 finished migrations, zero failed migrations, empty delivery
+  queue, retained `26d906b...` rollback image, and public widget provenance were
+  reverified before the next production write.
+- The isolated inventory remains exactly one workspace, client account, site,
+  and pin, with two comments and two distinct comment IDs. No additional reply
+  or broader QA mutation has been made on this release yet.
+- The focused production-code regression still passes all 11 tests in
+  `ScreenshotView-keyboard.test.tsx`. The live browser repetition remains
+  required because local component evidence cannot prove the production-rendered
+  SSE/POST path.
+- Chrome reaches the trusted production sign-in form but does not carry the
+  earlier operator session. Resume by signing in through the protected browser
+  flow, then submit one uniquely labelled QA reply and assert it renders exactly
+  once before reload, persists as one new database row, and remains exactly once
+  after reload. Stop again on any mismatch.
 
 ## Disposable authenticated QA
 

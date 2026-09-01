@@ -35,8 +35,9 @@ which are retained as implementation evidence.
 - `release-candidate-operational-validation-2026-08-08.md` — Production was
   deployed and rollback-verified. Operator provisioning and HTTPS sign-in now
   pass; workspace/client/site/image/pin creation now pass in production.
-  Reply persistence now passes; authenticated owner/client production QA is
-  paused on the focused live-comment deduplication fix.
+  Reply persistence now passes; the focused live-comment deduplication fix is
+  released as exact SHA `e3f9c4d12986da641b01f758316c84e43013b3d8`.
+  Authenticated live repetition, broader owner/client QA, and cleanup remain.
 
 ## Completed implementation evidence
 

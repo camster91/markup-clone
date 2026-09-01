@@ -21,9 +21,11 @@ its stated evidence exists; local tests do not silently close it.
   `e4f8e4eb45017930969e9ba9f46e6100472f9a08`; that exact image is healthy in
   production. The approved PinThread-CSRF follow-up `main` release
   `26d906b512b43d25bea79846139aca9972d0abfc` was deployed on 2026-08-29;
-  all 30 finished migrations, the off-host-verified backup, trusted public
-  release verification, retained `8030d6b...` rollback image, worker/cron, and
-  clean-log checks passed.
+  the deduplication follow-up then merged through pull request #50 and was
+  deployed as exact SHA `e3f9c4d12986da641b01f758316c84e43013b3d8` on
+  2026-08-29. All 30 finished migrations, the off-host-verified backup, trusted
+  public release verification, retained `26d906b...` rollback image,
+  worker/cron, and clean-log checks passed.
 - **Runtime readiness:** Mailgun is configured. The previously missing delivery
   worker and integration-encryption secrets are active in the exact deployed
   container and passed shape checks plus a protected zero-work worker request
@@ -42,14 +44,16 @@ its stated evidence exists; local tests do not silently close it.
 - **Authenticated progress:** the formerly blocked reply now persists in
   production. The database advanced from one to two distinct comments and a
   reload renders the single new reply once.
-- **Current blocker:** before reload, the live thread rendered that one persisted
-  reply twice because the SSE event and POST response both appended it to
-  `ScreenshotView` state. The focused branch `fix/live-comment-dedup` makes the
-  parent append idempotent by comment ID and includes a regression test that
-  reproduces the SSE/POST race.
-- **Next:** review, merge, and validate the live-comment dedupe fix; obtain exact
-  owner approval for its production SHA; deploy it; then repeat the live reply
-  before resuming broader owner/client QA and verified disposable-data cleanup.
+- **Released fix:** pull request #50 makes the parent append idempotent by
+  comment ID and includes a regression test that reproduces the SSE/POST race.
+  The full release suite and focused 11-test regression pass, and the fix is
+  running in production on exact SHA `e3f9c4d...`.
+- **Current blocker:** the Chrome QA context reaches the production sign-in form
+  but has no authenticated operator session. The isolated workspace/client/site/
+  pin inventory remains intact with exactly two distinct comments.
+- **Next:** sign in through the trusted browser session, repeat one live reply
+  first, and require exactly one rendered reply both before and after reload.
+  Only then resume broader owner/client QA and verified disposable-data cleanup.
 - **Execution record:**
   `docs/qa/production-launch-checklist-2026-08-28.md`.
 

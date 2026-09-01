@@ -50,9 +50,9 @@ next implementation slice.
 
 ### L1 — Open and prove authenticated production access
 
-**Status:** in progress; exact-SHA release, operator sign-in, workspace/client/
-site/image/pin/reply persistence are proven, and live reply QA is blocked on an
-SSE/POST state-deduplication fix
+**Status:** in progress; the SSE/POST state-deduplication fix is released on an
+exact SHA, and authenticated live-reply repetition plus broader owner/client QA
+and cleanup remain
 
 - Provision the first production operator through a bounded, documented,
   idempotent mechanism. Never commit or echo the password.
@@ -71,10 +71,11 @@ with no unexplained console/request failures and verified cleanup.
 **Execution checklist:**
 `docs/qa/production-launch-checklist-2026-08-28.md` is the single ordered
 operator record for L1 through L4. Its public baseline is current as of
-2026-08-28. Provisioning and sign-in pass. The formerly failed reply now
-persists on exact deployed SHA `26d906b512b43d25bea79846139aca9972d0abfc`;
-later authenticated items remain unchecked after its first live render showed a
-transient duplicate.
+2026-08-28. Provisioning and sign-in pass. The formerly failed reply persists
+on release `26d906b512b43d25bea79846139aca9972d0abfc`. The deduplication
+fix is released as `e3f9c4d12986da641b01f758316c84e43013b3d8`; the automated
+race regression passes, but the authenticated live repetition is still required
+before later items can be checked.
 
 **Provisioning mechanism:** `scripts/provision-operator.cjs` is stdin-only,
 idempotent for matching credentials, refuses implicit privilege escalation or
@@ -84,11 +85,11 @@ credential is stored in Cameron's macOS Keychain rather than the repository,
 deployment environment, command arguments, or evidence records.
 
 **Current production finding:** workspace and reply CSRF fixes are deployed and
-verified. One new reply produced one database row, but the live thread rendered
-it twice until reload because the SSE event and POST response both appended the
-same comment to parent state. A focused idempotent append and regression test
-pass locally; production QA resumes only after review and an approved exact-SHA
-release.
+verified. The focused idempotent append is reviewed and released on exact SHA
+`e3f9c4d12986da641b01f758316c84e43013b3d8`; its race regression passes. The
+isolated production QA inventory remains intact with two distinct comments.
+The next evidence is an authenticated live reply that renders exactly once
+before and after reload; do not broaden QA until it passes.
 
 **Schema reconciliation note:** production now has 30 finished,
 non-rolled-back migrations. The guarded cleanup removed the confirmed-empty
