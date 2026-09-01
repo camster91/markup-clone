@@ -1,7 +1,8 @@
 # Rollback image retention — 2026-09-01
 
-**Status:** implemented, verified, and merged through pull request #56;
-production execution awaiting exact-SHA approval
+**Status:** complete; implemented, merged through pull request #56, and
+production-verified in exact release
+`81836384c0245fb3e445847a36bda2c377acf71b`
 **Parent:** governing roadmap L1
 **Production finding:** nightly host pruning removed the previously documented
 rollback image before the next release
@@ -88,3 +89,18 @@ application resources.
   has not been substituted for the repository-required non-production host
   deploy dry-run. This change deliberately leaves `scripts/deploy.sh` untouched;
   production use of the helper remains part of the exact approval window.
+
+## Production execution record
+
+- Cameron approved exact release
+  `81836384c0245fb3e445847a36bda2c377acf71b` on 2026-09-01.
+- Before replacement, the helper created stopped retainer
+  `markup-clone-rollback-retainer` for exact running image
+  `markup-clone:e3f9c4d12986da641b01f758316c84e43013b3d8`, image ID
+  `sha256:8718bfa28b62f949515e27dad48a093ac071e06a4c4dbdeb9a44602ca2790dda`.
+- Pre- and post-deploy inspection verified state `created`, network mode `none`,
+  restart policy `no`, zero mounts, zero published-port bindings, and the
+  ownership/source labels.
+- The private rollback pointer remains mode `0600` and names that same tag and
+  image ID. The new application image is healthy, so the release-safety blocker
+  is closed for this deployment.

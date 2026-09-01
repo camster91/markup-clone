@@ -26,6 +26,18 @@ its stated evidence exists; local tests do not silently close it.
   2026-08-29. All 30 finished migrations, the off-host-verified backup, trusted
   public release verification, retained `26d906b...` rollback image,
   worker/cron, and clean-log checks passed.
+- **Current release:** Cameron approved consolidated exact SHA
+  `81836384c0245fb3e445847a36bda2c377acf71b`, which deployed successfully on
+  2026-09-01 as image
+  `sha256:3914eb31be8145f4e00bafd45b612f603d193f838feed5f5716a77a5e924b465`.
+  Fresh backup `markup-20260901T124257Z.dump` passed its remote restore catalog
+  and checksum checks; its mode-0600 off-host copy independently verified
+  SHA-256 `6b4aca9cf6435abcde1670976af5f754216bc7dadbb8fbd83a13667fa3bbf384`.
+  The stopped, network-disabled retainer and protected rollback pointer both
+  preserve exact prior image `e3f9c4d...` at
+  `sha256:8718bfa28b62f949515e27dad48a093ac071e06a4c4dbdeb9a44602ca2790dda`.
+  Trusted public verification, 30 clean migrations, the empty delivery queue,
+  cron/CI, and clean post-deploy logs pass.
 - **Runtime readiness:** Mailgun is configured. The previously missing delivery
   worker and integration-encryption secrets are active in the exact deployed
   container and passed shape checks plus a protected zero-work worker request
@@ -53,30 +65,34 @@ its stated evidence exists; local tests do not silently close it.
   database from two to three distinct comment IDs with exactly one matching row,
   and rendered exactly once after reload. This closes the live SSE/POST
   deduplication gate on the exact deployed release.
-- **Current blocker:** broader owner QA passed at 1280x800 without horizontal
+- **Previous blocker:** broader owner QA passed at 1280x800 without horizontal
   overflow or console errors. At 375x812 it still had no overflow or console
   errors, but 18 visible form controls computed below 16px and 24 visible
   interactive targets measured below 44px on deployed SHA `e3f9c4d...`.
-  Production mutation stopped at this first new launch-blocking failure.
+  Production mutation stopped at this first new launch-blocking failure on the
+  prior release.
 - **Verified mobile code:** pull request #54 merged without bypass as exact SHA
   `fa73b968fde3649c7f72c0ffaccd2397e383cff1`. Ashbi Local CI and GitGuardian
   passed; the focused mobile regression passes Chromium, Firefox, and WebKit,
   and the full local unit/lint/type/build gate passes.
-- **Release-safety finding:** read-only preflight found the documented
+- **Resolved release-safety finding:** read-only preflight found the documented
   `26d906b...` rollback image missing. The host's nightly
   `docker image prune -af --filter "until=24h"` removes tagged images that no
   container references. The healthy current `e3f9c4d...` image remains exact
-  and available, but it must be retained before replacement.
+  and available. The approved release captured it before replacement and the
+  post-deploy retainer/pointer checks now pass.
 - **Verified release-safety code:** pull request #56 merged without bypass as
   `35a105073148ed3107b6fb2f8c04ebb3084c1d3d`. Ashbi Local CI and GitGuardian
   passed. The helper fails closed unless the current image is immutable and
   exact, preserves it with a stopped isolated retainer, and refuses both
   unowned stable-name and temporary-name collisions.
-- **Next:** freeze the current `main` SHA after this status reconciliation,
-  obtain exact-artifact deployment approval, create and verify the stopped
-  rollback retainer plus fresh off-host-verified backup, deploy, then repeat the
-  failed 375px check before broader owner/client QA and verified disposable-data
-  cleanup.
+- **Next:** the public sign-in surface passes a read-only 375x812 overflow check
+  on exact deployed SHA `81836384...`, but the selected in-app browser is not
+  signed in. Sign in through that protected browser, repeat the failed
+  authenticated 375px control/target contract first, then continue broader
+  owner/client QA and verified disposable-data cleanup. Obtain action-time
+  approval before any new production QA write, external notification, or
+  integration delivery.
 - **Execution record:**
   `docs/qa/production-launch-checklist-2026-08-28.md`.
 
