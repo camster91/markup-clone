@@ -29,15 +29,16 @@ which are retained as implementation evidence.
   exact-candidate preflight.** The shared host's nightly image-prune job removed
   the previously documented rollback image because no container referenced it.
   The focused, fail-closed retainer helper and deterministic regression coverage
-  are implemented and verified locally; pull-request review is pending and
-  production remains unchanged.
+  are implemented, verified, and merged through pull request #56. Production
+  remains unchanged until the current exact `main` artifact is explicitly
+  approved.
 - `mobile-dashboard-accessibility-2026-09-01.md` — **Verified merged release
   code awaiting a consolidated release.** The exact deployed reply-dedup
   release passed its live repetition, then the 375px owner surface exposed
   sub-16px form controls and sub-44px interactive targets. Pull request #54
-  implements and verifies the shared mobile interaction contract. Exact-candidate
-  preflight then exposed the rollback-retention blocker above; production remains
-  unchanged until the consolidated release is reviewed and explicitly approved.
+  implements and verifies the shared mobile interaction contract. Pull request
+  #56 closes the rollback-retention blocker above; production remains unchanged
+  until the consolidated exact `main` artifact is explicitly approved.
 - `pdf-review-2026-08-10.md` — **Production QA pending.** The exact Linux
   renderer, bounded upload/storage pipeline, normal Page/Screenshot review
   model, click-to-pin UI, disposable migration, owner/mobile/managed-share

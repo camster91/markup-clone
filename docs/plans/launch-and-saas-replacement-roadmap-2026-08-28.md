@@ -53,9 +53,10 @@ next implementation slice.
 **Status:** in progress; the SSE/POST state-deduplication fix passed its
 authenticated live repetition on the exact deployed SHA. The 375px
 owner-surface accessibility fix is verified and merged. Exact-candidate
-preflight then exposed a nightly-prune rollback-retention defect; the focused
-release-safety fix must be reviewed before exact-SHA approval and production
-repetition can resume broader owner/client QA and cleanup.
+preflight then exposed a nightly-prune rollback-retention defect. Pull request
+#56 implements and verifies the release-safety fix; the reconciled current
+`main` artifact still needs exact-SHA approval before production repetition can
+resume broader owner/client QA and cleanup.
 
 - Provision the first production operator through a bounded, documented,
   idempotent mechanism. Never commit or echo the password.
@@ -76,9 +77,10 @@ with no unexplained console/request failures and verified cleanup.
 operator record for L1 through L4. Its public baseline is current as of
 2026-08-28. Provisioning and sign-in pass. The formerly failed reply persists
 on release `26d906b512b43d25bea79846139aca9972d0abfc`. The deduplication
-fix is released as `e3f9c4d12986da641b01f758316c84e43013b3d8`; the automated
-race regression passes, but the authenticated live repetition is still required
-before later items can be checked.
+fix is released as `e3f9c4d12986da641b01f758316c84e43013b3d8`; its automated
+race regression and authenticated live repetition both pass. The next open
+production check is the failed 375px mobile interaction contract on that same
+deployed SHA.
 
 **Provisioning mechanism:** `scripts/provision-operator.cjs` is stdin-only,
 idempotent for matching credentials, refuses implicit privilege escalation or
@@ -97,9 +99,10 @@ and sub-44px interactive targets at 375px. The focused work is governed by
 `mobile-dashboard-accessibility-2026-09-01.md`. Pull request #54 is implemented,
 verified, and merged. Preflight then found the previously retained rollback image
 had been removed by the shared host's nightly prune; remediation is governed by
-`rollback-image-retention-2026-09-01.md`. Do not resume production QA until the
-consolidated release is reviewed, explicitly approved, deployed with a verified
-retainer, and the failed mobile check is repeated successfully.
+`rollback-image-retention-2026-09-01.md` and merged through pull request #56. Do
+not resume production QA until the reconciled current `main` SHA is explicitly
+approved, deployed with a verified retainer, and the failed mobile check is
+repeated successfully.
 
 **Schema reconciliation note:** production now has 30 finished,
 non-rolled-back migrations. The guarded cleanup removed the confirmed-empty

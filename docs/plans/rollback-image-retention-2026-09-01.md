@@ -1,6 +1,7 @@
 # Rollback image retention — 2026-09-01
 
-**Status:** implemented and verified; pull-request review pending
+**Status:** implemented, verified, and merged through pull request #56;
+production execution awaiting exact-SHA approval
 **Parent:** governing roadmap L1
 **Production finding:** nightly host pruning removed the previously documented
 rollback image before the next release
@@ -80,6 +81,9 @@ application resources.
 - The full repository suite passes 964 tests across 140 files. ESLint,
   TypeScript, Prisma validation, the widget/shared-package/Next production
   build, Bash syntax, and diff checking pass.
+- Pull request #56 merged without bypass as
+  `35a105073148ed3107b6fb2f8c04ebb3084c1d3d` after Ashbi Local CI and
+  GitGuardian passed. Its merge tree exactly matches the tested head.
 - Docker is unavailable on the local workstation, so a real-engine rehearsal
   has not been substituted for the repository-required non-production host
   deploy dry-run. This change deliberately leaves `scripts/deploy.sh` untouched;
