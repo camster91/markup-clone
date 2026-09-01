@@ -1,6 +1,6 @@
 # TASK.md — markup-clone execution board
 
-**Last updated:** 2026-08-29
+**Last updated:** 2026-09-01
 **Governing roadmap:**
 `docs/plans/launch-and-saas-replacement-roadmap-2026-08-28.md`
 
@@ -48,12 +48,20 @@ its stated evidence exists; local tests do not silently close it.
   comment ID and includes a regression test that reproduces the SSE/POST race.
   The full release suite and focused 11-test regression pass, and the fix is
   running in production on exact SHA `e3f9c4d...`.
-- **Current blocker:** the Chrome QA context reaches the production sign-in form
-  but has no authenticated operator session. The isolated workspace/client/site/
-  pin inventory remains intact with exactly two distinct comments.
-- **Next:** sign in through the trusted browser session, repeat one live reply
-  first, and require exactly one rendered reply both before and after reload.
-  Only then resume broader owner/client QA and verified disposable-data cleanup.
+- **Authenticated verification:** after signing in through the trusted browser,
+  one uniquely labelled reply rendered exactly once before reload, advanced the
+  database from two to three distinct comment IDs with exactly one matching row,
+  and rendered exactly once after reload. This closes the live SSE/POST
+  deduplication gate on the exact deployed release.
+- **Current blocker:** broader owner QA passed at 1280x800 without horizontal
+  overflow or console errors. At 375x812 it still had no overflow or console
+  errors, but 18 visible form controls computed below 16px and 24 visible
+  interactive targets measured below 44px. Production mutation stopped at this
+  first new launch-blocking failure.
+- **Next:** complete
+  `docs/plans/mobile-dashboard-accessibility-2026-09-01.md`, review and merge the
+  fix, obtain exact-SHA deployment approval, then repeat the failed 375px check
+  before resuming broader owner/client QA and verified disposable-data cleanup.
 - **Execution record:**
   `docs/qa/production-launch-checklist-2026-08-28.md`.
 

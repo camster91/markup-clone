@@ -29,3 +29,42 @@ body {
   outline: 3px solid #2563eb;
   outline-offset: 2px;
 }
+
+/*
+ * Phone review surfaces must not make operators pinch-zoom a form or aim at a
+ * desktop-sized control. Keep component-level compact typography for larger
+ * viewports, but establish one inherited mobile interaction contract for the
+ * authenticated dashboard and managed review pages.
+ */
+@media (max-width: 639px), (max-device-width: 639px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]),
+  select,
+  textarea {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  /* WebKit's native select ignores min-height in its compact appearance. */
+  select {
+    height: 44px;
+  }
+
+  button,
+  [role="button"],
+  a[href] {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  button,
+  [role="button"] {
+    touch-action: manipulation;
+  }
+
+  a[href] {
+    display: inline-flex;
+    max-width: 100%;
+    align-items: center;
+    overflow-wrap: anywhere;
+  }
+}
