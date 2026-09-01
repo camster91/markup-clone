@@ -169,7 +169,7 @@ release commit has been pushed. The VPS fast-forwards its authenticated checkout
 verifies that the tree is clean, builds the exact commit, and serves it.
 
 ```bash
-ssh coolify "cd /root/markup-clone && git pull --ff-only && bash scripts/deploy.sh"
+ssh coolify "cd /root/markup-clone && git pull --ff-only && if docker inspect markup-clone >/dev/null 2>&1; then bash scripts/retain-rollback-image.sh; fi && bash scripts/deploy.sh"
 ```
 
 What `deploy.sh` does, in order:
@@ -180,7 +180,14 @@ What `deploy.sh` does, in order:
    Caddy host, never while Traefik exists.
 2. **Postgres health check** — starts `markup-postgres` if it's down and pins its restart policy to `unless-stopped` (Coolify's default is `no`).
 3. **Source refresh** — require `/root/markup-clone` to be a Git repository and run `git pull --ff-only`. Authentication, merge, or checkout failures stop the release; stale source and unverified tarballs are not accepted.
-4. **Release-source and rollback-image preflight** — refuse tracked or untracked source changes so the image tag cannot misrepresent a dirty build; then verify that the current container's `markup-clone:<40-character-sha>` tag still exists and resolves to its running image ID, and atomically record it at `/data/markup-clone/rollback-image.env`. Existing deployments fail closed if this proof is unavailable; a true first install is allowed without a prior image.
+4. **Release-source and rollback-image preflight** — before `deploy.sh`, the
+   separately invoked `retain-rollback-image.sh` verifies the current container's
+   immutable source-SHA image and creates a stopped, network-disabled retainer so
+   the shared nightly image-prune job cannot remove it. `deploy.sh` then refuses
+   tracked or untracked source changes, repeats the immutable image/tag proof,
+   and atomically records it at `/data/markup-clone/rollback-image.env`. Existing
+   deployments fail closed if this proof is unavailable; a true first install is
+   allowed without a prior image.
 5. **Prisma migrations** — runs each unapplied `prisma/migrations/*/migration.sql` with `ON_ERROR_STOP=1`. The migration SQL and its Prisma history marker share one PostgreSQL transaction, so both commit or both roll back; any SQL or marker error stops the deploy.
 6. **Docker build** — `docker build -t markup-clone:$SHA -t markup-clone:latest .` where `$SHA` is the current `git rev-parse HEAD` (40 chars). A 40-char check is enforced so a broken tree never produces a `latest` tag from a non-SHA.
 7. **Container recreate** — `docker rm -f markup-clone` then `docker run -d --name markup-clone --network bridge --restart unless-stopped --env-file $APP_DIR/.env -e HOSTNAME=0.0.0.0 -v /data/screenshots:/data/screenshots -v $APP_DIR/scripts:/opt/app-scripts:ro -p 127.0.0.1:${HOST_PORT}:3000 markup-clone:$SHA`. The explicit `HOSTNAME=0.0.0.0` is required because Next.js 16's standalone `server.js` defaults to `process.env.HOSTNAME` (which Docker sets to the container ID), which would make the app bind to that single interface and break in-container healthchecks. Traefik labels are intentionally absent because the active file-provider route targets the loopback port.

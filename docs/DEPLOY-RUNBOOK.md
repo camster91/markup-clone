@@ -50,6 +50,16 @@ Run through these before kicking off a deploy. Each takes <10s.
    `markup-clone:<40-character-sha>`, that the image is still local, and that
    the tag still resolves to the exact running image ID. The deploy records the
    result in `/data/markup-clone/rollback-image.env` with mode `0600`.
+   After exact release approval and before `deploy.sh`, run
+   `bash /root/markup-clone/scripts/retain-rollback-image.sh`. It creates a
+   stopped, labelled, network-disabled container referencing that exact image.
+   This is required because the shared host runs
+   `docker image prune -af --filter "until=24h"`; [Docker removes images not
+   referenced by any container](https://docs.docker.com/reference/cli/docker/image/prune/)
+   even when they retain a source-SHA tag. Verify
+   `docker inspect markup-clone-rollback-retainer` resolves to the same image ID
+   recorded by the preflight. A missing, mismatched, or unowned retainer is a
+   release stop.
 11. **The public artifact matches the release checkout.** From the exact local
    release commit, run `npm run verify:public-release`. It verifies trusted
    HTTPS, health, security headers, anonymous page redirection plus API denial,
@@ -155,6 +165,7 @@ backup first, record the current image, and verify the prior image exists locall
 
 ```bash
 bash /root/markup-clone/scripts/rollback-image-preflight.sh
+bash /root/markup-clone/scripts/retain-rollback-image.sh
 set -a
 . /data/markup-clone/rollback-image.env
 set +a
@@ -171,6 +182,11 @@ Keep `markup-clone-failed` until health and the owner/client smoke journey pass.
 To abort the rollback, remove the replacement, rename the retained container
 back, and start it. Additive migrations are retained; never reverse database
 migrations casually during an application rollback.
+
+The stopped `markup-clone-rollback-retainer` exists only to keep Docker's nightly
+image-prune job from deleting the rollback image. It has no network, restart
+policy, mounts, or published ports. Do not remove it until a newer deployed
+release has been captured and verified by the same helper.
 
 Read-only production inventory on 2026-08-08 confirmed that the healthy live
 container uses `markup-clone:d47ada5bfa0d66be70d4751ce63ddfee07c63da3`,
