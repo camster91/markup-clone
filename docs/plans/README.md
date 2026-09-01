@@ -25,12 +25,12 @@ which are retained as implementation evidence.
 
 ## Active implementation
 
-- `mobile-dashboard-accessibility-2026-09-01.md` — **Launch blocker found in
-  production QA.** The exact deployed reply-dedup release passed its live
-  repetition, then the 375px owner surface exposed sub-16px form controls and
-  sub-44px interactive targets. A shared mobile interaction contract and
-  focused regression coverage are in progress; production needs a reviewed,
-  explicitly approved exact release before QA resumes.
+- `mobile-dashboard-accessibility-2026-09-01.md` — **Verified merged release
+  candidate awaiting deployment approval.** The exact deployed reply-dedup
+  release passed its live repetition, then the 375px owner surface exposed
+  sub-16px form controls and sub-44px interactive targets. Pull request #54
+  implements and verifies the shared mobile interaction contract; production
+  remains unchanged until its exact merged SHA is explicitly approved.
 - `pdf-review-2026-08-10.md` — **Production QA pending.** The exact Linux
   renderer, bounded upload/storage pipeline, normal Page/Screenshot review
   model, click-to-pin UI, disposable migration, owner/mobile/managed-share

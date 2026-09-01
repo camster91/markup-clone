@@ -1,9 +1,11 @@
 # Mobile dashboard accessibility — 2026-09-01
 
-**Status:** active implementation
+**Status:** implemented and verified; merged candidate awaiting exact-SHA
+deployment approval
 **Parent:** governing roadmap L1
 **Production finding:** exact release
 `e3f9c4d12986da641b01f758316c84e43013b3d8`
+**Merged candidate:** `fa73b968fde3649c7f72c0ffaccd2397e383cff1`
 
 ## Outcome
 
@@ -63,14 +65,44 @@ The accepted screenshot evidence is
 
 ## Release sequence
 
-1. Implement and verify locally on a focused branch.
-2. Review through a pull request and require all repository checks.
-3. Freeze the merged SHA and request exact-artifact deployment approval.
+1. [x] Implement and verify locally on a focused branch.
+2. [x] Review through pull request #54 and require all repository checks.
+3. [x] Freeze merged SHA
+   `fa73b968fde3649c7f72c0ffaccd2397e383cff1` and request exact-artifact
+   deployment approval.
 4. Run fresh backup, rollback, edge, migration, delivery-queue, and clean-tree
    preflight.
 5. Deploy only the approved SHA, then repeat the failed 375px check first.
 6. Resume the remaining owner/client L1 journey only after the mobile contract
    passes in production.
+
+## Verification record
+
+- Pull request #54 merged without bypass as exact `main` SHA
+  `fa73b968fde3649c7f72c0ffaccd2397e383cff1`; its tree matches the reviewed
+  head `a9572f2c4db2256254b2cc0d11b00bc7dd63b832`.
+- Ashbi Local CI and GitGuardian passed. The optional Cursor checks were neutral
+  because their trial quota was unavailable; neither is a required repository
+  check.
+- The focused mobile contract passes in Chromium, Firefox, and WebKit. The full
+  Vitest suite passed 957 tests across 139 files; ESLint, TypeScript, Prisma
+  validation, package/widget builds, the production build, and diff checking
+  also passed.
+- The broader E2E run passed 10 of 12 files. Its remaining WebKit keyboard-tab
+  mismatch predates this change; the new mobile test initially exposed and then
+  verified the repaired WebKit select height. Do not represent the full E2E
+  suite as green.
+- `npm audit --omit=dev --audit-level=high` reports the current Prisma CLI chain
+  through `@prisma/config` and `deepmerge-ts@7.1.5`. The
+  [advisory](https://github.com/advisories/GHSA-ggr8-5vv4-36mx) requires
+  attacker-controlled recursive object graphs. Application source does not
+  call that library, and `deepmerge-ts` is absent from the standalone and
+  running production runtime trees. Track the upstream tooling upgrade, but do
+  not treat this non-runtime build/config dependency as an accepted production
+  request-path risk.
+- Production remains unchanged on exact SHA
+  `e3f9c4d12986da641b01f758316c84e43013b3d8`. No deployment is implied by the
+  merge or by this verification record.
 
 ## Boundaries
 

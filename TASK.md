@@ -56,12 +56,17 @@ its stated evidence exists; local tests do not silently close it.
 - **Current blocker:** broader owner QA passed at 1280x800 without horizontal
   overflow or console errors. At 375x812 it still had no overflow or console
   errors, but 18 visible form controls computed below 16px and 24 visible
-  interactive targets measured below 44px. Production mutation stopped at this
-  first new launch-blocking failure.
-- **Next:** complete
-  `docs/plans/mobile-dashboard-accessibility-2026-09-01.md`, review and merge the
-  fix, obtain exact-SHA deployment approval, then repeat the failed 375px check
-  before resuming broader owner/client QA and verified disposable-data cleanup.
+  interactive targets measured below 44px on deployed SHA `e3f9c4d...`.
+  Production mutation stopped at this first new launch-blocking failure.
+- **Verified candidate:** pull request #54 merged without bypass as exact SHA
+  `fa73b968fde3649c7f72c0ffaccd2397e383cff1`. Ashbi Local CI and GitGuardian
+  passed; the focused mobile regression passes Chromium, Firefox, and WebKit,
+  and the full local unit/lint/type/build gate passes. Production remains on
+  `e3f9c4d...` until exact-artifact deployment approval.
+- **Next:** obtain exact-SHA deployment approval for `fa73b968...`, run the
+  fresh backup and fail-closed release preflight, deploy that exact artifact,
+  then repeat the failed 375px check before broader owner/client QA and verified
+  disposable-data cleanup.
 - **Execution record:**
   `docs/qa/production-launch-checklist-2026-08-28.md`.
 
