@@ -529,8 +529,8 @@ export default function ScreenshotView({
               style={{
                 left: `${pin.xPercent}%`,
                 top: `${pin.yPercent}%`,
-                width: 28,
-                height: 28,
+                width: 44,
+                height: 44,
                 zIndex: isActive ? 10 : 5,
               }}
               title={pin.comments[0]?.text || `Pin ${idx + 1}`}

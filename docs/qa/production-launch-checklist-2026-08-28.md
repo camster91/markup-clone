@@ -1,7 +1,7 @@
 # Production launch, pilot, and SaaS-exit checklist — 2026-08-28
 
-**Status:** live-comment deduplication fix deployed on an exact SHA;
-authenticated live repetition, broader owner/client QA, and cleanup remain
+**Status:** live-comment deduplication verified in production; a mobile owner
+accessibility defect blocks broader owner/client QA and cleanup
 **Governing roadmap:**
 `docs/plans/launch-and-saas-replacement-roadmap-2026-08-28.md`
 
@@ -376,6 +376,25 @@ Keychain.
   flow, then submit one uniquely labelled QA reply and assert it renders exactly
   once before reload, persists as one new database row, and remains exactly once
   after reload. Stop again on any mismatch.
+
+### Authenticated QA resume — 2026-09-01T09:43Z
+
+- Signed in as the production operator through the trusted Chrome context on
+  exact deployed release `e3f9c4d12986da641b01f758316c84e43013b3d8`.
+- Posted one uniquely labelled QA reply. It rendered exactly once before reload,
+  the database advanced from two to three comments with three distinct IDs and
+  exactly one row matching the test text, and it rendered exactly once after
+  reload. The live SSE/POST deduplication gate passes.
+- At 1280x800, the owner page had no horizontal overflow, no overflowing
+  element, and no console error. At 375x812, it still had no horizontal overflow
+  or console error and the reply still rendered once.
+- The 375px audit found 18 visible form controls below 16px and 24 visible
+  interactive targets below 44px in at least one dimension. Broader production
+  mutation stopped at this first new launch-blocking failure.
+- Focused remediation is governed by
+  `docs/plans/mobile-dashboard-accessibility-2026-09-01.md`. Resume by deploying
+  a reviewed, explicitly approved exact release and repeating this failed mobile
+  check first.
 
 ## Disposable authenticated QA
 

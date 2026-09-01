@@ -50,9 +50,9 @@ next implementation slice.
 
 ### L1 — Open and prove authenticated production access
 
-**Status:** in progress; the SSE/POST state-deduplication fix is released on an
-exact SHA, and authenticated live-reply repetition plus broader owner/client QA
-and cleanup remain
+**Status:** in progress; the SSE/POST state-deduplication fix passed its
+authenticated live repetition on the exact deployed SHA. A 375px owner-surface
+accessibility defect now blocks broader owner/client QA and cleanup.
 
 - Provision the first production operator through a bounded, documented,
   idempotent mechanism. Never commit or echo the password.
@@ -87,9 +87,13 @@ deployment environment, command arguments, or evidence records.
 **Current production finding:** workspace and reply CSRF fixes are deployed and
 verified. The focused idempotent append is reviewed and released on exact SHA
 `e3f9c4d12986da641b01f758316c84e43013b3d8`; its race regression passes. The
-isolated production QA inventory remains intact with two distinct comments.
-The next evidence is an authenticated live reply that renders exactly once
-before and after reload; do not broaden QA until it passes.
+isolated production QA inventory remains intact with three distinct comments.
+The authenticated live reply now renders exactly once before and after reload
+and exists as one database row. Broader QA then exposed sub-16px form controls
+and sub-44px interactive targets at 375px. The focused work is governed by
+`mobile-dashboard-accessibility-2026-09-01.md`; do not resume production QA until
+its reviewed release is explicitly approved, deployed, and the failed check is
+repeated successfully.
 
 **Schema reconciliation note:** production now has 30 finished,
 non-rolled-back migrations. The guarded cleanup removed the confirmed-empty

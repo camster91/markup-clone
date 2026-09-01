@@ -9,6 +9,22 @@ describe('dashboard accessibility baseline', () => {
     expect(source('src/app/globals.css')).toMatch(/:focus-visible/);
   });
 
+  it('establishes readable mobile forms and 44px interaction targets', () => {
+    const css = source('src/app/globals.css');
+    expect(css).toContain('@media (max-width: 639px), (max-device-width: 639px)');
+    expect(css).toMatch(/input:not\(\[type="checkbox"\]\):not\(\[type="radio"\]\):not\(\[type="hidden"\]\),[\s\S]*select,[\s\S]*textarea[\s\S]*min-height: 44px;[\s\S]*font-size: 16px;/);
+    expect(css).toMatch(/button,[\s\S]*\[role="button"\],[\s\S]*a\[href\][\s\S]*min-width: 44px;[\s\S]*min-height: 44px;/);
+  });
+
+  it('keeps screenshot pin and thread-close targets explicitly touch sized', () => {
+    const screenshot = source('src/components/ScreenshotView.tsx');
+    expect(screenshot).toContain('width: 44');
+    expect(screenshot).toContain('height: 44');
+
+    const thread = source('src/components/PinThread.tsx');
+    expect(thread).toContain('min-h-11 min-w-11');
+  });
+
   it('associates new-project labels with their inputs', () => {
     const file = source('src/components/NewProjectForm.tsx');
     expect(file).toContain('htmlFor="project-name"');
