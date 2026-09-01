@@ -67,11 +67,16 @@ its stated evidence exists; local tests do not silently close it.
   `docker image prune -af --filter "until=24h"` removes tagged images that no
   container references. The healthy current `e3f9c4d...` image remains exact
   and available, but it must be retained before replacement.
-- **Next:** review the implemented rollback-retention change through its pull
-  request, freeze the consolidated exact SHA, obtain deployment approval, create
-  and verify the stopped rollback retainer plus fresh backup, deploy, then repeat
-  the failed 375px check before broader owner/client QA and verified
-  disposable-data cleanup.
+- **Verified release-safety code:** pull request #56 merged without bypass as
+  `35a105073148ed3107b6fb2f8c04ebb3084c1d3d`. Ashbi Local CI and GitGuardian
+  passed. The helper fails closed unless the current image is immutable and
+  exact, preserves it with a stopped isolated retainer, and refuses both
+  unowned stable-name and temporary-name collisions.
+- **Next:** freeze the current `main` SHA after this status reconciliation,
+  obtain exact-artifact deployment approval, create and verify the stopped
+  rollback retainer plus fresh off-host-verified backup, deploy, then repeat the
+  failed 375px check before broader owner/client QA and verified disposable-data
+  cleanup.
 - **Execution record:**
   `docs/qa/production-launch-checklist-2026-08-28.md`.
 

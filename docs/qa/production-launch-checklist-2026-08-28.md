@@ -250,8 +250,9 @@ widget byte-for-byte by SHA-256 with the checked-out `public/widget.js`.
   `e3f9c4d12986da641b01f758316c84e43013b3d8` with retained rollback
   `26d906b512b43d25bea79846139aca9972d0abfc`.
 - No backup, deployment, production mutation, email, integration delivery, or
-  client communication was performed during staging. Cameron's exact-SHA
-  approval is required immediately before deploying `fa73b968...`.
+  client communication was performed during staging. The earlier standalone
+  `fa73b968...` approval request is superseded by the consolidated release
+  artifact described below.
 
 ### 2026-09-01 rollback-retention preflight finding
 
@@ -271,9 +272,17 @@ widget byte-for-byte by SHA-256 with the checked-out `public/widget.js`.
   remains present and exactly matches the running container. It can become the
   next rollback only after a stopped retainer references it before replacement.
 - `docs/plans/rollback-image-retention-2026-09-01.md` governs the focused fix.
-  The earlier deployment approval request is superseded; freeze and request
-  approval for a consolidated SHA only after this release-safety change passes
-  review.
+  Pull request #56 merged the verified change without bypass as
+  `35a105073148ed3107b6fb2f8c04ebb3084c1d3d`; Ashbi Local CI and GitGuardian
+  passed and its merge tree matches the tested head.
+- The post-merge read-only snapshot confirmed production is still healthy and
+  clean on `e3f9c4d...`, its image ID still matches, PostgreSQL is ready with 30
+  finished and zero rolled-back migrations, the trusted Traefik edge passes,
+  and the retainer is not yet present. Creating it remains part of the exact
+  approval window and must succeed before the running container is replaced.
+- Freeze the current `main` SHA after this documentation-only reconciliation
+  and request a new exact-artifact approval. No backup, checkout change,
+  retainer creation, deployment, or production QA write has occurred yet.
 
 - [x] The launch pull request is no longer draft, all required checks pass, and
   the approved code is merged without bypassing an unexplained CI failure.
