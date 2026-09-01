@@ -58,14 +58,19 @@ its stated evidence exists; local tests do not silently close it.
   errors, but 18 visible form controls computed below 16px and 24 visible
   interactive targets measured below 44px on deployed SHA `e3f9c4d...`.
   Production mutation stopped at this first new launch-blocking failure.
-- **Verified candidate:** pull request #54 merged without bypass as exact SHA
+- **Verified mobile code:** pull request #54 merged without bypass as exact SHA
   `fa73b968fde3649c7f72c0ffaccd2397e383cff1`. Ashbi Local CI and GitGuardian
   passed; the focused mobile regression passes Chromium, Firefox, and WebKit,
-  and the full local unit/lint/type/build gate passes. Production remains on
-  `e3f9c4d...` until exact-artifact deployment approval.
-- **Next:** obtain exact-SHA deployment approval for `fa73b968...`, run the
-  fresh backup and fail-closed release preflight, deploy that exact artifact,
-  then repeat the failed 375px check before broader owner/client QA and verified
+  and the full local unit/lint/type/build gate passes.
+- **Release-safety finding:** read-only preflight found the documented
+  `26d906b...` rollback image missing. The host's nightly
+  `docker image prune -af --filter "until=24h"` removes tagged images that no
+  container references. The healthy current `e3f9c4d...` image remains exact
+  and available, but it must be retained before replacement.
+- **Next:** review the implemented rollback-retention change through its pull
+  request, freeze the consolidated exact SHA, obtain deployment approval, create
+  and verify the stopped rollback retainer plus fresh backup, deploy, then repeat
+  the failed 375px check before broader owner/client QA and verified
   disposable-data cleanup.
 - **Execution record:**
   `docs/qa/production-launch-checklist-2026-08-28.md`.

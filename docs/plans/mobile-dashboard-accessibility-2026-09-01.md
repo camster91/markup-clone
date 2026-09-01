@@ -1,7 +1,7 @@
 # Mobile dashboard accessibility — 2026-09-01
 
-**Status:** implemented and verified; merged candidate awaiting exact-SHA
-deployment approval
+**Status:** implemented and verified; merged code awaiting the consolidated
+release-safety candidate
 **Parent:** governing roadmap L1
 **Production finding:** exact release
 `e3f9c4d12986da641b01f758316c84e43013b3d8`
@@ -67,11 +67,10 @@ The accepted screenshot evidence is
 
 1. [x] Implement and verify locally on a focused branch.
 2. [x] Review through pull request #54 and require all repository checks.
-3. [x] Freeze merged SHA
-   `fa73b968fde3649c7f72c0ffaccd2397e383cff1` and request exact-artifact
-   deployment approval.
+3. [x] Freeze the reviewed mobile-code merge
+   `fa73b968fde3649c7f72c0ffaccd2397e383cff1`.
 4. Run fresh backup, rollback, edge, migration, delivery-queue, and clean-tree
-   preflight.
+   preflight; resolve any release stop before requesting exact-artifact approval.
 5. Deploy only the approved SHA, then repeat the failed 375px check first.
 6. Resume the remaining owner/client L1 journey only after the mobile contract
    passes in production.
@@ -103,6 +102,10 @@ The accepted screenshot evidence is
 - Production remains unchanged on exact SHA
   `e3f9c4d12986da641b01f758316c84e43013b3d8`. No deployment is implied by the
   merge or by this verification record.
+- Exact-candidate preflight later found that the host's global nightly image
+  prune had removed the prior rollback image. The mobile implementation remains
+  verified, but deployment is now additionally gated by
+  `rollback-image-retention-2026-09-01.md` and a newly frozen consolidated SHA.
 
 ## Boundaries
 

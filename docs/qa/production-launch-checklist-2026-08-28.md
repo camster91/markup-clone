@@ -253,6 +253,28 @@ widget byte-for-byte by SHA-256 with the checked-out `public/widget.js`.
   client communication was performed during staging. Cameron's exact-SHA
   approval is required immediately before deploying `fa73b968...`.
 
+### 2026-09-01 rollback-retention preflight finding
+
+- The documentation reconciliation merged through pull request #55 as
+  `cf1718305bba0117dd57c63678cbb3e3c587019c`; its tree matches its checked head
+  and both required checks passed. Production remained unchanged.
+- A fresh read-only host preflight found the documented
+  `markup-clone:26d906b512b43d25bea79846139aca9972d0abfc` rollback tag and image
+  ID absent while the private pointer still named them.
+- Root cause is the shared nightly job
+  `docker image prune -af --filter "until=24h"`. Docker removes images not
+  referenced by any container, so an immutable source-SHA tag alone did not
+  preserve the prior rollback artifact.
+- The current healthy production image
+  `markup-clone:e3f9c4d12986da641b01f758316c84e43013b3d8`, image ID
+  `sha256:8718bfa28b62f949515e27dad48a093ac071e06a4c4dbdeb9a44602ca2790dda`,
+  remains present and exactly matches the running container. It can become the
+  next rollback only after a stopped retainer references it before replacement.
+- `docs/plans/rollback-image-retention-2026-09-01.md` governs the focused fix.
+  The earlier deployment approval request is superseded; freeze and request
+  approval for a consolidated SHA only after this release-safety change passes
+  review.
+
 - [x] The launch pull request is no longer draft, all required checks pass, and
   the approved code is merged without bypassing an unexplained CI failure.
 - [x] Record the exact 40-character merged commit SHA:

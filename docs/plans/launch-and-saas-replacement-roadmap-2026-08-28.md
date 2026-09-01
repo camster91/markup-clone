@@ -52,9 +52,10 @@ next implementation slice.
 
 **Status:** in progress; the SSE/POST state-deduplication fix passed its
 authenticated live repetition on the exact deployed SHA. The 375px
-owner-surface accessibility fix is verified and merged as candidate
-`fa73b968fde3649c7f72c0ffaccd2397e383cff1`; exact-SHA deployment approval and
-production repetition remain before broader owner/client QA and cleanup.
+owner-surface accessibility fix is verified and merged. Exact-candidate
+preflight then exposed a nightly-prune rollback-retention defect; the focused
+release-safety fix must be reviewed before exact-SHA approval and production
+repetition can resume broader owner/client QA and cleanup.
 
 - Provision the first production operator through a bounded, documented,
   idempotent mechanism. Never commit or echo the password.
@@ -94,9 +95,11 @@ The authenticated live reply now renders exactly once before and after reload
 and exists as one database row. Broader QA then exposed sub-16px form controls
 and sub-44px interactive targets at 375px. The focused work is governed by
 `mobile-dashboard-accessibility-2026-09-01.md`. Pull request #54 is implemented,
-verified, and merged as exact candidate `fa73b968...`; do not resume production
-QA until that exact release is explicitly approved, deployed, and the failed
-check is repeated successfully.
+verified, and merged. Preflight then found the previously retained rollback image
+had been removed by the shared host's nightly prune; remediation is governed by
+`rollback-image-retention-2026-09-01.md`. Do not resume production QA until the
+consolidated release is reviewed, explicitly approved, deployed with a verified
+retainer, and the failed mobile check is repeated successfully.
 
 **Schema reconciliation note:** production now has 30 finished,
 non-rolled-back migrations. The guarded cleanup removed the confirmed-empty
