@@ -226,6 +226,33 @@ widget byte-for-byte by SHA-256 with the checked-out `public/widget.js`.
 
 ## Release identity and approval
 
+### 2026-09-01 mobile-accessibility candidate staging record
+
+- Pull request #54 passed Ashbi Local CI and GitGuardian, then merged without
+  bypass as exact `main` SHA
+  `fa73b968fde3649c7f72c0ffaccd2397e383cff1`. Its tree matches reviewed head
+  `a9572f2c4db2256254b2cc0d11b00bc7dd63b832`.
+- The focused 375px contract passes Chromium, Firefox, and WebKit. The full
+  Vitest suite passed 957 tests across 139 files; ESLint, TypeScript, Prisma
+  validation, package/widget builds, the production build, and diff checking
+  passed.
+- The broader E2E run passed 10 of 12 files. The remaining WebKit keyboard-tab
+  mismatch predates this change and is not represented as a green full-suite
+  result.
+- The current Prisma tooling chain reports the high-severity
+  [`deepmerge-ts@7.1.5` recursive-object
+  advisory](https://github.com/advisories/GHSA-ggr8-5vv4-36mx). Application source does not
+  invoke it, and `deepmerge-ts` is absent from the standalone and running
+  production runtime trees. This is tracked as an upstream build/config-tooling
+  upgrade rather than an accepted production request-path risk.
+- A fresh read-only public verifier passed from the candidate checkout at
+  `2026-09-01T10:18:27Z`. Production remains unchanged on exact SHA
+  `e3f9c4d12986da641b01f758316c84e43013b3d8` with retained rollback
+  `26d906b512b43d25bea79846139aca9972d0abfc`.
+- No backup, deployment, production mutation, email, integration delivery, or
+  client communication was performed during staging. Cameron's exact-SHA
+  approval is required immediately before deploying `fa73b968...`.
+
 - [x] The launch pull request is no longer draft, all required checks pass, and
   the approved code is merged without bypassing an unexplained CI failure.
 - [x] Record the exact 40-character merged commit SHA:
