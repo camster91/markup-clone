@@ -247,7 +247,7 @@ landed on `main`.
 - Session authentication, CSRF, scoped project/media access, role-safe DTOs,
   safe outbound URLs, secret redaction, attachment type restrictions, and
   server-derived presence identity
-- **Medium residuals (branch `cursor/audit-medium-residuals-3b24`):** AuthGate
+- **Medium residuals (`be5a652`, PR #65):** AuthGate
   offline vs anonymous (M4), collapsed ProjectDetail/PinThread SSE via
   `LiveEventsProvider` (M3), trusted client IP helper (M10),
   `attachment.create` audit (M6), mutating methods require Origin (M8)
