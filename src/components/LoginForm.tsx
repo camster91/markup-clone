@@ -88,7 +88,7 @@ export default function LoginForm({ onSuccess }: LoginFormProps = {}) {
             placeholder="you@example.com"
             required
             autoComplete="username"
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
         <div>
@@ -105,7 +105,7 @@ export default function LoginForm({ onSuccess }: LoginFormProps = {}) {
             onChange={(e) => setPassword(e.target.value)}
             required
             autoComplete="current-password"
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
       </div>
@@ -120,7 +120,7 @@ export default function LoginForm({ onSuccess }: LoginFormProps = {}) {
       <button
         type="submit"
         disabled={loading}
-        className="mt-4 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+        className="mt-4 min-h-11 bg-blue-600 text-white px-4 py-2 rounded-lg text-base sm:text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
       >
         {loading ? 'Signing in...' : 'Sign in'}
       </button>

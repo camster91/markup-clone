@@ -12,8 +12,13 @@ describe('dashboard accessibility baseline', () => {
   it('establishes readable mobile forms and 44px interaction targets', () => {
     const css = source('src/app/globals.css');
     expect(css).toContain('@media (max-width: 639px), (max-device-width: 639px)');
-    expect(css).toMatch(/input:not\(\[type="checkbox"\]\):not\(\[type="radio"\]\):not\(\[type="hidden"\]\),[\s\S]*select,[\s\S]*textarea[\s\S]*min-height: 44px;[\s\S]*font-size: 16px;/);
-    expect(css).toMatch(/button,[\s\S]*\[role="button"\],[\s\S]*a\[href\][\s\S]*min-width: 44px;[\s\S]*min-height: 44px;/);
+    expect(css).toMatch(/input:not\(\[type="checkbox"\]\):not\(\[type="radio"\]\):not\(\[type="hidden"\]\),[\s\S]*select,[\s\S]*textarea[\s\S]*min-height: 44px !important;[\s\S]*font-size: 16px !important;/);
+    expect(css).toMatch(/button,[\s\S]*\[role="button"\],[\s\S]*a\[href\][\s\S]*min-width: 44px !important;[\s\S]*min-height: 44px !important;/);
+    // LoginForm must not hard-code text-sm-only on phone (production 375px
+    // audit found 14px inputs when utilities beat the element contract).
+    const login = source('src/components/LoginForm.tsx');
+    expect(login).toContain('text-base sm:text-sm');
+    expect(login).toContain('min-h-11');
   });
 
   it('keeps screenshot pin and thread-close targets explicitly touch sized', () => {

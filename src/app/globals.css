@@ -37,23 +37,28 @@ body {
  * authenticated dashboard and managed review pages.
  */
 @media (max-width: 639px), (max-device-width: 639px) {
+  /*
+   * !important beats component Tailwind utilities (`text-sm`, `py-2`) that
+   * otherwise leave the public LoginForm at 14px / ~40px on production
+   * (verified 2026-09-06 at 375x812 on markup.ashbi.ca).
+   */
   input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]),
   select,
   textarea {
-    min-height: 44px;
-    font-size: 16px;
+    min-height: 44px !important;
+    font-size: 16px !important;
   }
 
   /* WebKit's native select ignores min-height in its compact appearance. */
   select {
-    height: 44px;
+    height: 44px !important;
   }
 
   button,
   [role="button"],
   a[href] {
-    min-width: 44px;
-    min-height: 44px;
+    min-width: 44px !important;
+    min-height: 44px !important;
   }
 
   button,

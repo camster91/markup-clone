@@ -110,7 +110,7 @@ export default function AuthGate({ onChange }: AuthGateProps = {}) {
             setState('loading');
             void checkSession();
           }}
-          className="rounded-md border border-amber-400 bg-white px-3 py-1.5 font-medium hover:bg-amber-100"
+          className="min-h-11 min-w-11 rounded-md border border-amber-400 bg-white px-3 py-1.5 font-medium hover:bg-amber-100"
         >
           Retry
         </button>
