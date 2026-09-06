@@ -16,6 +16,7 @@ import {
   validateInvitationPassword,
   validateInvitationToken,
 } from '@/lib/team-invitations';
+import { getClientIp } from '@/lib/request-ip';
 
 class InvitationUnavailableError extends Error {}
 class ActiveMembershipError extends Error {}
@@ -24,12 +25,6 @@ const unavailable = () => NextResponse.json(
   { error: 'Invitation unavailable' },
   { status: 404, headers: { 'Cache-Control': 'no-store' } },
 );
-
-function clientIp(req: Request): string {
-  return req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-    || req.headers.get('x-real-ip')
-    || 'unknown';
-}
 
 export async function POST(req: Request) {
   const originError = requireDashboardOrigin(req);
@@ -44,7 +39,7 @@ export async function POST(req: Request) {
   if (!token.ok) return unavailable();
   const tokenHash = hashInvitationToken(token.value);
 
-  const limit = consume(`invite:accept:${clientIp(req)}:${tokenHash}`, {
+  const limit = consume(`invite:accept:${getClientIp(req)}:${tokenHash}`, {
     maxTokens: 10,
     refillRate: 0.1,
   });

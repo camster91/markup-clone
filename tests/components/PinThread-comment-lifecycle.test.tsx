@@ -4,7 +4,9 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/lib/hooks/useLiveEvents', () => ({ useLiveEvents: vi.fn() }));
+vi.mock('@/components/LiveEventsProvider', () => ({
+  useProjectLiveEvents: vi.fn(),
+}));
 
 import PinThread from '@/components/PinThread';
 

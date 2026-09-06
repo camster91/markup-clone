@@ -28,17 +28,10 @@ import { SESSION_COOKIE, SESSION_TTL_SECONDS } from '@/lib/auth';
 import { verifyPassword } from '@/lib/password';
 import { consume } from '@/lib/rate-limit';
 import { ensureCsrfCookie } from '@/lib/csrf';
+import { getClientIp } from '@/lib/request-ip';
 import { randomBytes } from 'crypto';
 
 export const dynamic = 'force-dynamic';
-
-function clientIp(req: Request): string {
-  return (
-    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    req.headers.get('x-real-ip') ||
-    'unknown'
-  );
-}
 
 export async function POST(req: Request) {
   let body: { email?: unknown; password?: unknown };
@@ -65,7 +58,7 @@ export async function POST(req: Request) {
   // burns a token even on wrong passwords. Two buckets: per-IP and
   // per-email. maxTokens 10 + refillRate 0.1 ≈ 10 bursts then ~1
   // attempt every 10s.
-  const ip = clientIp(req);
+  const ip = getClientIp(req);
   const ipLimit = consume(`login:ip:${ip}`, { maxTokens: 10, refillRate: 0.1 });
   if (!ipLimit.ok) {
     return NextResponse.json(

@@ -8,7 +8,10 @@ import { hydrateRoot, type Root } from 'react-dom/client';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/lib/hooks/useLiveEvents', () => ({ useLiveEvents: vi.fn() }));
+vi.mock('@/components/LiveEventsProvider', () => ({
+  LiveEventsProvider: ({ children }: { children: React.ReactNode }) => children,
+  useProjectLiveEvents: vi.fn(),
+}));
 vi.mock('@/lib/hooks/useRecaptureStatus', () => ({
   useRecaptureStatus: vi.fn(() => ({
     status: null,

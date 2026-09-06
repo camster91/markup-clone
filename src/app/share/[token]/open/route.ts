@@ -9,6 +9,7 @@ import {
   shareAccessMaxAge,
 } from '@/lib/share-access';
 import { parseHost } from '@/lib/origin';
+import { getClientIp } from '@/lib/request-ip';
 
 const SHARE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
@@ -78,9 +79,7 @@ export async function POST(req: Request, { params }: Context) {
   const project = await findActiveShare(token);
   if (!project) return notFoundResponse();
 
-  const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-    || req.headers.get('x-real-ip')
-    || 'unknown';
+  const ip = getClientIp(req);
   const fingerprint = shareAccessCookieName(token).slice('markup.share.'.length);
   const limits = [
     consume(`share-open:ip:${ip}`, { maxTokens: 10, refillRate: 0.1 }),

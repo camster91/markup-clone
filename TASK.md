@@ -1,6 +1,6 @@
 # TASK.md — markup-clone execution board
 
-**Last updated:** 2026-09-01
+**Last updated:** 2026-09-06
 **Governing roadmap:**
 `docs/plans/launch-and-saas-replacement-roadmap-2026-08-28.md`
 
@@ -247,6 +247,10 @@ landed on `main`.
 - Session authentication, CSRF, scoped project/media access, role-safe DTOs,
   safe outbound URLs, secret redaction, attachment type restrictions, and
   server-derived presence identity
+- **Medium residuals (branch `cursor/audit-medium-residuals-3b24`):** AuthGate
+  offline vs anonymous (M4), collapsed ProjectDetail/PinThread SSE via
+  `LiveEventsProvider` (M3), trusted client IP helper (M10),
+  `attachment.create` audit (M6), mutating methods require Origin (M8)
 
 ### Production release evidence
 

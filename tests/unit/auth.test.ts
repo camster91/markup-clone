@@ -44,10 +44,37 @@ describe('isDashboardOrigin', () => {
     expect(isDashboardOrigin(makeReq({}))).toBe(false);
   });
 
-  it('accepts when sec-fetch-site is same-origin AND Host matches dashboard', () => {
+  it('accepts when sec-fetch-site is same-origin AND Host matches dashboard (GET)', () => {
     expect(
       isDashboardOrigin(
         makeReq({ 'sec-fetch-site': 'same-origin', host: 'markup.ashbi.ca' })
+      )
+    ).toBe(true);
+  });
+
+  it('rejects mutating methods without Origin even when sec-fetch-site is same-origin', () => {
+    for (const method of ['POST', 'PATCH', 'PUT', 'DELETE'] as const) {
+      expect(
+        isDashboardOrigin(
+          new Request('https://markup.ashbi.ca/api/test', {
+            method,
+            headers: {
+              'sec-fetch-site': 'same-origin',
+              host: 'markup.ashbi.ca',
+            },
+          })
+        )
+      ).toBe(false);
+    }
+  });
+
+  it('accepts mutating methods when Origin matches the dashboard host', () => {
+    expect(
+      isDashboardOrigin(
+        new Request('https://markup.ashbi.ca/api/test', {
+          method: 'POST',
+          headers: { origin: 'https://markup.ashbi.ca' },
+        })
       )
     ).toBe(true);
   });

@@ -19,6 +19,7 @@ import {
 } from '@/lib/validation';
 import { consume } from '@/lib/rate-limit';
 import { emit } from '@/lib/events';
+import { getClientIp } from '@/lib/request-ip';
 import {
   normalizeBrowserContext,
   parseDeveloperContext,
@@ -110,7 +111,7 @@ export async function POST(req: Request) {
     // Note: rate-limit state is in-process (see src/lib/rate-limit.ts).
     // Fine for the current single-instance deploy; will not share buckets
     // across instances if we ever scale horizontally.
-    const ip = req.headers.get('x-forwarded-for') ?? 'unknown';
+    const ip = getClientIp(req);
     const rateLimitKey = `${ip}:${projectId}`;
     const rateLimit = consume(rateLimitKey, { maxTokens: 30, refillRate: 0.1 });
     if (!rateLimit.ok) {

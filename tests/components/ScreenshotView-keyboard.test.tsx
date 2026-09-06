@@ -14,9 +14,10 @@ vi.mock('@/lib/hooks/usePresence', () => ({
   colorForUserId: () => 'bg-blue-500',
   shortLabelForUserId: () => 'reviewer',
 }));
-vi.mock('@/lib/hooks/useLiveEvents', () => ({
-  useLiveEvents: (options: { onEvent?: (event: unknown) => void }) => {
-    liveEventState.onEvent = options.onEvent;
+vi.mock('@/components/LiveEventsProvider', () => ({
+  LiveEventsProvider: ({ children }: { children: React.ReactNode }) => children,
+  useProjectLiveEvents: (handler: (event: unknown) => void) => {
+    liveEventState.onEvent = handler;
   },
 }));
 vi.mock('@/lib/hooks/useRecaptureStatus', () => ({
