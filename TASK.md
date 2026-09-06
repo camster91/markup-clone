@@ -247,10 +247,13 @@ landed on `main`.
 - Session authentication, CSRF, scoped project/media access, role-safe DTOs,
   safe outbound URLs, secret redaction, attachment type restrictions, and
   server-derived presence identity
-- **Medium residuals (`be5a652`, PR #65):** AuthGate
+- **Medium residuals (`be5a652`+, PR #65):** AuthGate
   offline vs anonymous (M4), collapsed ProjectDetail/PinThread SSE via
   `LiveEventsProvider` (M3), trusted client IP helper (M10),
-  `attachment.create` audit (M6), mutating methods require Origin (M8)
+  `attachment.create` audit (M6), mutating methods require Origin (M8).
+  Follow-up: public LoginForm mobile 16px/44px contract (globals.css
+  `!important` + LoginForm `text-base`/`min-h-11`) after production
+  375px sign-in audit found utilities winning the cascade.
 
 ### Production release evidence
 
