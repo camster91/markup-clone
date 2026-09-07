@@ -30,7 +30,7 @@
     "@markup/core": "file:./packages/markup-core",
     "@prisma/client": "^6.6.0",
     "dotenv": "^16.4.5",
-    "next": "^16.3.1",
+    "next": "^16.3.4",
     "prisma": "^6.6.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
