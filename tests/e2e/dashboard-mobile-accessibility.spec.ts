@@ -112,4 +112,32 @@ test.describe('dashboard mobile interaction contract', () => {
 
     await page.screenshot({ path: testInfo.outputPath('dashboard-mobile-controls-375.png'), fullPage: false });
   });
+
+  test('keeps the real LoginForm readable and touch sized at 375px', async ({ page }) => {
+    await page.route('**/api/auth/me', async (route) => {
+      await route.fulfill({ status: 401, contentType: 'application/json', body: '{"error":"Unauthorized"}' });
+    });
+    await page.goto('/');
+    const form = page.getByRole('form', { name: 'Sign in to the dashboard' });
+    await expect(form).toBeVisible();
+    for (const label of ['Email', 'Password']) {
+      const control = page.getByLabel(label, { exact: true });
+      await expect(control).toBeVisible();
+      const metrics = await control.evaluate((element) => {
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return { fontSize: Number.parseFloat(style.fontSize), height: rect.height };
+      });
+      expect(metrics.fontSize, `${label} font size`).toBeGreaterThanOrEqual(16);
+      expect(metrics.height, `${label} height`).toBeGreaterThanOrEqual(44);
+    }
+    const submit = form.getByRole('button', { name: /sign in/i });
+    const box = await submit.boundingBox();
+    expect(box?.height).toBeGreaterThanOrEqual(44);
+    const viewport = await page.evaluate(() => ({
+      clientWidth: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    }));
+    expect(viewport.scrollWidth).toBe(viewport.clientWidth);
+  });
 });

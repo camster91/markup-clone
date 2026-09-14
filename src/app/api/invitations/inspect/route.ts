@@ -3,22 +3,17 @@ import { prisma } from '@/lib/prisma';
 import { requireDashboardOrigin } from '@/lib/auth';
 import { consume } from '@/lib/rate-limit';
 import { hashInvitationToken, validateInvitationToken } from '@/lib/team-invitations';
+import { getClientIp } from '@/lib/request-ip';
 
 const unavailable = () => NextResponse.json(
   { error: 'Invitation unavailable' },
   { status: 404, headers: { 'Cache-Control': 'no-store' } },
 );
 
-function clientIp(req: Request): string {
-  return req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-    || req.headers.get('x-real-ip')
-    || 'unknown';
-}
-
 export async function POST(req: Request) {
   const originError = requireDashboardOrigin(req);
   if (originError) return originError;
-  const limit = consume(`invite:inspect:${clientIp(req)}`, { maxTokens: 30, refillRate: 0.5 });
+  const limit = consume(`invite:inspect:${getClientIp(req)}`, { maxTokens: 30, refillRate: 0.5 });
   if (!limit.ok) {
     return NextResponse.json(
       { error: 'Too many requests' },

@@ -61,6 +61,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { validateProjectId } from '@/lib/validation';
 import { assertProjectAccessible } from '@/lib/teams';
+import { audit } from '@/lib/audit';
 
 const ATTACHMENTS_DIR = process.env.ATTACHMENTS_DIR || '/data/attachments';
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024; // 8MB
@@ -285,6 +286,18 @@ export async function POST(req: Request) {
         size: file.size,
       },
       select: { id: true, kind: true, size: true },
+    });
+
+    audit({
+      actor: 'dashboard',
+      action: 'attachment.create',
+      target: attachment.id,
+      metadata: {
+        kind,
+        size: file.size,
+        commentId: commentIdToBind,
+        projectId: projectIdRes.value,
+      },
     });
 
     return NextResponse.json(

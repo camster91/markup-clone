@@ -7,6 +7,10 @@ import type { Pin, ProjectWithPages } from '@/lib/types';
 
 vi.mock('@/lib/hooks/usePresence', () => ({ usePresence: () => ({ myUserId: 'owner', others: [] }) }));
 vi.mock('@/lib/hooks/useLiveEvents', () => ({ useLiveEvents: () => undefined }));
+vi.mock('@/components/LiveEventsProvider', () => ({
+  LiveEventsProvider: ({ children }: { children: React.ReactNode }) => children,
+  useProjectLiveEvents: () => undefined,
+}));
 vi.mock('@/components/ScreenshotView', () => ({
   default: ({ screenshot, issueFilters }: { screenshot: { pins: Pin[] }; issueFilters?: import('@/lib/issue-metadata').IssueFilters }) => (
     <div data-testid="visible-pins">{screenshot.pins

@@ -8,6 +8,7 @@ import {
   LIMITS,
 } from '@/lib/validation';
 import { consume } from '@/lib/rate-limit';
+import { getClientIp } from '@/lib/request-ip';
 
 // POST /api/annotations
 //
@@ -114,7 +115,7 @@ export async function POST(req: Request) {
   // 60/min is plenty for human use. The bucket is shared with /api/pins
   // (same key shape) so a flood of widget submissions gets one
   // consistent cap rather than two stacked buckets.
-  const ip = req.headers.get('x-forwarded-for') ?? 'unknown';
+  const ip = getClientIp(req);
   const rateLimitKey = `${ip}:${projectId}`;
   const rateLimit = consume(rateLimitKey, { maxTokens: 60, refillRate: 1 });
   if (!rateLimit.ok) {

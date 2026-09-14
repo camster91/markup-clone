@@ -112,12 +112,24 @@ describe('attachment project ownership', () => {
   });
 
   it('stores the owning project on an authorized upload', async () => {
+    const { audit } = await import('@/lib/audit');
     const response = await uploadAttachment(uploadRequest(PROJECT_ID));
 
     expect(response.status).toBe(201);
     expect(mocks.attachment.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ projectId: PROJECT_ID }),
+      })
+    );
+    expect(audit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actor: 'dashboard',
+        action: 'attachment.create',
+        target: ATTACHMENT_ID,
+        metadata: expect.objectContaining({
+          kind: 'image',
+          projectId: PROJECT_ID,
+        }),
       })
     );
   });

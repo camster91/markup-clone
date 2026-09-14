@@ -80,7 +80,16 @@ export function isDashboardOrigin(req: Request): boolean {
     }
   }
   // No Origin header: browsers omit Origin on some same-origin
-  // navigations / <img> loads. Accept only when BOTH:
+  // GET/HEAD navigations / <img> / EventSource loads. Mutating
+  // methods (POST/PATCH/PUT/DELETE) always send Origin from a
+  // browser — do not accept sec-fetch-site alone for those, or a
+  // curl that only forges Sec-Fetch-Site would pass the gate.
+  const method = (req.method || 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') {
+    return false;
+  }
+
+  // Accept GET/HEAD only when BOTH:
   //   1. Sec-Fetch-Site: same-origin (browser-set, not a substitute
   //      for authentication — see requireDashboardAuth), AND
   //   2. Host / :authority matches the configured dashboard host

@@ -37,7 +37,8 @@ export type AuditAction =
   | 'team_invitation.create' | 'team_invitation.revoke' | 'team_invitation.accept'
   | 'review_round.create' | 'review_round.update'
   | 'review_sign_off.create' | 'review_sign_off.withdraw'
-  | 'developer_api_token.create' | 'developer_api_token.revoke';
+  | 'developer_api_token.create' | 'developer_api_token.revoke'
+  | 'attachment.create';
 
 export interface AuditEntry {
   actor: string;

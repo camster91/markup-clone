@@ -10,7 +10,8 @@
 // <DashboardProjects>, but scoped to a single project:
 //   - usePresence owns one project heartbeat/list poll and reads the
 //     active screenshot/cursor from a shared ref
-//   - useLiveEvents owns one project SSE stream
+//   - LiveEventsProvider owns one project SSE stream (shared with
+//     PinThread via useProjectLiveEvents)
 //   - useRecaptureStatus is hosted by <ScreenshotView> for each
 //     screenshot, exactly as in the old dashboard
 //   - the recapture button is wired to the same POST endpoint
@@ -37,7 +38,7 @@ import PresenceList from './PresenceList';
 import IssueFilters from './IssueFilters';
 import ReviewAssetUpload from './ReviewAssetUpload';
 import { usePresence, type PresenceActivity } from '@/lib/hooks/usePresence';
-import { useLiveEvents } from '@/lib/hooks/useLiveEvents';
+import { LiveEventsProvider, useProjectLiveEvents } from '@/components/LiveEventsProvider';
 import type { ProjectWithPages } from '@/lib/types';
 import { pinMatchesIssueFilters, type IssueFilters as IssueFilterValue } from '@/lib/issue-metadata';
 
@@ -49,6 +50,14 @@ export interface ProjectDetailProps {
 }
 
 export default function ProjectDetail({ initialProject }: ProjectDetailProps) {
+  return (
+    <LiveEventsProvider projectId={initialProject.id}>
+      <ProjectDetailInner initialProject={initialProject} />
+    </LiveEventsProvider>
+  );
+}
+
+function ProjectDetailInner({ initialProject }: ProjectDetailProps) {
   const [project, setProject] = useState<ProjectWithPages>(initialProject);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [refreshFailed, setRefreshFailed] = useState(false);
@@ -103,9 +112,9 @@ export default function ProjectDetail({ initialProject }: ProjectDetailProps) {
   }, [fetchProject]);
 
   // === Live updates (SSE) =================================================
-  // The hook subscribes to /api/events?projectId=X on mount and
-  // re-subscribes if the projectId changes. All events use one bounded
-  // refresh path; the periodic detail poll remains recovery.
+  // LiveEventsProvider owns the single EventSource; this handler
+  // refreshes the project tree. PinThread registers separately on the
+  // same fan-out for optimistic comment appends.
   const refreshFromLiveEvent = useCallback(() => {
     if (liveRefreshInFlightRef.current) return;
     liveRefreshInFlightRef.current = true;
@@ -113,10 +122,7 @@ export default function ProjectDetail({ initialProject }: ProjectDetailProps) {
       liveRefreshInFlightRef.current = false;
     });
   }, [fetchProject]);
-  useLiveEvents({
-    projectId: project.id,
-    onEvent: refreshFromLiveEvent,
-  });
+  useProjectLiveEvents(refreshFromLiveEvent);
 
   return (
     <div>

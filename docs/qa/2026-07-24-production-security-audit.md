@@ -115,3 +115,18 @@ npm run lint
 3. **Webhook https-only** may break operators who pointed integrations at plain `http://` receivers — they must move to HTTPS.
 4. Medium items M1 and M2 are closed locally. Horizontal realtime fan-out still
    needs shared pub/sub before more than one application replica is introduced.
+
+## 2026-09-06 medium residuals follow-up
+
+Branch `cursor/audit-medium-residuals-3b24` closes additional Medium hardening
+items that remained after the Critical/High patch set and the 2026-08-08
+managed-share / transport follow-ups (IDs below are residual-board labels,
+not the original 2026-07-24 Medium table):
+
+| ID | Change |
+|---|---|
+| M4 | `AuthGate` distinguishes network failure (`offline` + Retry) from HTTP `!ok` (`anonymous` + LoginForm). |
+| M3 | `LiveEventsProvider` owns one project SSE stream; `PinThread` / `ProjectDetail` subscribe via `useProjectLiveEvents` (no-op outside provider for share). |
+| M10 | Shared `getClientIp()` prefers `x-real-ip`, else **last** `x-forwarded-for` hop; wired through login/pins/annotations/invitations/share. |
+| M6 | Successful attachment create emits `attachment.create` audit. |
+| M8 | `isDashboardOrigin`: POST/PATCH/PUT/DELETE without Origin return false (sec-fetch-site alone is GET/HEAD only). |

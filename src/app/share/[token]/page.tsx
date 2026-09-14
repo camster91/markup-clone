@@ -34,6 +34,7 @@ import { notFound, redirect } from 'next/navigation';
 import { cookies, headers } from 'next/headers';
 import { prisma } from '@/lib/prisma';
 import { audit } from '@/lib/audit';
+import { getClientIp } from '@/lib/request-ip';
 import ScreenshotView from '@/components/ScreenshotView';
 import type { ScreenshotWithPins } from '@/lib/types';
 import {
@@ -175,10 +176,7 @@ export default async function PublicSharePage({ params, searchParams }: PageProp
   // recorded for forensics not for serialization.
   try {
     const headerStore = await headers();
-    const ip =
-      headerStore.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-      headerStore.get('x-real-ip') ||
-      'unknown';
+    const ip = getClientIp({ headers: headerStore });
     const userAgent = headerStore.get('user-agent') || 'unknown';
     // We log even on a "bad token" so the audit row exists for
     // security review. The target is either the project's real id

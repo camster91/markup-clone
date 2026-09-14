@@ -4,7 +4,9 @@ import React from 'react';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/lib/hooks/useLiveEvents', () => ({ useLiveEvents: vi.fn() }));
+vi.mock('@/components/LiveEventsProvider', () => ({
+  useProjectLiveEvents: vi.fn(),
+}));
 
 import PinThread from '@/components/PinThread';
 import type { Pin } from '@/lib/types';

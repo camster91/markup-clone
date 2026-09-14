@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import type { FeedbackComment, IssueOptions, Pin } from '@/lib/types';
-import { useLiveEvents } from '@/lib/hooks/useLiveEvents';
+import { useProjectLiveEvents } from '@/components/LiveEventsProvider';
 import { MENTION_RE } from '@/lib/mentions';
 import { formatDateTime } from '@/lib/date-format';
 import { dashboardHeaders } from '@/lib/client-origin';
@@ -75,12 +75,12 @@ export default function PinThread({
 }: {
   pin: ThreadPin;
   /**
-   * The project this pin belongs to. Used to scope the SSE subscription
+   * The project this pin belongs to. Used to scope live-event handling
    * so a new-comment event for THIS pin triggers an optimistic append.
    * Optional — when omitted (e.g. a unit test renders the thread in
-   * isolation), the SSE hook short-circuits and the thread falls back to
-   * the props-driven comment list (the ScreenshotView's own useLiveEvents
-   * call is the primary update path).
+   * isolation, or the public share view has no LiveEventsProvider),
+   * useProjectLiveEvents no-ops and the thread falls back to the
+   * props-driven comment list. Share is read-only.
    */
   projectId?: string | null;
   /**
@@ -177,42 +177,49 @@ export default function PinThread({
   }, []);
 
   // === Live updates (SSE) =================================================
-  // Subscribe to the project SSE stream and optimistically append any
-  // new-comment event whose pinId matches the pin we're rendering.
-  // The dispatch goes through onCommentAdded (the same callback the
-  // POST handler uses) so the parent ScreenshotView owns the source
-  // of truth for the comment list. The ScreenshotView's own
-  // useLiveEvents also subscribes, so this is "belt and suspenders"
-  // — both layers dedupe on comment id, and a slow SSE event
-  // combined with a slow POST roundtrip can never double-append.
+  // Subscribe via the project LiveEventsProvider fan-out and
+  // optimistically append any new-comment event whose pinId matches
+  // the pin we're rendering. The dispatch goes through onCommentAdded
+  // (the same callback the POST handler uses) so the parent
+  // ScreenshotView owns the source of truth for the comment list.
+  // ProjectDetail also refreshes from the same stream — both layers
+  // dedupe on comment id, and a slow SSE event combined with a slow
+  // POST roundtrip can never double-append.
   //
   // Note: we filter on `pin.id` here, NOT on the screenshot id,
   // because the route's emit() carries the pinId, not the
   // screenshotId, in the payload. Multiple PinThread instances can
   // be open (one per pin) but only the one whose `pin.id` matches
   // the event will fire onCommentAdded.
-  useLiveEvents({
-    projectId: projectId ?? null,
-    onEvent: (event) => {
-      if (event.type === 'new-comment') {
-        const payload = event.payload as {
-          pinId: string;
-          comment: FeedbackComment;
-        };
-        if (payload.pinId === pin.id && payload.comment && payload.comment.id) {
-          // Skip if the comment is already in the local list (a
-          // slow POST + slow SSE race). The ScreenshotView's
-          // setPins dedupes the same way, so a duplicate never
-          // reaches the user.
-          if (comments.some(c => c.id === payload.comment.id)) return;
-          setComments((current) => current.some((comment) => comment.id === payload.comment.id)
-            ? current
-            : [...current, payload.comment]);
-          onCommentAdded(pin.id, payload.comment);
-        }
+  //
+  // Outside LiveEventsProvider (share / isolated tests) this no-ops.
+  // `projectId` remains part of the public props API; the provider
+  // owns the EventSource, so a missing projectId skips handling.
+  const commentsRef = useRef(comments);
+  useEffect(() => {
+    commentsRef.current = comments;
+  }, [comments]);
+  const onLiveEvent = useCallback((event: { type: string; payload: unknown }) => {
+    if (!projectId) return;
+    if (event.type === 'new-comment') {
+      const payload = event.payload as {
+        pinId: string;
+        comment: FeedbackComment;
+      };
+      if (payload.pinId === pin.id && payload.comment && payload.comment.id) {
+        // Skip if the comment is already in the local list (a
+        // slow POST + slow SSE race). The ScreenshotView's
+        // setPins dedupes the same way, so a duplicate never
+        // reaches the user.
+        if (commentsRef.current.some((c) => c.id === payload.comment.id)) return;
+        setComments((current) => current.some((comment) => comment.id === payload.comment.id)
+          ? current
+          : [...current, payload.comment]);
+        onCommentAdded(pin.id, payload.comment);
       }
-    },
-  });
+    }
+  }, [projectId, pin.id, onCommentAdded]);
+  useProjectLiveEvents(onLiveEvent);
 
   // === Paste handler =====================================================
   // Intercept paste events on the textarea. If the clipboard
