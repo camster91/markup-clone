@@ -1,0 +1,73 @@
+# Raw Compose application. Coolify resolves paths from the repository root.
+# Phase one retains the existing database; its adoption is a separate cutover.
+services:
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrator
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Configure the existing or isolated database URL}
+    networks:
+      - database
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+      NEXT_TELEMETRY_DISABLED: "1"
+      DATABASE_URL: ${DATABASE_URL:?Configure the existing or isolated database URL}
+      DASHBOARD_HOST: ${DASHBOARD_HOST:?Configure the exact dashboard origin}
+      SCREENSHOTS_DIR: /data/screenshots
+      DELIVERY_WORKER_SECRET: ${DELIVERY_WORKER_SECRET:?Preserve the existing worker secret}
+      INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:?Preserve the existing encryption key}
+      MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
+      MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-}
+      MUP_API_KEY: ${MUP_API_KEY:-}
+      MATON_API_KEY: ${MATON_API_KEY:-}
+      MATON_API_KEY_ASHBI: ${MATON_API_KEY_ASHBI:-}
+      MATON_LLM_KEY: ${MATON_LLM_KEY:-}
+      MATON_LLM_MODEL: ${MATON_LLM_MODEL:-}
+      MATON_LLM_URL: ${MATON_LLM_URL:-}
+      RELEASE_REV: ${SOURCE_COMMIT:-unknown}
+    ports:
+      - "127.0.0.1:${MARKUP_LOCAL_PORT:-3030}:3000"
+    volumes:
+      - type: bind
+        source: ${MARKUP_SCREENSHOTS_PATH:?Set the preserved screenshot path}
+        target: /data/screenshots
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MARKUP_BACKUPS_PATH:?Set the preserved backup path}
+        target: /data/backups
+        bind:
+          create_host_path: false
+      - ./scripts:/opt/app-scripts:ro
+    networks:
+      - database
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  database:
+    external: true
+    name: ${MARKUP_DATABASE_NETWORK:?Set markup-net or a separate candidate network}
