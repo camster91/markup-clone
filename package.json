@@ -46,7 +46,7 @@
     "@vitejs/plugin-react": "^4.3.3",
     "@vitest/coverage-v8": "^4.1.11",
     "eslint": "^9",
-    "eslint-config-next": "^16.3.6",
+    "eslint-config-next": "^16.3.8",
     "jsdom": "^29.1.1",
     "supertest": "^7.3.0",
     "tailwindcss": "^4",
