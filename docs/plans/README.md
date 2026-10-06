@@ -25,6 +25,11 @@ which are retained as implementation evidence.
 
 ## Active implementation
 
+- `coolify-consolidation-2026-10-02.md` — **Configuration preparation.** Cameron's
+  approved hosting consolidation; preserves the separate launch/pilot gates.
+  Application and subsequent database adoption, worker continuity, backups and
+  signed main deployment must be verified before declaring migration complete.
+
 - `mobile-dashboard-accessibility-2026-09-01.md` — **Deployed; authenticated
   production repetition pending.** The exact deployed reply-dedup
   release passed its live repetition, then the 375px owner surface exposed

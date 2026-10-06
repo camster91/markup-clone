@@ -12,6 +12,20 @@ its stated evidence exists; local tests do not silently close it.
 
 ## In progress
 
+### H1 — Adopt Markup and its database into Coolify
+
+- **Status:** in-progress; configuration prepared, not deployed.
+- **Source:** Cameron's approved VPS consolidation;
+  `docs/plans/coolify-consolidation-2026-10-02.md`.
+- **Prepared:** raw Compose app/migration configuration, required existing bind
+  storage and network, host backup/image guard, and explicit worker/DB adoption
+  instructions in `deploy/COOLIFY.md`.
+- **Verified baseline:** database/file recovery; local main unit tests, lint,
+  types and production build. Three shell-bootstrap tests require Linux.
+- **Remaining:** guard rehearsal, isolated container build/runtime, app cutover,
+  worker target update, database adoption, rollback and signed main auto-deploy.
+- Product launch and client pilot evidence remain under L1 below.
+
 ### L1 — Provision the first production operator and run authenticated QA
 
 - **Status:** in-progress
