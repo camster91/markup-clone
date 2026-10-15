@@ -9,7 +9,8 @@ name: Build and Push Image
 # Conventions:
 #   - Image: ghcr.io/camster91/<repo>:main (or :<tag> for releases)
 #   - Multi-arch: linux/amd64 + linux/arm64 (Raspberry Pi, Apple Silicon hosts)
-#   - Buildx cache pushed to GHCR type=cache (saves ~3min per build)
+#   - Buildx layer cache in the GitHub Actions cache (type=gha)
+#   - Pull requests build only; they never push or move :latest
 #   - SBOM + provenance attestations enabled (for supply-chain trust)
 
 on:
@@ -71,7 +72,6 @@ jobs:
           else
             TAG="${REF#refs/heads/}"
           fi
-          SHA_SHORT="${{ github.event.pull_request.head.sha || github.sha }}" | head -c 7
           SHA_SHORT=$(echo "${{ github.sha }}" | head -c 7)
           echo "image=ghcr.io/camster91/${REPO_NAME}" >> $GITHUB_OUTPUT
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
@@ -84,20 +84,12 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Cache Docker layers
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.ref_name }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-main
-            ${{ runner.os }}-buildx-
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -105,13 +97,15 @@ jobs:
           context: .
           file: ${{ inputs.dockerfile || 'Dockerfile' }}
           platforms: ${{ inputs.platforms || 'linux/amd64,linux/arm64' }}
-          push: true
+          # Pull requests build to prove the image builds, but never push:
+          # a PR image must not overwrite a deployable tag.
+          push: ${{ github.event_name != 'pull_request' }}
           tags: |
             ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
             ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}-${{ steps.meta.outputs.sha }}
-            ${{ steps.meta.outputs.image }}:latest
-          cache-from: type=local,src=/tmp/.buildx-cache
-          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+            ${{ steps.meta.outputs.tag == 'main' && format('{0}:latest', steps.meta.outputs.image) || '' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           provenance: true
           sbom: true
           labels: |
@@ -121,6 +115,7 @@ jobs:
             org.opencontainers.image.created=${{ github.event.repository.updated_at }}
 
       - name: Image summary
+        if: github.event_name != 'pull_request'
         run: |
           echo "## Image published" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

@@ -12,12 +12,14 @@ import { prisma } from '@/lib/prisma';
 import { requireDashboardAuth, generateApiKey } from '@/lib/auth';
 import { audit } from '@/lib/audit';
 import { unlink } from 'fs/promises';
+import path from 'path';
 import { validateProjectName, validateProjectId } from '@/lib/validation';
 import { assertProjectAccessible, assertProjectAdmin } from '@/lib/teams';
 import { requireCsrfToken } from '@/lib/csrf';
 import { projectDetailInclude, serializeProjectDetail } from '@/lib/project-detail-dto';
 
 const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || '/data/screenshots';
+const ATTACHMENTS_DIR = process.env.ATTACHMENTS_DIR || '/data/attachments';
 
 export async function GET(
   req: Request,
@@ -78,26 +80,54 @@ export async function DELETE(
       where: { id },
       select: { id: true, name: true, domain: true },
     });
-    const screenshots = await prisma.screenshot.findMany({
-      where: { page: { projectId: id } },
-      select: { storageKey: true },
-    });
-    const reviewAssets = await prisma.reviewAsset.findMany({
-      where: { projectId: id },
-      select: { storageKey: true },
-    });
+    // Collect every file the project owns before the rows cascade away:
+    // screenshots, their recapture history, PDF sources, and comment
+    // attachments (older attachment rows may only link via the comment).
+    const [screenshots, versions, reviewAssets, attachments] = await Promise.all([
+      prisma.screenshot.findMany({
+        where: { page: { projectId: id } },
+        select: { storageKey: true },
+      }),
+      prisma.screenshotVersion.findMany({
+        where: { screenshot: { page: { projectId: id } } },
+        select: { storageKey: true },
+      }),
+      prisma.reviewAsset.findMany({
+        where: { projectId: id },
+        select: { storageKey: true },
+      }),
+      prisma.attachment.findMany({
+        where: {
+          OR: [
+            { projectId: id },
+            { comment: { pin: { screenshot: { page: { projectId: id } } } } },
+          ],
+        },
+        select: { storageKey: true },
+      }),
+    ]);
+    const files = new Set<string>([
+      ...[...screenshots, ...versions, ...reviewAssets].map((f) => path.join(SCREENSHOTS_DIR, f.storageKey)),
+      ...attachments.map((f) => path.join(ATTACHMENTS_DIR, f.storageKey)),
+    ]);
+
+    // Delete the rows first. If this fails, every file is still in place
+    // and the project keeps working; unlinking first would leave rows
+    // pointing at missing images.
+    await prisma.project.delete({ where: { id } });
 
     let filesRemoved = 0;
-    for (const file of [...screenshots, ...reviewAssets]) {
+    let filesFailed = 0;
+    for (const file of files) {
       try {
-        await unlink(`${SCREENSHOTS_DIR}/${file.storageKey}`);
+        await unlink(file);
         filesRemoved++;
-      } catch {
-        // File may already be missing; continue
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        filesFailed++;
+        console.error('Project delete: could not remove file', file, err);
       }
     }
-
-    await prisma.project.delete({ where: { id } });
     audit({
       actor: id,
       action: 'project.delete',
@@ -105,7 +135,7 @@ export async function DELETE(
       metadata: { name: project?.name, domain: project?.domain, teamId: access.teamId },
     });
 
-    return NextResponse.json({ deleted: true, filesRemoved, projects: 1 });
+    return NextResponse.json({ deleted: true, filesRemoved, filesFailed, projects: 1 });
   } catch (error) {
     console.error('Project delete error:', error);
     return NextResponse.json({ error: 'Failed to delete project' }, { status: 500 });

@@ -1,7 +1,8 @@
 name: CI Build
 
-# Build + test + lint workflow. Verifies the project builds cleanly, all unit
-# and integration tests pass, and lint is clean. No deploy, no secrets required.
+# Build + typecheck + test workflow. Verifies the project builds cleanly, types
+# check, and all unit and integration tests pass. Lint gates in lint.yml. No
+# deploy, no secrets required.
 
 on:
   push:
@@ -42,25 +43,9 @@ jobs:
           # Placeholder for prisma schema validation (no DB connection made during generate)
           DATABASE_URL: postgresql://placeholder:***@localhost:5432/placeholder
 
-      - name: Type check (if configured)
-        run: |
-          if grep -q '"typecheck"\|"type-check"' package.json; then
-            echo "Running typecheck..."
-            npm run typecheck || npm run type-check || npx tsc --noEmit
-          else
-            echo "No typecheck script found, skipping."
-          fi
-        continue-on-error: true
-
-      - name: Lint (if configured)
-        run: |
-          if grep -q '"lint"' package.json; then
-            echo "Running lint..."
-            npm run lint
-          else
-            echo "No lint script found, skipping."
-          fi
-        continue-on-error: true
+      # Lint runs (and gates) in lint.yml.
+      - name: Type check
+        run: npm run typecheck
 
       - name: Unit + integration tests
         run: npm test

@@ -52,6 +52,7 @@ model Project {
   updatedAt           DateTime           @updatedAt
 
   @@index([archivedAt])
+  @@index([teamId])
 }
 
 // Server-to-server developer credential. The browser-visible Project.apiKey
@@ -382,6 +383,8 @@ model Screenshot {
   // rows (and their PNGs) are pruned by scripts/prune-screenshots.sh
   // at the same 90-day retention as the parent Screenshot.
   versions   ScreenshotVersion[]
+
+  @@index([pageId])
 }
 
 // ScreenshotVersion is the immutable per-recapture record. It carries
@@ -440,6 +443,7 @@ model Pin {
   createdAt              DateTime     @default(now())
   updatedAt              DateTime     @updatedAt
 
+  @@index([screenshotId])
   @@index([reviewRoundId])
   @@index([assigneeId])
 }
@@ -554,6 +558,8 @@ model Comment {
   attachments Attachment[]
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
+
+  @@index([pinId])
 }
 
 // Attachment is a file (image, voice, video) attached to a Comment. The
