@@ -14,7 +14,21 @@
 //   - reject IP literals (v4 / v6 / hex / octal / decimal forms)
 //   - reject known metadata / internal host suffixes
 //   - resolve DNS and reject private / reserved resolved addresses
-//     (blocks DNS-rebinding to nip.io → private IP)
+//     (blocks hostnames that statically resolve to a private IP,
+//     e.g. 127.0.0.1.nip.io)
+//
+// Known limitation — DNS rebinding (TOCTOU): `assertSafeOutboundUrl`
+// resolves the hostname, then the caller's `fetch()` resolves it AGAIN.
+// A hostile authoritative server with a 0-TTL record can answer the
+// check with a public IP and the fetch with a private one. Pinning the
+// checked address into the connection needs a custom undici dispatcher
+// (`undici` is not a declared dependency) or swapping every adapter off
+// `fetch` onto `node:https` + a pinned `lookup`. Until then the residual
+// risk is bounded by the https-only rule: a rebound connection to an
+// internal service still has to present a certificate valid for the
+// attacker's hostname, so the TLS handshake fails before any request
+// bytes are sent. `redirect: 'error'` on every adapter closes the
+// redirect variant.
 //
 // Callers pass the raw URL string; on success they get a normalized
 // absolute URL string ready to store / fetch.
@@ -64,16 +78,92 @@ export function isBlockedIpv4(ip: string): boolean {
   return false;
 }
 
-/** True if an IPv6 address is loopback / link-local / ULA / mapped-private. */
+/**
+ * Parse an IPv6 literal into eight 16-bit groups. Handles `::`
+ * compression, a trailing dotted-quad (`::ffff:1.2.3.4`) and a zone id
+ * (`fe80::1%eth0`). Returns null when the string is not valid IPv6.
+ */
+export function parseIpv6(ip: string): number[] | null {
+  let s = ip.toLowerCase();
+  const zone = s.indexOf('%');
+  if (zone >= 0) s = s.slice(0, zone);
+  if (s.startsWith('[') && s.endsWith(']')) s = s.slice(1, -1);
+
+  // Fold a trailing embedded IPv4 into two hex groups.
+  const lastColon = s.lastIndexOf(':');
+  if (lastColon < 0) return null;
+  const tail = s.slice(lastColon + 1);
+  if (tail.includes('.')) {
+    const octets = tail.split('.');
+    if (octets.length !== 4 || octets.some((o) => !/^\d{1,3}$/.test(o) || Number(o) > 255)) {
+      return null;
+    }
+    const [a, b, c, d] = octets.map(Number) as [number, number, number, number];
+    s = `${s.slice(0, lastColon + 1)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+
+  const halves = s.split('::');
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(':') : [];
+  const rest = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  let groups: string[];
+  if (halves.length === 1) {
+    if (head.length !== 8) return null;
+    groups = head;
+  } else {
+    const fill = 8 - head.length - rest.length;
+    if (fill < 1) return null;
+    groups = [...head, ...Array<string>(fill).fill('0'), ...rest];
+  }
+  if (groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return null;
+  return groups.map((g) => parseInt(g, 16));
+}
+
+function embeddedIpv4(groups: number[]): string {
+  const hi = groups[6]!;
+  const lo = groups[7]!;
+  return `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+}
+
+/**
+ * True if an IPv6 address is loopback / unspecified / link-local /
+ * site-local / ULA / multicast, an IPv4-embedding form (mapped,
+ * translated, compatible) whose IPv4 is blocked, or a transition
+ * prefix that can tunnel to arbitrary IPv4 (NAT64, 6to4, Teredo).
+ */
 export function isBlockedIpv6(ip: string): boolean {
-  const lower = ip.toLowerCase();
-  if (lower === '::1' || lower === '::') return true;
-  if (lower.startsWith('fe80:') || lower.startsWith('fe8') || lower.startsWith('fe9') ||
-      lower.startsWith('fea') || lower.startsWith('feb')) return true; // fe80::/10
-  if (lower.startsWith('fc') || lower.startsWith('fd')) return true; // fc00::/7 ULA
-  // IPv4-mapped :ffff:a.b.c.d
-  const mapped = lower.match(/^:ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  if (mapped) return isBlockedIpv4(mapped[1]);
+  const g = parseIpv6(ip);
+  if (!g) return true; // unparseable → treat as blocked
+  const [g0, g1, g2, g3, g4, g5] = g as [number, number, number, number, number, number];
+  const first96Zero = g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0;
+
+  // ::/128 unspecified, ::1/128 loopback, and IPv4-compatible ::a.b.c.d
+  if (first96Zero && g5 === 0) {
+    if (g[6] === 0 && (g[7] === 0 || g[7] === 1)) return true;
+    return isBlockedIpv4(embeddedIpv4(g));
+  }
+  // ::ffff:0:0/96 IPv4-mapped (dotted or hex form, e.g. ::ffff:7f00:1)
+  if (first96Zero && g5 === 0xffff) return isBlockedIpv4(embeddedIpv4(g));
+  // ::ffff:0:a.b.c.d/96 IPv4-translated (RFC 2765)
+  if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0xffff && g5 === 0) {
+    return isBlockedIpv4(embeddedIpv4(g));
+  }
+  // 64:ff9b::/96 NAT64 well-known prefix and 64:ff9b:1::/48 local-use NAT64
+  if (g0 === 0x64 && g1 === 0xff9b) return true;
+  // 2002::/16 6to4 (embeds an arbitrary IPv4 in bits 16-48)
+  if (g0 === 0x2002) return true;
+  // 2001:0::/32 Teredo (embeds an obfuscated IPv4)
+  if (g0 === 0x2001 && g1 === 0) return true;
+  // 2001:db8::/32 documentation
+  if (g0 === 0x2001 && g1 === 0xdb8) return true;
+  // 100::/64 discard-only
+  if (g0 === 0x100 && g1 === 0 && g2 === 0 && g3 === 0) return true;
+  // fe80::/10 link-local and fec0::/10 site-local (deprecated) → fe80::/9
+  if ((g0 & 0xff80) === 0xfe80) return true;
+  // fc00::/7 unique-local
+  if ((g0 & 0xfe00) === 0xfc00) return true;
+  // ff00::/8 multicast
+  if ((g0 & 0xff00) === 0xff00) return true;
   return false;
 }
 
@@ -111,7 +201,12 @@ export function validateOutboundUrlShape(raw: unknown): UrlCheckResult {
     return { ok: false, error: 'url must not include credentials' };
   }
 
-  const host = url.hostname.toLowerCase();
+  // `URL.hostname` keeps the brackets on IPv6 literals ("[::1]"), which
+  // `isIP` does not recognise — strip them for the checks below. Also
+  // drop a single trailing root dot so "localhost." matches the denylist.
+  let host = url.hostname.toLowerCase();
+  if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
+  if (host.endsWith('.')) host = host.slice(0, -1);
   if (!host) return { ok: false, error: 'url must have a hostname' };
 
   if (BLOCKED_HOSTS.has(host)) {
@@ -128,7 +223,7 @@ export function validateOutboundUrlShape(raw: unknown): UrlCheckResult {
   // Also catch hex/octal dotted forms that `new URL` may normalize
   // differently across Node versions — reject any hostname that
   // looks like an address encoding.
-  if (isIP(host)) {
+  if (isIP(host) || host.includes(':')) {
     return { ok: false, error: 'url must not be an IP address' };
   }
   if (/^0x[0-9a-f]+$/i.test(host) || /^\d+$/.test(host)) {

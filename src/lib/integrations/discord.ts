@@ -10,6 +10,7 @@
 // Body shape (per https://discord.com/developers/docs/resources/webhook#execute-webhook):
 //   {
 //     "content": "optional plain text (supports @mentions)",
+//     "allowed_mentions": { "parse": [] },   // never ping — see below
 //     "embeds": [
 //       {
 //         "title": "...",
@@ -42,6 +43,11 @@ export function buildDiscordBody(payload: PinPayload) {
   const { pin, project, path, commentText } = payload;
   return {
     content: `New pin on **${project.name}** (${path})`,
+    // `content`, the embed title and description carry widget-controlled
+    // text (project name, page path, comment). Without this, a comment
+    // containing `@everyone`, `@here`, `<@&role>` or `<@user>` would ping
+    // the channel. An empty `parse` list disables every mention type.
+    allowed_mentions: { parse: [] as string[] },
     embeds: [
       {
         title: `${project.name} — ${path}`,
