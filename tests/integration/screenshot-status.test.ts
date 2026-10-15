@@ -31,6 +31,7 @@ vi.mock('@/lib/prisma', () => ({
 vi.mock('@/lib/teams', () => teams);
 
 import { GET } from '../../src/app/api/screenshots/[id]/status/route';
+import { requireAuth } from '@/lib/auth';
 
 const FIXED_CAPTURED_AT = new Date('2026-06-14T15:00:00.000Z');
 const PROJECT_ID = '99999999-9999-4999-8999-999999999999';
@@ -38,6 +39,8 @@ const PROJECT_ID = '99999999-9999-4999-8999-999999999999';
 // shape. The old origin-only key was one global bucket for every user.
 const STATUS_ORIGIN_KEY = 'status:origin:https://markup.ashbi.ca:11111111-1111-1111-1111-111111111111';
 const OTHER_SHOT_KEY = 'status:origin:https://markup.ashbi.ca:33333333-3333-3333-3333-333333333333';
+// Caller-wide bucket for the session user from the global requireAuth mock.
+const STATUS_USER_KEY = 'status-user:origin:https://markup.ashbi.ca:00000000-0000-4000-8000-000000000001';
 
 function makeReq(url: string, headers: Record<string, string> = {}): Request {
   return new Request(url, { method: 'GET', headers });
@@ -182,6 +185,7 @@ describe('GET /api/screenshots/[id]/status — rate limit', () => {
   beforeEach(() => {
     _resetBucket(STATUS_ORIGIN_KEY);
     _resetBucket(OTHER_SHOT_KEY);
+    _resetBucket(STATUS_USER_KEY);
     vi.useFakeTimers({ shouldAdvanceTime: false });
     vi.setSystemTime(new Date('2026-06-14T15:00:00.000Z'));
   });
@@ -189,6 +193,7 @@ describe('GET /api/screenshots/[id]/status — rate limit', () => {
   afterEach(() => {
     _resetBucket(STATUS_ORIGIN_KEY);
     _resetBucket(OTHER_SHOT_KEY);
+    _resetBucket(STATUS_USER_KEY);
     vi.useRealTimers();
   });
 
@@ -242,5 +247,46 @@ describe('GET /api/screenshots/[id]/status — rate limit', () => {
       { params: Promise.resolve({ id: '33333333-3333-3333-3333-333333333333' }) }
     );
     expect(res.status).toBe(200);
+  });
+
+  it('caps a caller rotating through unknown ids before any DB lookup', async () => {
+    const { prisma } = await import('@/lib/prisma');
+    const lookup = prisma.screenshot.findUnique as unknown as ReturnType<typeof vi.fn>;
+    lookup.mockClear();
+    let last = 200;
+    for (let i = 0; i < 601; i++) {
+      const id = `44444444-4444-4444-8444-${String(i).padStart(12, '0')}`;
+      const res = await GET(
+        makeReq(`https://markup.ashbi.ca/api/screenshots/${id}/status`, { origin: 'https://markup.ashbi.ca' }),
+        { params: Promise.resolve({ id }) }
+      );
+      last = res.status;
+      _resetBucket(`status:origin:https://markup.ashbi.ca:${id}`);
+    }
+    expect(last).toBe(429);
+    expect(lookup).toHaveBeenCalledTimes(600);
+  });
+});
+
+describe('GET /api/screenshots/[id]/status — session lookup', () => {
+  const SHOT = '55555555-5555-4555-8555-555555555555';
+  const authMock = requireAuth as unknown as ReturnType<typeof vi.fn>;
+
+  it('looks the session up once per request (it doubles as the rate-limit identity)', async () => {
+    authMock.mockClear();
+    await GET(
+      makeReq(`https://markup.ashbi.ca/api/screenshots/${SHOT}/status`, { origin: 'https://markup.ashbi.ca' }),
+      { params: Promise.resolve({ id: SHOT }) }
+    );
+    expect(authMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns 401 without a session', async () => {
+    authMock.mockResolvedValueOnce(null);
+    const res = await GET(
+      makeReq(`https://markup.ashbi.ca/api/screenshots/${SHOT}/status`, { origin: 'https://markup.ashbi.ca' }),
+      { params: Promise.resolve({ id: SHOT }) }
+    );
+    expect(res.status).toBe(401);
   });
 });

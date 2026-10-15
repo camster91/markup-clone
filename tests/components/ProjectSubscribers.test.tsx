@@ -70,4 +70,20 @@ describe('ProjectSubscribers loading', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(container.textContent).toContain('b@example.com');
   });
+
+  it('ignores a slow older load that resolves after a newer one', async () => {
+    let resolveOld: (r: Response) => void = () => {};
+    fetchMock.mockReturnValueOnce(new Promise<Response>((r) => { resolveOld = r; }));
+    await toggle(); // expand: load 1 stays pending
+    await toggle(); // collapse
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(['new@example.com']), { status: 200 }));
+    await toggle(); // expand: load 2 resolves
+    expect(container.textContent).toContain('new@example.com');
+
+    await act(async () => {
+      resolveOld(new Response(JSON.stringify(['stale@example.com']), { status: 200 }));
+    });
+    expect(container.textContent).toContain('new@example.com');
+    expect(container.textContent).not.toContain('stale@example.com');
+  });
 });

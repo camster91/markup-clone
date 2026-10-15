@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 const PROJECT_ID = '99999999-9999-4999-8999-999999999999';
+// Session user returned by the global requireAuth mock in tests/setup.ts.
+const SESSION_USER_ID = '00000000-0000-4000-8000-000000000001';
 const CALLER = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'owner@example.com', role: 'reviewer' };
 
 vi.mock('@/lib/teams', () => ({
@@ -145,7 +147,7 @@ describe('POST /api/screenshots/[id]/recapture — rate limit keying', () => {
     expect(mocks.consume).toHaveBeenCalledTimes(2);
     const keys = mocks.consume.mock.calls.map((c) => c[0]);
     expect(keys).toContain('recapture:origin:https://markup.ashbi.ca:11111111-1111-1111-1111-111111111111');
-    expect(keys).toContain(`recapture-user:origin:https://markup.ashbi.ca:${CALLER.id}`);
+    expect(keys).toContain(`recapture-user:origin:https://markup.ashbi.ca:${SESSION_USER_ID}`);
     // The old global bucket shared by every dashboard user is gone.
     expect(keys).not.toContain('recapture:origin:https://markup.ashbi.ca');
   });
@@ -311,9 +313,19 @@ describe('POST /api/screenshots/[id]/recapture — project scoping', () => {
     expect(res.status).toBe(403);
     expect(mocks.spawn).not.toHaveBeenCalled();
     expect(mocks.audit).not.toHaveBeenCalled();
-    // The per-user bucket is only consumed once the caller is authorized.
-    const keys = mocks.consume.mock.calls.map((c) => c[0]);
-    expect(keys.some((k: string) => k.startsWith('recapture-user:'))).toBe(false);
+  });
+
+  it('applies the per-user cap before the lookup, so rotating unknown ids cannot flood the DB', async () => {
+    mocks.consume.mockImplementation((key: string) => (
+      key.startsWith('recapture-user:') ? { ok: false, retryAfterSec: 9 } : { ok: true, remaining: 5 }
+    ));
+    const res = await POST(makeReq({ origin: 'https://markup.ashbi.ca' }), {
+      params: Promise.resolve({ id: SHOT }),
+    });
+    expect(res.status).toBe(429);
+    const { prisma } = await import('@/lib/prisma');
+    expect(prisma.screenshot.findUnique).not.toHaveBeenCalled();
+    expect(mocks.spawn).not.toHaveBeenCalled();
   });
 
   it('audits the request with the caller email as actor', async () => {

@@ -159,6 +159,7 @@ vi.mock('@/lib/auth', async () => {
   return {
     ...actual,
     requireDashboardAuth: vi.fn(async () => null),
+    requireAuth: vi.fn(async () => ({ id: 'operator-1', email: 'operator@example.com', role: 'operator' })),
   };
 });
 
