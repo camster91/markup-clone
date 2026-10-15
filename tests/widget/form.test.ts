@@ -1,6 +1,14 @@
 /* @vitest-environment jsdom */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { showModal, getCurrentModal, getPendingClick } from '../../src/widget/form';
+import {
+  showModal,
+  hideModal,
+  getCurrentModal,
+  getPendingClick,
+  getAnnotationQueue,
+  getToolState,
+} from '../../src/widget/form';
+import { captureViewport } from '../../src/widget/capture';
 
 // Stub captureViewport in form.ts by replacing the module's binding.
 // The widget's lifecycle imports captureViewport; the test setup
@@ -28,6 +36,9 @@ describe('widget/form', () => {
   });
 
   afterEach(() => {
+    // Reset module state (open modal, in-flight capture guard) so one
+    // test's leftovers can't swallow the next test's showModal().
+    hideModal();
     document.body.innerHTML = '';
   });
 
@@ -86,5 +97,207 @@ describe('widget/form', () => {
     const pin = document.querySelector('[id^="markup-pin-"]') as HTMLElement | null;
     expect(pin).toBeTruthy();
     expect(pin!.style.pointerEvents).toBe('none');
+  });
+
+  // ---------- Annotation tools vs. the modal backdrop ----------
+  //
+  // In a real browser the full-viewport backdrop (modal.overlay) sits
+  // above the page, so every click / pointerdown on "the page" while a
+  // tool is armed targets the backdrop. These tests dispatch on the
+  // backdrop itself — what hit-testing would produce — instead of on a
+  // page element.
+
+  async function openModal(): Promise<NonNullable<ReturnType<typeof getCurrentModal>>> {
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    await showModal(100, 100, target, 'A', 'https://x.example/api/pins', 'mk_test', 'p');
+    const modal = getCurrentModal();
+    expect(modal).not.toBeNull();
+    return modal!;
+  }
+
+  function armTool(modal: NonNullable<ReturnType<typeof getCurrentModal>>, kind: string) {
+    (modal.toolRow.querySelector(`[data-markup-tool="${kind}"]`) as HTMLButtonElement).click();
+  }
+
+  function clickAt(el: Element, x: number, y: number) {
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+  }
+
+  it('Arrow tool records clicks that land on the modal backdrop', async () => {
+    const modal = await openModal();
+    armTool(modal, 'arrow');
+    expect(modal.overlay.style.cursor).toBe('crosshair');
+
+    clickAt(modal.overlay, 120, 80);
+    clickAt(modal.overlay, 300, 240);
+
+    expect(getAnnotationQueue()).toEqual([{ kind: 'arrow', path: [[120, 80], [300, 240]] }]);
+    expect(getToolState().kind).toBe('idle');
+    expect(modal.overlay.style.cursor).toBe('');
+    // The modal stays open and the preview shows the queued arrow.
+    expect(getCurrentModal()).toBe(modal);
+    expect(modal.previewList.querySelectorAll('canvas')).toHaveLength(1);
+  });
+
+  it('Box tool records backdrop clicks but ignores clicks inside the modal box', async () => {
+    const modal = await openModal();
+    armTool(modal, 'box');
+
+    clickAt(modal.textarea, 5, 5);
+    expect(getToolState()).toMatchObject({ kind: 'box', clicks: 0 });
+
+    clickAt(modal.overlay, 10, 20);
+    clickAt(modal.overlay, 400, 500);
+    expect(getAnnotationQueue()).toEqual([{ kind: 'box', path: [[10, 20], [400, 500]] }]);
+  });
+
+  it('Freehand tool records a stroke whose pointerdown targets the modal backdrop', async () => {
+    const modal = await openModal();
+    armTool(modal, 'freehand');
+    expect(modal.overlay.style.touchAction).toBe('none');
+
+    const ptr = (type: string, x: number, y: number) =>
+      modal.overlay.dispatchEvent(
+        new PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 1 })
+      );
+    ptr('pointerdown', 50, 50);
+    ptr('pointermove', 60, 55);
+    ptr('pointermove', 70, 65);
+    ptr('pointerup', 70, 65);
+    // The click that follows the stroke also lands on the backdrop; it
+    // must not reopen anything.
+    clickAt(modal.overlay, 70, 65);
+
+    expect(getAnnotationQueue()).toEqual([
+      { kind: 'freehand', path: [[50, 50], [60, 55], [70, 65]] },
+    ]);
+    expect(getCurrentModal()).toBe(modal);
+    expect(modal.overlay.style.touchAction).toBe('');
+  });
+
+  // ---------- showModal re-entrancy while the screenshot is capturing ----------
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  it('ignores a second click while the first screenshot is still capturing', async () => {
+    const capture = deferred<Blob>();
+    vi.mocked(captureViewport).mockClear();
+    vi.mocked(captureViewport).mockImplementationOnce(() => capture.promise);
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+
+    const first = showModal(100, 120, target, 'A', 'u', 'k', 'p');
+    const second = showModal(400, 300, target, 'A', 'u', 'k', 'p');
+    await second;
+    capture.resolve(new Blob(['x'], { type: 'image/png' }));
+    await first;
+
+    expect(document.querySelectorAll('textarea')).toHaveLength(1);
+    expect(document.querySelectorAll('[id^="markup-pin-"]')).toHaveLength(1);
+    expect(getPendingClick()).toMatchObject({ clickX: 100, clickY: 120 });
+    expect(vi.mocked(captureViewport)).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not open the modal if it was dismissed while capturing (hideModal)', async () => {
+    const capture = deferred<Blob>();
+    vi.mocked(captureViewport).mockImplementationOnce(() => capture.promise);
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+
+    const opening = showModal(100, 100, target, 'A', 'u', 'k', 'p');
+    hideModal();
+    capture.resolve(new Blob(['x'], { type: 'image/png' }));
+    await opening;
+
+    expect(getCurrentModal()).toBeNull();
+    expect(document.querySelector('textarea')).toBeNull();
+    expect(document.querySelector('[id^="markup-pin-"]')).toBeNull();
+
+    // And the guard is released: the next click opens normally.
+    await showModal(200, 200, target, 'A', 'u', 'k', 'p');
+    expect(getCurrentModal()).not.toBeNull();
+  });
+
+  it('turning feedback mode off during capture keeps the modal closed (lifecycle)', async () => {
+    const lifecycle = await import('../../src/widget/lifecycle');
+    const script = document.createElement('script');
+    script.setAttribute('src', 'https://x.example/widget.js');
+    script.setAttribute('data-api-key', 'mk_test');
+    script.setAttribute('data-project-id', 'proj-1');
+    document.head.appendChild(script);
+    lifecycle.init();
+    try {
+      const capture = deferred<Blob>();
+      vi.mocked(captureViewport).mockImplementationOnce(() => capture.promise);
+      const target = document.createElement('div');
+      document.body.appendChild(target);
+
+      lifecycle.startFeedback();
+      target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: 30, clientY: 40 }));
+      // Placeholder pin while capturing.
+      expect(document.querySelector('[id^="markup-pin-"]')).not.toBeNull();
+      lifecycle.stopFeedback();
+      capture.resolve(new Blob(['x'], { type: 'image/png' }));
+      await flush();
+
+      expect(getCurrentModal()).toBeNull();
+      expect(document.querySelector('textarea')).toBeNull();
+      expect(document.querySelector('[id^="markup-pin-"]')).toBeNull();
+    } finally {
+      lifecycle.destroy();
+    }
+  });
+
+  // ---------- Save button while the POST is in flight ----------
+
+  it('keeps Save disabled while saving even if the user keeps typing (no duplicate pins)', async () => {
+    const originalFetch = global.fetch;
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const response = deferred<Response>();
+    const fetchMock = vi.fn(() => response.promise);
+    global.fetch = fetchMock as unknown as typeof fetch;
+    try {
+      const modal = await openModal();
+      modal.textarea.value = 'first draft';
+      modal.textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      expect(modal.submitBtn.disabled).toBe(false);
+
+      modal.submitBtn.click();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(modal.submitBtn.disabled).toBe(true);
+      expect(modal.submitBtn.textContent).toBe('Saving...');
+
+      // Typing mid-save used to re-enable the button.
+      modal.textarea.value = 'first draft, edited';
+      modal.textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      expect(modal.submitBtn.disabled).toBe(true);
+      // Neither the shortcut nor a forced handler call starts a second POST.
+      modal.textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }));
+      await (modal.submitBtn.onclick as (e: MouseEvent) => Promise<void>)(new MouseEvent('click'));
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      // A failed save re-enables Save so the user can retry.
+      response.resolve(new Response('boom', { status: 500 }));
+      await flush();
+      expect(alertSpy).toHaveBeenCalled();
+      expect(modal.submitBtn.disabled).toBe(false);
+      expect(modal.submitBtn.textContent).toBe('Save pin');
+    } finally {
+      global.fetch = originalFetch;
+      alertSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
   });
 });

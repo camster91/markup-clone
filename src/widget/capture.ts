@@ -12,18 +12,81 @@
 // treats a blob-backed SVG containing foreignObject as non-origin-clean and
 // canvas.toBlob() then throws SecurityError even when the document has no remote
 // assets.
+//
+// Known limitation: an SVG rendered as an image never fetches external
+// resources, so remote <img> sources, CSS background images and web fonts are
+// missing from the capture unless they are already inlined as data: URLs.
 
-export async function captureViewport(): Promise<Blob> {
-  const w = window.innerWidth;
-  const h = window.innerHeight;
+export interface CaptureGeometry {
+  /** Viewport size in CSS px (the captured image's size). */
+  width: number;
+  height: number;
+  /** Current scroll offset of the page. */
+  scrollX: number;
+  scrollY: number;
+  /** Full document size in CSS px (at least scroll + viewport). */
+  docWidth: number;
+  docHeight: number;
+}
+
+/**
+ * Build the SVG wrapper for the serialized document.
+ *
+ * The cloned document is laid out in a foreignObject the size of the WHOLE
+ * document at (0,0), so every element sits at its page coordinate, and the
+ * viewBox selects the visible viewport region (scrollX, scrollY, w, h).
+ * A foreignObject sized 100% (= the viewBox's w x h at the origin) is wrong:
+ * on a scrolled page the viewBox points past it and the capture comes out
+ * blank or shifted.
+ */
+export function buildCaptureSvg(geo: CaptureGeometry, serializedDoc: string): string {
+  return (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="' +
+    geo.width +
+    '" height="' +
+    geo.height +
+    '" viewBox="' +
+    geo.scrollX +
+    ' ' +
+    geo.scrollY +
+    ' ' +
+    geo.width +
+    ' ' +
+    geo.height +
+    '" preserveAspectRatio="xMinYMin meet">' +
+    '<foreignObject x="0" y="0" width="' +
+    geo.docWidth +
+    '" height="' +
+    geo.docHeight +
+    '">' +
+    serializedDoc +
+    '</foreignObject></svg>'
+  );
+}
+
+/** Read the live viewport / scroll / document geometry. */
+export function readCaptureGeometry(): CaptureGeometry {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
   const scrollX = window.scrollX || window.pageXOffset || 0;
   const scrollY = window.scrollY || window.pageYOffset || 0;
+  const de = document.documentElement;
+  const body = document.body;
+  const docWidth = Math.max(de.scrollWidth, body ? body.scrollWidth : 0, scrollX + width);
+  const docHeight = Math.max(de.scrollHeight, body ? body.scrollHeight : 0, scrollY + height);
+  return { width, height, scrollX, scrollY, docWidth, docHeight };
+}
+
+export async function captureViewport(): Promise<Blob> {
+  const geo = readCaptureGeometry();
+  const w = geo.width;
+  const h = geo.height;
   const dpr = window.devicePixelRatio || 1;
 
   // Clone the current document so we can mutate it without affecting the page
   const clone = document.documentElement.cloneNode(true) as HTMLElement;
-  // Inline computed styles for the visible region by walking the original
-  inlineStyles(document.documentElement, clone, document.documentElement);
+  // Inline computed styles by walking the original and the clone in parallel
+  inlineStyles(document.documentElement, clone);
 
   // Remove scripts, our own UI, and any iframes (we can't capture cross-origin
   // iframes reliably)
@@ -33,23 +96,7 @@ export async function captureViewport(): Promise<Blob> {
   // Render the full cloned document inside the SVG, then crop to the
   // visible viewport via viewBox. This keeps the captured image's
   // coordinate space aligned with the click coordinate space.
-  const svg =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="' +
-    w +
-    '" height="' +
-    h +
-    '" viewBox="' +
-    scrollX +
-    ' ' +
-    scrollY +
-    ' ' +
-    w +
-    ' ' +
-    h +
-    '" preserveAspectRatio="xMinYMin meet">' +
-    '<foreignObject x="0" y="0" width="100%" height="100%">' +
-    new XMLSerializer().serializeToString(clone) +
-    '</foreignObject></svg>';
+  const svg = buildCaptureSvg(geo, new XMLSerializer().serializeToString(clone));
 
   const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
   const url = await new Promise<string>((resolve, reject) => {
@@ -86,88 +133,48 @@ export async function captureViewport(): Promise<Blob> {
   });
 }
 
-// Recursively copy computed styles from src tree to dst tree.
-// Walks the actual live DOM so we get the real rendered styles (including media queries).
-function inlineStyles(
-  srcRoot: HTMLElement,
-  dstRoot: HTMLElement,
-  srcRef: Node
-): void {
-  if (srcRef.nodeType === 1) {
-    const srcEl = srcRef as HTMLElement;
-    const dstNode =
-      srcEl === document.documentElement
-        ? dstRoot
-        : findCorrespondingNode(srcEl, dstRoot, srcRoot);
-    if (dstNode) {
-      const cs = window.getComputedStyle(srcEl);
-      const important = [
-        'color', 'background', 'background-color', 'background-image',
-        'font', 'font-family', 'font-size', 'font-weight', 'line-height',
-        'border', 'border-radius', 'box-shadow', 'opacity',
-        'padding', 'margin', 'display', 'position',
-        'width', 'height', 'max-width', 'max-height',
-        'top', 'left', 'right', 'bottom',
-        'transform', 'transition', 'animation',
-        'color-scheme', 'filter', 'backdrop-filter',
-        'text-align', 'text-decoration', 'text-transform',
-        'flex', 'flex-direction', 'justify-content', 'align-items', 'gap', 'grid',
-        'overflow', 'overflow-x', 'overflow-y',
-        'visibility', 'z-index',
-      ];
-      let cssText = '';
-      for (const prop of important) {
-        const val = cs.getPropertyValue(prop);
-        if (val) cssText += prop + ':' + val + ';';
-      }
-      // Inline all custom properties used in the document
-      const all = cs.cssText || '';
-      const varMatches = all.match(/--[a-zA-Z0-9-_]+:\s*[^;]+/g);
-      if (varMatches) cssText += varMatches.join(';') + ';';
-      (dstNode as HTMLElement).setAttribute('style', cssText);
-    }
-  }
-  const srcChildren = srcRef.childNodes;
-  for (let i = 0; i < srcChildren.length; i++) {
-    const srcChild = srcChildren[i];
-    if (srcChild.nodeType === 1) {
-      inlineStyles(srcRoot, dstRoot, srcChild);
-    }
-  }
-}
+const INLINED_PROPS = [
+  'color', 'background', 'background-color', 'background-image',
+  'font', 'font-family', 'font-size', 'font-weight', 'line-height',
+  'border', 'border-radius', 'box-shadow', 'opacity',
+  'padding', 'margin', 'display', 'position',
+  'width', 'height', 'max-width', 'max-height',
+  'top', 'left', 'right', 'bottom',
+  'transform', 'transition', 'animation',
+  'color-scheme', 'filter', 'backdrop-filter',
+  'text-align', 'text-decoration', 'text-transform',
+  'flex', 'flex-direction', 'justify-content', 'align-items', 'gap', 'grid',
+  'overflow', 'overflow-x', 'overflow-y',
+  'visibility', 'z-index',
+];
 
-// Walk dst and src in parallel to find the node at the same path
-function findCorrespondingNode(
-  srcNode: Node,
-  dstRoot: HTMLElement,
-  srcRoot: HTMLElement
-): HTMLElement | null {
-  const path: number[] = [];
-  let n: Node | null = srcNode;
-  while (n && n !== srcRoot) {
-    let i = 0;
-    let sib: ChildNode | null = n.previousSibling;
-    while (sib) {
-      if (sib.nodeType === 1) i++;
-      sib = sib.previousSibling;
-    }
-    path.unshift(i);
-    n = n.parentNode;
+/**
+ * Copy computed styles from the live tree onto its clone.
+ *
+ * `dst` was produced by `src.cloneNode(true)` and is not mutated until this
+ * walk finishes, so both trees have identical element structure: the i-th
+ * element child of a source node corresponds to the i-th element child of
+ * its clone. Walking both in parallel visits each element once (O(n)); the
+ * previous version re-derived every element's path from the root and
+ * re-walked the clone along it, which is quadratic on large pages.
+ */
+export function inlineStyles(src: Element, dst: Element): void {
+  const cs = window.getComputedStyle(src);
+  let cssText = '';
+  for (const prop of INLINED_PROPS) {
+    const val = cs.getPropertyValue(prop);
+    if (val) cssText += prop + ':' + val + ';';
   }
-  let cur: Node = dstRoot;
-  for (const idx of path) {
-    let i = 0;
-    let child: ChildNode | null = cur.firstChild;
-    while (child) {
-      if (child.nodeType === 1) {
-        if (i === idx) {
-          cur = child;
-          break;
-        }
-        i++;
-      }
-      child = child.nextSibling;
-    }
+  // Inline all custom properties used in the document
+  const all = cs.cssText || '';
+  const varMatches = all.match(/--[a-zA-Z0-9-_]+:\s*[^;]+/g);
+  if (varMatches) cssText += varMatches.join(';') + ';';
+  dst.setAttribute('style', cssText);
+
+  const srcChildren = src.children;
+  const dstChildren = dst.children;
+  const n = Math.min(srcChildren.length, dstChildren.length);
+  for (let i = 0; i < n; i++) {
+    inlineStyles(srcChildren[i], dstChildren[i]);
   }
-  return cur as HTMLElement;
 }

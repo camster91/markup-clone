@@ -32,7 +32,8 @@ describe('MarkupSDK browser loader', () => {
     expect(script.src).toBe('https://feedback.example/widget.js');
     expect(script.dataset.projectId).toBe(PROJECT_ID);
     expect(script.dataset.apiKey).toBe(API_KEY);
-    expect(script.dataset.author).toBe('Cam');
+    expect(script.getAttribute('data-author-name')).toBe('Cam');
+    expect(script.hasAttribute('data-author')).toBe(false);
     (window as Window & { MarkupWidget: unknown }).MarkupWidget = { startFeedback, stopFeedback, destroy, getState };
     document.dispatchEvent(new CustomEvent('markup:ready', { detail: { projectId: PROJECT_ID } }));
     await expect(mounted).resolves.toEqual({ ready: true, feedbackMode: false });
