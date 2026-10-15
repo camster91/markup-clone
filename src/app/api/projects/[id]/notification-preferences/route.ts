@@ -106,7 +106,16 @@ export async function PATCH(
     const result = await resolveAccess(id);
     if (result.kind === 'error') return result.response;
     const { access } = result;
-    const parsed = parseNotificationPreferences(await req.json());
+    let jsonBody;
+    try {
+      jsonBody = await req.json();
+    } catch {
+      return json({ error: 'invalid JSON body' }, { status: 400 });
+    }
+    if (!jsonBody || typeof jsonBody !== 'object' || Array.isArray(jsonBody)) {
+      return json({ error: 'JSON body must be an object' }, { status: 400 });
+    }
+    const parsed = parseNotificationPreferences(jsonBody);
     if (!parsed.ok) return json({ error: parsed.error }, { status: 400 });
 
     const preference = await prisma.projectNotificationPreference.upsert({

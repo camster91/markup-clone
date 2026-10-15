@@ -4,6 +4,7 @@ import { requireDashboardAuth } from '@/lib/auth';
 import { requireCsrfToken } from '@/lib/csrf';
 import { validatePinId } from '@/lib/validation';
 import { audit } from '@/lib/audit';
+import { assertProjectAccessible } from '@/lib/teams';
 
 // DELETE /api/annotations/[id]
 //
@@ -18,7 +19,7 @@ import { audit } from '@/lib/audit';
 //   200 { success: true }
 //   400 invalid id (not a UUID)
 //   401 not authenticated / not dashboard origin
-//   403 invalid CSRF
+//   403 invalid CSRF / caller cannot access the annotation's project
 //   404 annotation not found
 export async function DELETE(
   req: Request,
@@ -43,13 +44,34 @@ export async function DELETE(
     // "didn't exist" with a 404. Prisma's `delete` would otherwise
     // throw P2025 ("Record to delete does not exist.") which the
     // catch block surfaces as a generic 500.
-    const existing = await prisma.annotation.findUnique({ where: { id }, select: { id: true, pinId: true } });
-    if (!existing) {
+    //
+    // The lookup also resolves annotation -> pin -> screenshot -> page ->
+    // project so the delete is tenant-scoped: a session that cannot
+    // access the owning project must not be able to remove its marks.
+    const existing = await prisma.annotation.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        pinId: true,
+        pin: { select: { screenshot: { select: { page: { select: { projectId: true } } } } } },
+      },
+    });
+    const projectId = existing?.pin?.screenshot?.page?.projectId;
+    if (!existing || !projectId) {
       return NextResponse.json({ error: 'Annotation not found' }, { status: 404 });
+    }
+    const access = await assertProjectAccessible(projectId);
+    if (!access.ok) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
     }
 
     await prisma.annotation.delete({ where: { id } });
-    audit({ actor: 'dashboard', action: 'pin.delete', target: existing.pinId, metadata: { annotationId: id } });
+    audit({
+      actor: access.caller.email,
+      action: 'pin.delete',
+      target: existing.pinId,
+      metadata: { annotationId: id, projectId },
+    });
     return NextResponse.json({ success: true, deleted: 1 });
   } catch (error) {
     console.error('Annotation delete error:', error);

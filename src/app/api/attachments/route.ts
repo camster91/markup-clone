@@ -56,12 +56,13 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardAuth } from '@/lib/auth';
 import { requireCsrfToken } from '@/lib/csrf';
-import { writeFile, mkdir } from 'fs/promises';
+import { writeFile, mkdir, unlink } from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
 import { validateProjectId } from '@/lib/validation';
 import { assertProjectAccessible } from '@/lib/teams';
 import { audit } from '@/lib/audit';
+import { consume } from '@/lib/rate-limit';
 
 const ATTACHMENTS_DIR = process.env.ATTACHMENTS_DIR || '/data/attachments';
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024; // 8MB
@@ -167,6 +168,20 @@ export async function POST(req: Request) {
       );
     }
 
+    // Rate limit AFTER auth + project access, BEFORE any disk or DB
+    // write. 20 uploads burst, refilling one every 5s, per
+    // (origin, project) — the documented `<endpoint>:origin:<host>:<id>`
+    // shape. Generous for paste-a-screenshot replies; caps a runaway
+    // client filling /data/attachments with 8MB files.
+    const origin = req.headers.get('origin') ?? 'unknown';
+    const rate = consume(`attachments:origin:${origin}:${projectIdRes.value}`, {
+      maxTokens: 20,
+      refillRate: 0.2,
+    });
+    if (!rate.ok) {
+      return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(rate.retryAfterSec) } });
+    }
+
     // commentId is optional. When present, the route validates
     // it's a UUID AND the row exists; the row-existence check
     // is what makes "POST a comment with an attachmentId that
@@ -260,8 +275,9 @@ export async function POST(req: Request) {
     // we 500 — no DB row is written if the file write fails, so the
     // attachment id is "spent" but the storage is consistent (no
     // orphan Attachment row pointing at a missing file).
+    const storagePath = path.join(ATTACHMENTS_DIR, storageKey);
     await mkdir(ATTACHMENTS_DIR, { recursive: true });
-    await writeFile(path.join(ATTACHMENTS_DIR, storageKey), bytes);
+    await writeFile(storagePath, bytes);
 
     // Insert the row. The mimeType is stored verbatim (browsers
     // recognize `image/png` and `image/jpeg` for the two common
@@ -275,21 +291,36 @@ export async function POST(req: Request) {
     // bind it. The cascade from Comment → Attachment is preserved
     // for the non-null case (deleting a Comment removes its
     // attachments).
-    const attachment = await prisma.attachment.create({
-      data: {
-        id: attachmentId,
-        commentId: commentIdToBind,
-        projectId: projectIdRes.value,
-        kind,
-        storageKey,
-        mimeType: file.type,
-        size: file.size,
-      },
-      select: { id: true, kind: true, size: true },
-    });
+    //
+    // If the insert fails the file just written would be an orphan on
+    // disk with no row pointing at it, so remove it before surfacing the
+    // original error (the outer catch logs it and returns 500). A failed
+    // cleanup is logged with the path so an operator can remove it.
+    let attachment: { id: string; kind: string; size: number };
+    try {
+      attachment = await prisma.attachment.create({
+        data: {
+          id: attachmentId,
+          commentId: commentIdToBind,
+          projectId: projectIdRes.value,
+          kind,
+          storageKey,
+          mimeType: file.type,
+          size: file.size,
+        },
+        select: { id: true, kind: true, size: true },
+      });
+    } catch (dbError) {
+      try {
+        await unlink(storagePath);
+      } catch (cleanupError) {
+        console.error('[attachments] failed to remove orphaned upload', storagePath, cleanupError);
+      }
+      throw dbError;
+    }
 
     audit({
-      actor: 'dashboard',
+      actor: projectAccess.caller.email,
       action: 'attachment.create',
       target: attachment.id,
       metadata: {
