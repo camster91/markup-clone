@@ -287,8 +287,6 @@ new dated plan.
 - npm publication
 - Per-site sitemap/OG work unrelated to the review workflow
 - Form-submission webhooks unrelated to visual-feedback events
-- Root `CONSOLIDATION-PLAN.md` deletion (unrelated FFH artifact; requires
-  Cameron's explicit deletion approval)
 
 ---
 

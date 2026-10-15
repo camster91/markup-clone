@@ -99,11 +99,12 @@ export async function POST(req: Request) {
         data: { userId: user.id, token, expiresAt },
       });
       break;
-    } catch {
+    } catch (err) {
       // P2002 unique violation — try once more with a new token.
       // A second failure is a DB-level issue, not a collision; let
-      // it surface.
-      if (attempt === 1) throw new Error('failed to create session');
+      // it surface with the original error attached.
+      if (attempt === 1) throw new Error('failed to create session', { cause: err });
+      console.warn('Session create failed; retrying with a new token:', err instanceof Error ? err.message : err);
     }
   }
   if (!session) {

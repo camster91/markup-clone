@@ -58,7 +58,12 @@ export async function PATCH(
       return NextResponse.json({ error: access.error }, { status: access.status });
     }
 
-    const body: unknown = await req.json();
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 });
+    }
     const hasInternalFields = Boolean(
       body
       && typeof body === 'object'
@@ -83,6 +88,12 @@ export async function PATCH(
         where: { id },
         data: { status: patch.status },
         select: { id: true, status: true },
+      });
+      audit({
+        actor: access.caller.email,
+        action: 'pin.update',
+        target: id,
+        metadata: { projectId, fields: patch.status !== undefined ? ['status'] : [] },
       });
       if (patch.status !== undefined && patch.status !== pinBefore.status) {
         const resolved = patch.status === 'RESOLVED';

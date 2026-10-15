@@ -8,10 +8,12 @@ and hard don'ts below.
 
 ## Conventions
 
-- Use `requireProjectKey(req)` for widget-originated requests and
-  `requireDashboardOrigin(req)` for dashboard-originated requests.
-  Do not introduce new auth helpers — both exist in `src/lib/auth.ts`
-  and both are battle-tested.
+- Use `requireProjectKey(req, projectId)` for widget-originated
+  requests and `requireDashboardAuth(req)` (Origin + session) for
+  dashboard-originated requests, then scope to the project with
+  `assertProjectAccessible` / `assertProjectAdmin` from
+  `src/lib/teams.ts`. `requireDashboardOrigin` alone is a CSRF helper,
+  not authentication. Do not introduce new auth helpers.
 - Validate all UUID params with `validateScreenshotId` /
   `validateProjectId` / `validatePinId` from `src/lib/validation.ts`.
   Never `parseInt(req.params.id)` and trust the result — every route
