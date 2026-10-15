@@ -17,7 +17,7 @@
 // only fires when nothing has changed.
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireAuth, requireDashboardAuth } from '@/lib/auth';
+import { requireAuth, requireDashboardOrigin } from '@/lib/auth';
 import { validateScreenshotId } from '@/lib/validation';
 import { consume } from '@/lib/rate-limit';
 import { assertProjectAccessible } from '@/lib/teams';
@@ -26,8 +26,13 @@ export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authErr = await requireDashboardAuth(req);
-  if (authErr) return authErr;
+  // Same gate as requireDashboardAuth (Origin check + session), done
+  // inline so the Session row is looked up once and the caller id is
+  // reused for the per-user rate limit below.
+  const originErr = requireDashboardOrigin(req);
+  if (originErr) return originErr;
+  const caller = await requireAuth();
+  if (!caller) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
 
   const { id } = await params;
   const idRes = validateScreenshotId(id);
@@ -45,8 +50,6 @@ export async function GET(
   // user shares one Origin, so an origin-only key was a single global
   // bucket — one runaway tab could 429 every other user's polling.
   const origin = req.headers.get('origin') ?? 'unknown';
-  const caller = await requireAuth();
-  if (!caller) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
   // Caller-wide cap first: a client rotating through unknown screenshot
   // ids would otherwise get a fresh per-screenshot bucket (and a DB
   // lookup) every time. Sized above the per-screenshot budget so one

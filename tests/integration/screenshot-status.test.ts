@@ -31,6 +31,7 @@ vi.mock('@/lib/prisma', () => ({
 vi.mock('@/lib/teams', () => teams);
 
 import { GET } from '../../src/app/api/screenshots/[id]/status/route';
+import { requireAuth } from '@/lib/auth';
 
 const FIXED_CAPTURED_AT = new Date('2026-06-14T15:00:00.000Z');
 const PROJECT_ID = '99999999-9999-4999-8999-999999999999';
@@ -264,5 +265,28 @@ describe('GET /api/screenshots/[id]/status — rate limit', () => {
     }
     expect(last).toBe(429);
     expect(lookup).toHaveBeenCalledTimes(600);
+  });
+});
+
+describe('GET /api/screenshots/[id]/status — session lookup', () => {
+  const SHOT = '55555555-5555-4555-8555-555555555555';
+  const authMock = requireAuth as unknown as ReturnType<typeof vi.fn>;
+
+  it('looks the session up once per request (it doubles as the rate-limit identity)', async () => {
+    authMock.mockClear();
+    await GET(
+      makeReq(`https://markup.ashbi.ca/api/screenshots/${SHOT}/status`, { origin: 'https://markup.ashbi.ca' }),
+      { params: Promise.resolve({ id: SHOT }) }
+    );
+    expect(authMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns 401 without a session', async () => {
+    authMock.mockResolvedValueOnce(null);
+    const res = await GET(
+      makeReq(`https://markup.ashbi.ca/api/screenshots/${SHOT}/status`, { origin: 'https://markup.ashbi.ca' }),
+      { params: Promise.resolve({ id: SHOT }) }
+    );
+    expect(res.status).toBe(401);
   });
 });

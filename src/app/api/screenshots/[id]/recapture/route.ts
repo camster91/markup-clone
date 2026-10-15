@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireAuth, requireDashboardAuth } from '@/lib/auth';
+import { requireAuth, requireDashboardOrigin } from '@/lib/auth';
 import { requireCsrfToken } from '@/lib/csrf';
 import { validateScreenshotId } from '@/lib/validation';
 import { spawn } from 'child_process';
@@ -19,8 +19,13 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authErr = await requireDashboardAuth(req);
-  if (authErr) return authErr;
+  // Same gate as requireDashboardAuth (Origin check + session), done
+  // inline so the Session row is looked up once and the caller id is
+  // reused for the per-user rate limit below.
+  const originErr = requireDashboardOrigin(req);
+  if (originErr) return originErr;
+  const caller = await requireAuth();
+  if (!caller) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
   const csrfErr = requireCsrfToken(req);
   if (csrfErr) return csrfErr;
 
@@ -37,8 +42,6 @@ export async function POST(
   // Fine for the current single-instance deploy; will not share buckets
   // across instances if we ever scale horizontally.
   const origin = req.headers.get('origin') ?? 'unknown';
-  const caller = await requireAuth();
-  if (!caller) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
 
   // Rate limit, per user, BEFORE the lookup: a caller rotating through
   // valid-but-unknown screenshot ids would otherwise get a fresh
