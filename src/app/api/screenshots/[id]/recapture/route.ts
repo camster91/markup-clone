@@ -7,6 +7,7 @@ import { spawn } from 'child_process';
 import { consume } from '@/lib/rate-limit';
 import { audit } from '@/lib/audit';
 import { emit } from '@/lib/events';
+import { assertProjectAdmin } from '@/lib/teams';
 
 // RECAPTURE_SCRIPT lets the operator override the script path at
 // runtime (e.g. to mount scripts at a different location in a
@@ -27,39 +28,60 @@ export async function POST(
   const idRes = validateScreenshotId(id);
   if (!idRes.ok) return NextResponse.json({ error: idRes.error }, { status: 400 });
 
-  // Rate limit: split into two buckets so a busy operator who clicks
-  // Recapture on many screenshots doesn't share a single bucket and end up
-  // throttling themselves on every other screenshot. The original key was
-  // `${origin}:${id}` which conflated the two — 5 captures on one screenshot
-  // would block recapture on every other screenshot for the same origin.
+  // Rate limit, bucket 1 (per screenshot): prevent one stuck screenshot
+  // from monopolising Chromium. Keyed `<endpoint>:origin:<host>:<id>` like
+  // every other dashboard bucket. Every dashboard user shares the same
+  // Origin, so an origin-only key would be one global bucket for the whole
+  // install — a single user could lock everyone else out of recapture.
   // Note: rate-limit state is in-process (see src/lib/rate-limit.ts).
   // Fine for the current single-instance deploy; will not share buckets
   // across instances if we ever scale horizontally.
   const origin = req.headers.get('origin') ?? 'unknown';
-  // Per-screenshot: prevent one stuck screenshot from monopolising Chromium.
-  const perShot = consume(`recapture:shot:${id}`, { maxTokens: 3, refillRate: 0.1 });
+  const perShot = consume(`recapture:origin:${origin}:${id}`, { maxTokens: 3, refillRate: 0.1 });
   if (!perShot.ok) {
     return NextResponse.json(
       { error: 'Too many recaptures on this screenshot', retryAfterSec: perShot.retryAfterSec },
       { status: 429, headers: { 'Retry-After': String(perShot.retryAfterSec) } }
     );
   }
-  // Per-origin: prevent one operator from running away (run-a-Cromium-tab DoS).
-  const perOrigin = consume(`recapture:origin:${origin}`, { maxTokens: 10, refillRate: 0.5 });
-  if (!perOrigin.ok) {
-    return NextResponse.json(
-      { error: 'Too many recaptures from this dashboard session', retryAfterSec: perOrigin.retryAfterSec },
-      { status: 429, headers: { 'Retry-After': String(perOrigin.retryAfterSec) } }
-    );
-  }
 
   try {
-
-    // Verify the screenshot exists
-    const ss = await prisma.screenshot.findUnique({ where: { id } });
-    if (!ss) {
+    // Resolve screenshot -> page -> project and gate on project
+    // administration. Recapture replaces the canonical image every
+    // reviewer sees and spends a headless-Chromium run, so it is held to
+    // the same bar as the other heavy project mutations (image/PDF
+    // upload, share links, integrations): owner/contributor or operator.
+    const ss = await prisma.screenshot.findUnique({
+      where: { id },
+      select: { id: true, page: { select: { projectId: true } } },
+    });
+    const projectId = ss?.page?.projectId;
+    if (!ss || !projectId) {
       return NextResponse.json({ error: 'screenshot not found' }, { status: 404 });
     }
+    const access = await assertProjectAdmin(projectId);
+    if (!access.ok) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+
+    // Rate limit, bucket 2 (per user): stop one account from fanning out
+    // across many screenshots (run-a-Chromium-tab DoS). Runs after the
+    // access check because the caller id is only known once authorized,
+    // and before the spawn, which is the expensive "write".
+    const perUser = consume(`recapture-user:origin:${origin}:${access.caller.id}`, { maxTokens: 10, refillRate: 0.5 });
+    if (!perUser.ok) {
+      return NextResponse.json(
+        { error: 'Too many recaptures from this dashboard session', retryAfterSec: perUser.retryAfterSec },
+        { status: 429, headers: { 'Retry-After': String(perUser.retryAfterSec) } }
+      );
+    }
+
+    audit({
+      actor: access.caller.email,
+      action: 'screenshot.recapture',
+      target: id,
+      metadata: { status: 'requested', projectId },
+    });
 
     // Fire-and-forget the recapture (it's slow — 5s+ for Chromium to spin up).
     // Caller can poll GET /api/projects to see when the new PNG is served.

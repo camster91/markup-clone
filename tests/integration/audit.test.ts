@@ -11,6 +11,11 @@ vi.mock('@/lib/prisma', () => ({
   prisma: mocks,
 }));
 
+const teams = vi.hoisted(() => ({
+  assertOperator: vi.fn(),
+}));
+vi.mock('@/lib/teams', () => teams);
+
 import { GET } from '../../src/app/api/audit/route';
 import { NextRequest } from 'next/server';
 
@@ -24,6 +29,31 @@ function req(url: string, headers: Record<string, string> = {}): NextRequest {
 describe('GET /api/audit', () => {
   beforeEach(() => {
     mocks.auditLog.findMany.mockReset();
+    teams.assertOperator.mockReset();
+    teams.assertOperator.mockResolvedValue({
+      ok: true,
+      caller: { id: 'op-1', email: 'op@example.com', role: 'operator' },
+    });
+  });
+
+  it('returns 403 for a non-operator (e.g. a guest) and never reads the log', async () => {
+    teams.assertOperator.mockResolvedValue({ ok: false, status: 403, error: 'Operator role required' });
+    const res = await GET(req('https://markup.ashbi.ca/api/audit', { origin: 'https://markup.ashbi.ca' }));
+    expect(res.status).toBe(403);
+    expect(mocks.auditLog.findMany).not.toHaveBeenCalled();
+  });
+
+  it.each(['abc', '0', '-5', '1.5', ''])('returns 400 for an invalid limit %j', async (limit) => {
+    const res = await GET(req(`https://markup.ashbi.ca/api/audit?limit=${encodeURIComponent(limit)}`, { origin: 'https://markup.ashbi.ca' }));
+    expect(res.status).toBe(400);
+    expect(mocks.auditLog.findMany).not.toHaveBeenCalled();
+  });
+
+  it('passes a valid limit through', async () => {
+    mocks.auditLog.findMany.mockResolvedValue([]);
+    const res = await GET(req('https://markup.ashbi.ca/api/audit?limit=25', { origin: 'https://markup.ashbi.ca' }));
+    expect(res.status).toBe(200);
+    expect(mocks.auditLog.findMany).toHaveBeenCalledWith({ orderBy: { createdAt: 'desc' }, take: 25 });
   });
 
   it('returns 401 when called from a non-dashboard origin', async () => {

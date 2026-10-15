@@ -14,6 +14,14 @@ const mocks = vi.hoisted(() => ({
   consume: vi.fn().mockReturnValue({ ok: true, remaining: 5 }),
   spawn: vi.fn(),
   audit: vi.fn(),
+  assertProjectAdmin: vi.fn(),
+}));
+
+const PROJECT_ID = '99999999-9999-4999-8999-999999999999';
+const CALLER = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'owner@example.com', role: 'reviewer' };
+
+vi.mock('@/lib/teams', () => ({
+  assertProjectAdmin: mocks.assertProjectAdmin,
 }));
 
 vi.mock('@/lib/prisma', () => ({
@@ -90,8 +98,15 @@ beforeEach(async () => {
   // its 200 response, so the audit('ok') call is observable from the
   // test (we wait a tick before asserting).
   mocks.spawn.mockImplementation(() => makeFakeChild(1234, { exitCode: 0 }));
+  mocks.assertProjectAdmin.mockResolvedValue({
+    ok: true,
+    projectId: PROJECT_ID,
+    teamId: 'team-1',
+    caller: CALLER,
+    membershipRole: 'owner',
+  });
   await import('@/lib/prisma').then(({ prisma }) => {
-    (prisma.screenshot.findUnique as any).mockResolvedValue({ id: 'ss-1' });
+    (prisma.screenshot.findUnique as any).mockResolvedValue({ id: 'ss-1', page: { projectId: PROJECT_ID } });
   });
 });
 
@@ -121,23 +136,25 @@ function makeReq(headers: Record<string, string> = {}): Request {
 }
 
 describe('POST /api/screenshots/[id]/recapture — rate limit keying', () => {
-  it('uses two distinct keys: per-screenshot and per-origin', async () => {
+  it('uses two distinct keys: per-screenshot and per-user (never origin-only)', async () => {
     await POST(makeReq({ origin: 'https://markup.ashbi.ca' }), {
       params: Promise.resolve({ id: '11111111-1111-1111-1111-111111111111' }),
     });
     // Two consume() calls per request — one for the per-screenshot bucket,
-    // one for the per-origin bucket.
+    // one for the per-user bucket. Both follow `<endpoint>:origin:<host>:<id>`.
     expect(mocks.consume).toHaveBeenCalledTimes(2);
     const keys = mocks.consume.mock.calls.map((c) => c[0]);
-    expect(keys).toContain('recapture:shot:11111111-1111-1111-1111-111111111111');
-    expect(keys).toContain('recapture:origin:https://markup.ashbi.ca');
+    expect(keys).toContain('recapture:origin:https://markup.ashbi.ca:11111111-1111-1111-1111-111111111111');
+    expect(keys).toContain(`recapture-user:origin:https://markup.ashbi.ca:${CALLER.id}`);
+    // The old global bucket shared by every dashboard user is gone.
+    expect(keys).not.toContain('recapture:origin:https://markup.ashbi.ca');
   });
 
   it('returns 429 with retryAfterSec when the per-screenshot bucket is empty', async () => {
     // First call (per-screenshot) returns !ok; the second call (per-origin)
     // should never be reached.
     mocks.consume.mockImplementation((key: string) => {
-      if (key.startsWith('recapture:shot:')) {
+      if (key.startsWith('recapture:origin:')) {
         return { ok: false, retryAfterSec: 7 };
       }
       return { ok: true, remaining: 5 };
@@ -152,9 +169,9 @@ describe('POST /api/screenshots/[id]/recapture — rate limit keying', () => {
     expect(res.headers.get('Retry-After')).toBe('7');
   });
 
-  it('returns 429 with retryAfterSec when the per-origin bucket is empty', async () => {
+  it('returns 429 with retryAfterSec when the per-user bucket is empty', async () => {
     mocks.consume.mockImplementation((key: string) => {
-      if (key.startsWith('recapture:origin:')) {
+      if (key.startsWith('recapture-user:origin:')) {
         return { ok: false, retryAfterSec: 2 };
       }
       return { ok: true, remaining: 3 };
@@ -171,7 +188,7 @@ describe('POST /api/screenshots/[id]/recapture — rate limit keying', () => {
   it('recapture on a different screenshotId is a separate bucket', async () => {
     // Burn through 3 tokens on the first UUID.
     mocks.consume.mockImplementation((key: string) => {
-      if (key === 'recapture:shot:11111111-1111-1111-1111-111111111111') return { ok: false, retryAfterSec: 5 };
+      if (key === 'recapture:origin:https://markup.ashbi.ca:11111111-1111-1111-1111-111111111111') return { ok: false, retryAfterSec: 5 };
       return { ok: true, remaining: 5 };
     });
     const r1 = await POST(makeReq({ origin: 'https://markup.ashbi.ca' }), {
@@ -181,7 +198,7 @@ describe('POST /api/screenshots/[id]/recapture — rate limit keying', () => {
 
     // Reset the mock so the second UUID is allowed.
     mocks.consume.mockImplementation((key: string) => {
-      if (key === 'recapture:shot:22222222-2222-2222-2222-222222222222') return { ok: true, remaining: 2 };
+      if (key === 'recapture:origin:https://markup.ashbi.ca:22222222-2222-2222-2222-222222222222') return { ok: true, remaining: 2 };
       return { ok: true, remaining: 5 };
     });
     const r2 = await POST(makeReq({ origin: 'https://markup.ashbi.ca' }), {
@@ -218,6 +235,7 @@ describe('POST /api/screenshots/[id]/recapture — spawn + audit', () => {
     expect(mocks.audit).toHaveBeenCalled();
     const call = mocks.audit.mock.calls.find((c) =>
       (c[0] as any)?.action === 'screenshot.recapture' && (c[0] as any)?.target === '44444444-4444-4444-4444-444444444444'
+        && (c[0] as any)?.actor === 'system'
     );
     expect(call).toBeDefined();
     expect((call![0] as any).metadata).toMatchObject({ status: 'ok', pid: 42 });
@@ -236,6 +254,7 @@ describe('POST /api/screenshots/[id]/recapture — spawn + audit', () => {
     expect(mocks.audit).toHaveBeenCalled();
     const call = mocks.audit.mock.calls.find((c) =>
       (c[0] as any)?.action === 'screenshot.recapture' && (c[0] as any)?.target === '55555555-5555-5555-5555-555555555555'
+        && (c[0] as any)?.actor === 'system'
     );
     expect(call).toBeDefined();
     expect((call![0] as any).metadata).toMatchObject({
@@ -256,8 +275,56 @@ describe('POST /api/screenshots/[id]/recapture — spawn + audit', () => {
     await new Promise((r) => setTimeout(r, 20));
     const call = mocks.audit.mock.calls.find((c) =>
       (c[0] as any)?.action === 'screenshot.recapture' && (c[0] as any)?.target === '66666666-6666-6666-6666-666666666666'
+        && (c[0] as any)?.actor === 'system'
     );
     expect(call).toBeDefined();
     expect((call![0] as any).metadata).toMatchObject({ status: 'spawn_error' });
+  });
+});
+
+describe('POST /api/screenshots/[id]/recapture — project scoping', () => {
+  const SHOT = '77777777-7777-4777-8777-777777777777';
+
+  it('returns 404 and never spawns when the screenshot does not exist', async () => {
+    const { prisma } = await import('@/lib/prisma');
+    (prisma.screenshot.findUnique as any).mockResolvedValue(null);
+    const res = await POST(makeReq({ origin: 'https://markup.ashbi.ca' }), {
+      params: Promise.resolve({ id: SHOT }),
+    });
+    expect(res.status).toBe(404);
+    expect(mocks.assertProjectAdmin).not.toHaveBeenCalled();
+    expect(mocks.spawn).not.toHaveBeenCalled();
+  });
+
+  it('resolves the owning project and requires project admin', async () => {
+    await POST(makeReq({ origin: 'https://markup.ashbi.ca' }), {
+      params: Promise.resolve({ id: SHOT }),
+    });
+    expect(mocks.assertProjectAdmin).toHaveBeenCalledWith(PROJECT_ID);
+  });
+
+  it('returns the access status (403) and never spawns for a non-admin caller', async () => {
+    mocks.assertProjectAdmin.mockResolvedValue({ ok: false, status: 403, error: 'Owner or operator role required' });
+    const res = await POST(makeReq({ origin: 'https://markup.ashbi.ca' }), {
+      params: Promise.resolve({ id: SHOT }),
+    });
+    expect(res.status).toBe(403);
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
+    // The per-user bucket is only consumed once the caller is authorized.
+    const keys = mocks.consume.mock.calls.map((c) => c[0]);
+    expect(keys.some((k: string) => k.startsWith('recapture-user:'))).toBe(false);
+  });
+
+  it('audits the request with the caller email as actor', async () => {
+    await POST(makeReq({ origin: 'https://markup.ashbi.ca' }), {
+      params: Promise.resolve({ id: SHOT }),
+    });
+    expect(mocks.audit).toHaveBeenCalledWith({
+      actor: CALLER.email,
+      action: 'screenshot.recapture',
+      target: SHOT,
+      metadata: { status: 'requested', projectId: PROJECT_ID },
+    });
   });
 });

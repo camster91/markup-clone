@@ -29,6 +29,18 @@ import { IntegrationHttpError } from './errors';
 const OUTBOUND_TIMEOUT_MS = 10_000;
 
 /**
+ * Escape text for Slack mrkdwn / message text. Slack treats `<...>` as
+ * control sequences (`<!channel>`, `<@U123>`, `<https://evil|Docs>`) and
+ * documents exactly these three entities as the escaping contract:
+ * https://api.slack.com/reference/surfaces/formatting#escaping
+ * Every widget- or operator-controlled string MUST pass through this
+ * before it is interpolated into a Slack payload.
+ */
+export function escapeSlackText(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
  * Build the Slack message body for a pin event.
  *
  * Exported (not just internal) so the test suite can assert
@@ -36,18 +48,22 @@ const OUTBOUND_TIMEOUT_MS = 10_000;
  * through the fetch mock.
  */
 export function buildSlackBody(payload: PinPayload) {
-  const { pin, project, path, commentText } = payload;
+  const { pin } = payload;
+  const projectName = escapeSlackText(payload.project.name);
+  const path = escapeSlackText(payload.path);
+  const commentText = payload.commentText ? escapeSlackText(payload.commentText) : '';
+  const authorName = escapeSlackText(pin.authorName);
   // Slack mrkdwn supports `*bold*` but NOT `**bold**` (which
   // renders literally). We use a single asterisk for the bold
-  // project / page / author line. The link to the dashboard is
-  // a Slack-style <url|label> so the label text is underlined
-  // in the Slack client.
-  const headline = `*${project.name}* — new feedback on \`${path}\``;
+  // project / page / author line.
+  const headline = `*${projectName}* — new feedback on \`${path}\``;
+  // The leading `>` (blockquote) is ours and is added AFTER escaping,
+  // so a `>` inside the comment cannot start a new quote or tag.
   const detail = commentText
     ? `>${commentText.replace(/\n/g, '\n>')}`
     : '_no comment_';
   return {
-    text: `New pin on ${project.name} (${path})`, // fallback for clients that don't render blocks
+    text: `New pin on ${projectName} (${path})`, // fallback for clients that don't render blocks
     blocks: [
       {
         type: 'section',
@@ -62,9 +78,9 @@ export function buildSlackBody(payload: PinPayload) {
           {
             type: 'mrkdwn',
             text:
-              `*Author:* ${pin.authorName}  ` +
+              `*Author:* ${authorName}  ` +
               `*Position:* ${pin.xPercent.toFixed(0)}%, ${pin.yPercent.toFixed(0)}%  ` +
-              `*Pin ID:* \`${pin.id}\``,
+              `*Pin ID:* \`${escapeSlackText(pin.id)}\``,
           },
         ],
       },

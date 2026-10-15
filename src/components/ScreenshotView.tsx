@@ -19,6 +19,7 @@ export default function ScreenshotView({
   projectDomain,
   showDeveloperContext = false,
   canManageComments = false,
+  canRecapture = true,
   issueOptions,
   issueFilters,
   onProjectUpdated,
@@ -52,6 +53,12 @@ export default function ScreenshotView({
   showDeveloperContext?: boolean;
   /** Explicit project-administrator capability for comment edit/delete controls. */
   canManageComments?: boolean;
+  /**
+   * Show the Recapture button. POST /api/screenshots/[id]/recapture is
+   * restricted to project administrators, so callers pass false for
+   * client/guest viewers to avoid a button that can only 403.
+   */
+  canRecapture?: boolean;
   /** Owner/operator-only assignee and reusable tag choices. */
   issueOptions?: IssueOptions;
   /** Owner/operator-only filters applied to the locally live pin collection. */
@@ -478,7 +485,7 @@ export default function ScreenshotView({
               server-side render of arbitrary URLs. The pin-status
               toggle is also gated — see the PinThread and
               handlePinStatusChange below. */}
-          {!readOnly && (
+          {!readOnly && canRecapture && (
             <button
               type="button"
               onClick={handleRecapture}
