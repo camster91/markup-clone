@@ -28,6 +28,13 @@ vi.mock('@/lib/prisma', () => ({
   prisma: mocks,
 }));
 
+// Project scope: both handlers gate on assertProjectAccessible. Mocked so
+// each test can choose the access outcome (ok / 403 / 404).
+const teams = vi.hoisted(() => ({
+  assertProjectAccessible: vi.fn(),
+}));
+vi.mock('@/lib/teams', () => teams);
+
 // Session identity for POST — requireDashboardAuth is stubbed in
 // setup.ts (origin-only); requireAuth must still resolve a user.
 vi.mock('@/lib/auth', async (importOriginal) => {
@@ -83,6 +90,44 @@ beforeEach(() => {
     lastSeenAt: create.lastSeenAt,
   }));
   mocks.presence.findMany.mockResolvedValue([]);
+  teams.assertProjectAccessible.mockResolvedValue({
+    ok: true,
+    projectId: PROJECT_ID,
+    teamId: null,
+    caller: { id: USER_ID, email: 'op@example.com', role: 'operator' },
+    membershipRole: 'operator',
+  });
+});
+
+describe('/api/presence — project scoping', () => {
+  it('POST returns 404 (not an FK 500) for an unknown project and never upserts', async () => {
+    teams.assertProjectAccessible.mockResolvedValue({ ok: false, status: 404, error: 'Project not found' });
+    const res = await POST(postReq({ projectId: PROJECT_ID }, { origin: ORIGIN }));
+    expect(res.status).toBe(404);
+    expect(teams.assertProjectAccessible).toHaveBeenCalledWith(PROJECT_ID);
+    expect(mocks.presence.upsert).not.toHaveBeenCalled();
+  });
+
+  it('POST returns 403 when the caller is outside the project team', async () => {
+    teams.assertProjectAccessible.mockResolvedValue({ ok: false, status: 403, error: "Not a member of this project's team" });
+    const res = await POST(postReq({ projectId: PROJECT_ID }, { origin: ORIGIN }));
+    expect(res.status).toBe(403);
+    expect(mocks.presence.upsert).not.toHaveBeenCalled();
+  });
+
+  it('GET returns 403 and does not list presences for an inaccessible project', async () => {
+    teams.assertProjectAccessible.mockResolvedValue({ ok: false, status: 403, error: "Not a member of this project's team" });
+    const res = await GET(getReq(`?projectId=${PROJECT_ID}`, { origin: ORIGIN }));
+    expect(res.status).toBe(403);
+    expect(mocks.presence.findMany).not.toHaveBeenCalled();
+  });
+
+  it('GET returns 404 for an unknown project', async () => {
+    teams.assertProjectAccessible.mockResolvedValue({ ok: false, status: 404, error: 'Project not found' });
+    const res = await GET(getReq(`?projectId=${PROJECT_ID}`, { origin: ORIGIN }));
+    expect(res.status).toBe(404);
+    expect(mocks.presence.findMany).not.toHaveBeenCalled();
+  });
 });
 
 describe('POST /api/presence — heartbeat', () => {

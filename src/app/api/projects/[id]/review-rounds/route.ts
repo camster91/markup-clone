@@ -72,7 +72,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (!idRes.ok) return NextResponse.json({ error: idRes.error }, { status: 400 });
     const access = await assertProjectAdmin(idRes.value);
     if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
-    const body = await req.json();
+    let body;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 });
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: 'JSON body must be an object' }, { status: 400 });
+    }
     const nameRes = sanitizeReviewRoundName((body as { name?: unknown }).name);
     if (!nameRes.ok) return NextResponse.json({ error: nameRes.error }, { status: 400 });
     const project = await prisma.project.findUnique({ where: { id: idRes.value }, select: reviewDefaultSelect });

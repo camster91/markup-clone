@@ -51,7 +51,15 @@ export async function PATCH(
       return NextResponse.json({ error: access.error }, { status: access.status });
     }
 
-    const body = await req.json();
+    let body;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 });
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: 'JSON body must be an object' }, { status: 400 });
+    }
     const { role, projectId } = body as { role?: unknown; projectId?: unknown };
     const roleRes = validateTeamRole(role);
     if (!roleRes.ok) return NextResponse.json({ error: roleRes.error }, { status: 400 });

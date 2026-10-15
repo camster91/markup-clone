@@ -112,7 +112,15 @@ export async function POST(
     const idRes = validateUuidParam(id, 'id');
     if (!idRes.ok) return NextResponse.json({ error: idRes.error }, { status: 400 });
 
-    const body = await req.json();
+    let body;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 });
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: 'JSON body must be an object' }, { status: 400 });
+    }
     const { name } = body as { name?: unknown };
     const nameRes = validateTeamName(name);
     if (!nameRes.ok) return NextResponse.json({ error: nameRes.error }, { status: 400 });

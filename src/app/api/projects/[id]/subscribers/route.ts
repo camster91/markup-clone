@@ -53,7 +53,16 @@ export async function POST(
       return NextResponse.json({ error: access.error }, { status: access.status });
     }
 
-    const { email } = await req.json();
+    let jsonBody;
+    try {
+      jsonBody = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 });
+    }
+    if (!jsonBody || typeof jsonBody !== 'object' || Array.isArray(jsonBody)) {
+      return NextResponse.json({ error: 'JSON body must be an object' }, { status: 400 });
+    }
+    const { email } = jsonBody;
 
     // Single source of truth for subscriber email shape / length / case
     // normalization. validateSubscriberEmail lowercases the result so
