@@ -41,7 +41,16 @@ export async function PATCH(
     if (project?.activeReviewRoundId !== existing.id) {
       return NextResponse.json({ error: 'Historical review rounds cannot be changed' }, { status: 409 });
     }
-    const body = await req.json() as { name?: unknown; status?: unknown; commentsPaused?: unknown };
+    let jsonBody;
+    try {
+      jsonBody = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 });
+    }
+    if (!jsonBody || typeof jsonBody !== 'object' || Array.isArray(jsonBody)) {
+      return NextResponse.json({ error: 'JSON body must be an object' }, { status: 400 });
+    }
+    const body = jsonBody as { name?: unknown; status?: unknown; commentsPaused?: unknown };
     const data: { name?: string | null; status?: string; commentsPaused?: boolean } = {};
 
     if (body.name !== undefined) {

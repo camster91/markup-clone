@@ -139,7 +139,16 @@ export async function POST(req: Request) {
   if (csrfErr) return csrfErr;
 
   try {
-    const { name, domain, teamId } = await req.json();
+    let jsonBody;
+    try {
+      jsonBody = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 });
+    }
+    if (!jsonBody || typeof jsonBody !== 'object' || Array.isArray(jsonBody)) {
+      return NextResponse.json({ error: 'JSON body must be an object' }, { status: 400 });
+    }
+    const { name, domain, teamId } = jsonBody;
     if (!name || !domain) {
       return NextResponse.json({ error: 'name and domain required' }, { status: 400 });
     }
@@ -174,7 +183,7 @@ export async function POST(req: Request) {
       data: { name, domain, apiKey, teamId: teamIdValue },
     });
     audit({
-      actor: project.id,
+      actor: admin.caller.email,
       action: 'project.create',
       target: project.id,
       metadata: { teamId: teamIdValue },

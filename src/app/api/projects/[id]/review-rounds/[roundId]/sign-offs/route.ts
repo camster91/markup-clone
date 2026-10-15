@@ -33,7 +33,16 @@ export async function POST(
     if (project?.activeReviewRoundId !== round.id) {
       return NextResponse.json({ error: 'Only the active review round can be signed off' }, { status: 409 });
     }
-    const body = await req.json() as { note?: unknown };
+    let jsonBody;
+    try {
+      jsonBody = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 });
+    }
+    if (!jsonBody || typeof jsonBody !== 'object' || Array.isArray(jsonBody)) {
+      return NextResponse.json({ error: 'JSON body must be an object' }, { status: 400 });
+    }
+    const body = jsonBody as { note?: unknown };
     const noteRes = sanitizeSignOffNote(body.note);
     if (!noteRes.ok) return NextResponse.json({ error: noteRes.error }, { status: 400 });
 

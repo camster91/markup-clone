@@ -172,6 +172,9 @@ vi.mock('@/lib/csrf', async () => {
 
 vi.mock('@/lib/teams', () => ({
   assertProjectAccessible: (...args: unknown[]) => mocks.projectAccess(...args),
+  // Recapture is gated on project administration; share the same
+  // configurable access result so one mock drives both routes.
+  assertProjectAdmin: (...args: unknown[]) => mocks.projectAccess(...args),
 }));
 
 // Fake child: routes the recapture script's exit event with a
@@ -234,6 +237,8 @@ beforeEach(() => {
     ok: true,
     projectId: 'proj-1',
     teamId: null,
+    caller: { id: 'operator-1', email: 'operator@example.com', role: 'operator' },
+    membershipRole: 'operator',
   });
   mocks.db.screenshots = [];
   mocks.db.versions = [];

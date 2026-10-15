@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   pin: { findUnique: vi.fn(), update: vi.fn() },
   mkdir: vi.fn(),
   writeFile: vi.fn(),
+  unlink: vi.fn(),
 }));
 
 const access = vi.hoisted(() => ({
@@ -19,7 +20,7 @@ const access = vi.hoisted(() => ({
 
 vi.mock('@/lib/prisma', () => ({ prisma: mocks }));
 vi.mock('@/lib/teams', () => access);
-vi.mock('fs/promises', () => ({ mkdir: mocks.mkdir, writeFile: mocks.writeFile }));
+vi.mock('fs/promises', () => ({ mkdir: mocks.mkdir, writeFile: mocks.writeFile, unlink: mocks.unlink }));
 vi.mock('@/lib/events', () => ({ emit: vi.fn() }));
 vi.mock('@/lib/audit', () => ({ audit: vi.fn() }));
 vi.mock('@/lib/email', () => ({ sendMentionEmail: vi.fn() }));
@@ -27,6 +28,9 @@ vi.mock('@/lib/project-notification-delivery', () => ({ sendProjectMemberNotific
 
 import { POST as uploadAttachment } from '@/app/api/attachments/route';
 import { POST as createComment } from '@/app/api/pins/[id]/comments/route';
+import { _resetBucket } from '@/lib/rate-limit';
+
+const UPLOAD_BUCKET = `attachments:origin:https://markup.ashbi.ca:${PROJECT_ID}`;
 
 function uploadRequest(projectId?: string, commentId?: string): Request {
   const form = new FormData();
@@ -59,6 +63,8 @@ function commentRequest(): Request {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  _resetBucket(UPLOAD_BUCKET);
+  mocks.unlink.mockResolvedValue(undefined);
   access.assertProjectAccessible.mockResolvedValue({
     ok: true,
     projectId: PROJECT_ID,
@@ -123,7 +129,7 @@ describe('attachment project ownership', () => {
     );
     expect(audit).toHaveBeenCalledWith(
       expect.objectContaining({
-        actor: 'dashboard',
+        actor: 'reviewer@example.com',
         action: 'attachment.create',
         target: ATTACHMENT_ID,
         metadata: expect.objectContaining({
@@ -166,5 +172,63 @@ describe('attachment project ownership', () => {
       },
       select: { id: true },
     });
+  });
+});
+
+describe('attachment upload rate limit', () => {
+  it('returns 429 with Retry-After once the per-(origin, project) bucket is drained, before any disk write', async () => {
+    for (let i = 0; i < 20; i++) {
+      const ok = await uploadAttachment(uploadRequest(PROJECT_ID));
+      expect(ok.status).toBe(201);
+    }
+    mocks.writeFile.mockClear();
+    mocks.attachment.create.mockClear();
+
+    const limited = await uploadAttachment(uploadRequest(PROJECT_ID));
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get('Retry-After'))).toBeGreaterThan(0);
+    expect(mocks.writeFile).not.toHaveBeenCalled();
+    expect(mocks.attachment.create).not.toHaveBeenCalled();
+  });
+
+  it('does not consume the bucket for a caller who fails the project access check', async () => {
+    access.assertProjectAccessible.mockResolvedValue({ ok: false, status: 403, error: 'denied' });
+    for (let i = 0; i < 25; i++) {
+      const res = await uploadAttachment(uploadRequest(PROJECT_ID));
+      expect(res.status).toBe(403);
+    }
+  });
+});
+
+describe('attachment upload cleanup', () => {
+  it('removes the written file and returns 500 when the DB insert fails', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mocks.attachment.create.mockRejectedValue(new Error('db down'));
+
+    const response = await uploadAttachment(uploadRequest(PROJECT_ID));
+
+    expect(response.status).toBe(500);
+    expect(mocks.writeFile).toHaveBeenCalledTimes(1);
+    const writtenPath = mocks.writeFile.mock.calls[0][0];
+    expect(mocks.unlink).toHaveBeenCalledWith(writtenPath);
+    // The original DB error is still logged and surfaced.
+    expect(errorSpy).toHaveBeenCalledWith('Attachment create error:', expect.objectContaining({ message: 'db down' }));
+    errorSpy.mockRestore();
+  });
+
+  it('logs (does not swallow) a failed cleanup and still returns 500', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mocks.attachment.create.mockRejectedValue(new Error('db down'));
+    mocks.unlink.mockRejectedValue(new Error('EACCES'));
+
+    const response = await uploadAttachment(uploadRequest(PROJECT_ID));
+
+    expect(response.status).toBe(500);
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[attachments] failed to remove orphaned upload',
+      mocks.writeFile.mock.calls[0][0],
+      expect.objectContaining({ message: 'EACCES' }),
+    );
+    errorSpy.mockRestore();
   });
 });
