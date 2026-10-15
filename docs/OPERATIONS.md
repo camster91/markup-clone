@@ -142,9 +142,14 @@ To install the crons manually after an approved source update without running a 
 ssh coolify "bash /root/markup-clone/scripts/install-cron.sh"
 ```
 
-## Caddy route
+## Caddy route (legacy Caddy hosts only)
 
-Markup's deploy strategy is **inline-route defensive re-add** plus a per-minute guard. Markup does not run its own Caddy instance, does not own the master Caddyfile, and does not use Docker labels — it writes its hostname + reverse-proxy block to the fleet's Caddyfiles on every deploy.
+> **The live VPS uses Traefik.** `deploy.sh` detects Traefik on :443 and skips
+> every Caddy step (see step 10 above), and the host-visible Caddy belongs to
+> unrelated apps. Do not restart or edit Caddy during a Markup incident unless
+> `edge-proxy-preflight.sh` reports Caddy as the edge proxy.
+
+On a legacy Caddy host only, Markup's deploy strategy is **inline-route defensive re-add** plus a per-minute guard. Markup does not run its own Caddy instance, does not own the master Caddyfile, and does not use Docker labels — on such a host it writes its hostname + reverse-proxy block to the fleet's Caddyfiles on every deploy.
 
 For the full reasoning see the M1 history below and the comments in `scripts/deploy.sh` around the `add_markup_route` function.
 
@@ -173,9 +178,9 @@ The official `postgres` image writes `host all all all scram-sha-256` as the fir
 
 ### Mid-continuation bash comment in a heredoc is a syntax error
 
-A bash heredoc that opens with `<<EOF` (unquoted) performs **parameter and command substitution** on every line of its body, including the comment lines. A `# ${VAR} ...` style comment will be evaluated, and if `$VAR` happens to contain an unbalanced `)` or backtick, bash reports a syntax error pointing at the heredoc, not at the comment. Use `<<'EOF'` (quoted) for any heredoc that contains shell metacharacters in comments, and use `<<EOF` only when you want the substitutions.
+A bash heredoc that opens with `<<EOF` (unquoted) performs **parameter and command substitution** on every line of its body, including the comment lines. A `# ${VAR} ...` style comment will be evaluated, and if `$VAR` happens to contain an unbalanced `)` or backtick, bash reports a syntax error pointing at the heredoc, not at the comment. Use `<<'EOF'` (quoted) for any heredoc body that needs no substitution, and use `<<EOF` only when you want the substitutions — then keep that body free of `$(`, backticks and unbalanced parentheses.
 
-This bit `scripts/install-cron.sh` — see the inline note on lines 79-83 of that file. The fix is the quoted heredoc delimiter `<<'EOF'` for the caddy-guard cron file body.
+`scripts/install-cron.sh` shows both: the integration-delivery cron uses `<<'EOF'`, while the caddy-guard cron body is deliberately **unquoted** `<<EOF` because `$GUARD_SCRIPT` and `$GUARD_LOG` must expand to real paths (quoting it once left the literal `$GUARD_SCRIPT` in the cron file and broke the job — see the comment above that heredoc).
 
 ### `validateScreenshotId` is required on every route that takes a screenshot id
 
@@ -191,7 +196,16 @@ The `recapture` and `status` route handlers under `src/app/api/screenshots/[id]/
 
 ## Deploying secrets to the VPS
 
-The `.env` file contains credential-shaped strings (`postgresql://user:***@host:5432/db`, an `MAILGUN_API_KEY`, etc). Pasting those values into a `terminal` tool call hits the chat layer's safety filter, which substitutes `***` for the password and can mangle heredocs with `$(...)`. The redaction happens **before** the shell sees the bytes, so quoting tricks don't help.
+Secrets never go through chat, an AI assistant's tool calls, command-line
+arguments, or Git. Tool-call arguments stay in the assistant's session
+transcript, so "staging" a secret that way discloses it even if the later copy
+travels over SSH.
+
+Edit `.env` directly in a trusted shell on the VPS (`ssh coolify`, then your
+editor of choice on `/root/markup-clone/.env`), or copy a file you prepared in
+your own terminal with `scp` / `ssh host 'cat > file'`. Verify afterwards with a
+command that prints no secret material (for example `pg_isready`, the health
+endpoint, or a key-shape check).
 
 ### Provision the first operator without exposing the password
 
@@ -214,14 +228,6 @@ The command creates a new operator or reports `unchanged` when the same
 credentials already exist. It refuses to promote a non-operator account and
 refuses an implicit password change. Intentional password rotation requires the
 same stdin flow plus the explicit `--rotate` argument.
-
-The verified workaround is:
-
-1. **Stage locally** with the `write_file` tool — the secret is in the file contents of a tool call (not in shell argv), so the chat filter leaves it alone.
-2. **Push over SSH** with `cat local | ssh host "cat > remote && command"` — the bytes travel inside SSH's encrypted stream, never through the chat layer as text.
-3. **Verify** with a `pg_isready` / `systemctl status` / `curl` call that contains no secret material.
-
-For the full pattern, common-mistakes table, and verified examples, see the **`chat-layer-redaction-workarounds`** skill (`~/.hermes/skills/software-development/chat-layer-redaction-workarounds/SKILL.md`).
 
 ## Troubleshooting
 
@@ -257,5 +263,5 @@ docker exec markup-postgres pg_ctl -D /var/lib/postgresql/data restart -m fast
 
 **Cause:** an unquoted `<<EOF` heredoc performs parameter and command substitution on every body line, including the `# ...` comment lines. A comment like `# See scripts/foo for the (import) directive` with an unbalanced `)` gets bash to try to evaluate it, then errors out on the rest of the body.
 
-**Fix:** use a **quoted** heredoc delimiter (`<<'EOF'`) for any heredoc body that contains shell metacharacters in comments. `scripts/install-cron.sh` already does this for the caddy-guard cron file (line 84). If you add a new cron block, copy the quoting style — don't `cat >` with bare `<<EOF`.
+**Fix:** use a **quoted** heredoc delimiter (`<<'EOF'`) when the body needs no substitution (as the integration-delivery cron does). When the body must expand variables — like the caddy-guard cron, which needs `$GUARD_SCRIPT` and `$GUARD_LOG` — keep it unquoted and remove metacharacters from its comment lines instead. Do not "fix" the caddy-guard heredoc by quoting it; that writes literal variable names into the cron file.
 

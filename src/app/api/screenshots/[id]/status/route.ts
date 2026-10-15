@@ -17,7 +17,7 @@
 // only fires when nothing has changed.
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardAuth } from '@/lib/auth';
+import { requireAuth, requireDashboardAuth } from '@/lib/auth';
 import { validateScreenshotId } from '@/lib/validation';
 import { consume } from '@/lib/rate-limit';
 import { assertProjectAccessible } from '@/lib/teams';
@@ -45,6 +45,16 @@ export async function GET(
   // user shares one Origin, so an origin-only key was a single global
   // bucket — one runaway tab could 429 every other user's polling.
   const origin = req.headers.get('origin') ?? 'unknown';
+  const caller = await requireAuth();
+  if (!caller) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+  // Caller-wide cap first: a client rotating through unknown screenshot
+  // ids would otherwise get a fresh per-screenshot bucket (and a DB
+  // lookup) every time. Sized above the per-screenshot budget so one
+  // busy screenshot never throttles the caller's other tabs.
+  const callerCheck = consume(`status-user:origin:${origin}:${caller.id}`, { maxTokens: 600, refillRate: 10 });
+  if (!callerCheck.ok) {
+    return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(callerCheck.retryAfterSec) } });
+  }
   const rateCheck = consume(`status:origin:${origin}:${id}`, { maxTokens: 120, refillRate: 2.0 });
   if (!rateCheck.ok) {
     return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(rateCheck.retryAfterSec) } });

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState, useEffect } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { dashboardHeaders } from '@/lib/client-origin';
 
 type ProjectSubscribersProps = {
@@ -15,23 +15,31 @@ export default function ProjectSubscribers({ projectId }: ProjectSubscribersProp
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Only the most recent load may update state. Collapsing and reopening
+  // (or an add/remove) can start a new load while an older one is still
+  // in flight; a stale response arriving last must not overwrite it.
+  const latestLoad = useRef(0);
+
   const fetchSubscribers = useCallback(async () => {
+    const load = ++latestLoad.current;
     setLoading(true);
     setError(null);
     try {
       const res = await fetch(`/api/projects/${projectId}/subscribers`, {
         headers: dashboardHeaders(),
       });
+      if (load !== latestLoad.current) return;
       if (!res.ok) {
         setError(`Failed to load subscribers (HTTP ${res.status})`);
         return;
       }
       const data = await res.json();
+      if (load !== latestLoad.current) return;
       setSubscribers(Array.isArray(data) ? data : (data.subscribers ?? []));
     } catch {
-      setError('Failed to load subscribers');
+      if (load === latestLoad.current) setError('Failed to load subscribers');
     } finally {
-      setLoading(false);
+      if (load === latestLoad.current) setLoading(false);
     }
   }, [projectId]);
 

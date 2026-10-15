@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireDashboardAuth } from '@/lib/auth';
+import { requireAuth, requireDashboardAuth } from '@/lib/auth';
 import { requireCsrfToken } from '@/lib/csrf';
 import { validateScreenshotId } from '@/lib/validation';
 import { spawn } from 'child_process';
@@ -28,7 +28,7 @@ export async function POST(
   const idRes = validateScreenshotId(id);
   if (!idRes.ok) return NextResponse.json({ error: idRes.error }, { status: 400 });
 
-  // Rate limit, bucket 1 (per screenshot): prevent one stuck screenshot
+  // Rate limit (per screenshot): prevent one stuck screenshot
   // from monopolising Chromium. Keyed `<endpoint>:origin:<host>:<id>` like
   // every other dashboard bucket. Every dashboard user shares the same
   // Origin, so an origin-only key would be one global bucket for the whole
@@ -37,6 +37,22 @@ export async function POST(
   // Fine for the current single-instance deploy; will not share buckets
   // across instances if we ever scale horizontally.
   const origin = req.headers.get('origin') ?? 'unknown';
+  const caller = await requireAuth();
+  if (!caller) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+
+  // Rate limit, per user, BEFORE the lookup: a caller rotating through
+  // valid-but-unknown screenshot ids would otherwise get a fresh
+  // per-screenshot bucket (and a DB lookup) on every request. This also
+  // stops one account from fanning recaptures out across many
+  // screenshots (run-a-Chromium-tab DoS).
+  const perUser = consume(`recapture-user:origin:${origin}:${caller.id}`, { maxTokens: 10, refillRate: 0.5 });
+  if (!perUser.ok) {
+    return NextResponse.json(
+      { error: 'Too many recaptures from this dashboard session', retryAfterSec: perUser.retryAfterSec },
+      { status: 429, headers: { 'Retry-After': String(perUser.retryAfterSec) } }
+    );
+  }
+
   const perShot = consume(`recapture:origin:${origin}:${id}`, { maxTokens: 3, refillRate: 0.1 });
   if (!perShot.ok) {
     return NextResponse.json(
@@ -62,18 +78,6 @@ export async function POST(
     const access = await assertProjectAdmin(projectId);
     if (!access.ok) {
       return NextResponse.json({ error: access.error }, { status: access.status });
-    }
-
-    // Rate limit, bucket 2 (per user): stop one account from fanning out
-    // across many screenshots (run-a-Chromium-tab DoS). Runs after the
-    // access check because the caller id is only known once authorized,
-    // and before the spawn, which is the expensive "write".
-    const perUser = consume(`recapture-user:origin:${origin}:${access.caller.id}`, { maxTokens: 10, refillRate: 0.5 });
-    if (!perUser.ok) {
-      return NextResponse.json(
-        { error: 'Too many recaptures from this dashboard session', retryAfterSec: perUser.retryAfterSec },
-        { status: 429, headers: { 'Retry-After': String(perUser.retryAfterSec) } }
-      );
     }
 
     audit({
