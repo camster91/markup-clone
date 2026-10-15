@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   page: { findMany: vi.fn() },
   screenshot: { findUnique: vi.fn(), delete: vi.fn(), findMany: vi.fn() }, // findMany is used by the DELETE cascade
   reviewAsset: { findMany: vi.fn() },
+  screenshotVersion: { findMany: vi.fn().mockResolvedValue([]) },
+  attachment: { findMany: vi.fn().mockResolvedValue([]) },
   pin: { delete: vi.fn() },
   subscriber: { findMany: vi.fn(), create: vi.fn(), findUnique: vi.fn(), delete: vi.fn() },
   auditLog: { create: vi.fn().mockResolvedValue({ id: 'audit-log-1' }) },

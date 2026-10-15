@@ -13,6 +13,7 @@
     "build:packages": "npm run build:core && npm run build:sdk",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "npm run build:packages && tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
