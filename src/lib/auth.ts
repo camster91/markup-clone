@@ -87,14 +87,23 @@ export async function requireDashboardAuth(req: Request): Promise<NextResponse |
 export async function requireProjectKey(req: Request, projectId: string): Promise<NextResponse | null> {
   // Dashboard Origin alone used to short-circuit the API-key check.
   // That let a forged Origin bypass the widget key entirely. A
-  // dashboard caller must now present a valid session; otherwise we
-  // fall through to the project API key (the widget path).
+  // dashboard caller must now present a valid session that can
+  // access THIS project; any session at all would let a member of
+  // team A write pins into team B's project. Otherwise we fall
+  // through to the project API key (the widget path).
   if (isDashboardOriginCore(req)) {
     const user = await requireAuth();
-    if (user) return null;
-    // Origin looked like the dashboard but no session — do NOT
-    // grant access. Fall through to the API-key check so a
-    // misconfigured embed that only sets Origin still needs the key.
+    if (user) {
+      // Loaded lazily: teams.ts imports this module, and a top-level
+      // import here would make the two modules load each other.
+      const { assertProjectAccessible } = await import('./teams');
+      const access = await assertProjectAccessible(projectId);
+      if (access.ok) return null;
+    }
+    // Origin looked like the dashboard but no session, or the
+    // session's user can't access this project — do NOT grant
+    // access. Fall through to the API-key check so a misconfigured
+    // embed that only sets Origin still needs the key.
   }
 
   const provided = req.headers.get('x-api-key');
