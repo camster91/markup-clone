@@ -102,6 +102,29 @@ The dashboard shows the exact snippet for each project.
 - [Browser SDK](packages/markup-sdk/README.md)
 - [Rate limit notes](docs/rate-limit-limitations.md)
 
+## Operations
+
+Deploy steps live in the [deploy runbook](docs/DEPLOY-RUNBOOK.md).
+`scripts/install-cron.sh`, called by `deploy.sh` after a healthy deploy, writes
+these host cron jobs:
+
+| Cron file | Schedule | Job |
+|-----------|----------|-----|
+| `/etc/cron.d/markup-clone` | `0 3 * * *` (daily 03:00 UTC) | `scripts/prune-screenshots.sh` — removes website screenshots older than 90 days **that have no pins**, plus screenshot history versions and unreferenced files older than 90 days. Pinned screenshots, uploaded images and PDF pages are never pruned. |
+| `/etc/cron.d/markup-integration-delivery` | `* * * * *` (every minute) | Claims a bounded delivery batch and calls the protected processor at `POST /api/internal/integration-deliveries/process`. |
+
+### Outbound integrations
+
+Pin creation writes an immutable `visual-feedback.event.v1` envelope and one
+delivery per configured target in the same transaction. Generic webhooks are
+signed: `X-Visual-Feedback-Signature` is `v1=` plus the HMAC-SHA256 of
+`timestamp.payload`. Retryable failures use a bounded schedule of five attempts;
+permanent failures or an exhausted budget enter `DEAD_LETTER`, and project
+admins can retry from the delivery log. GitHub Issues delivery needs a
+fine-grained token limited to one repository with **Metadata: read** and
+**Issues: write**; it is encrypted under `INTEGRATION_ENCRYPTION_KEY` and never
+returned by the API.
+
 ## Testing
 
 ```bash
