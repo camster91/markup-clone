@@ -755,6 +755,27 @@ describe('markup widget', () => {
     expect(annPath[1]).toEqual([250, 200]);
   });
 
+  it('Arrow tool (built bundle): clicks on the modal backdrop — what a real page click hits — are recorded', async () => {
+    // The tests above dispatch on document.body, skipping hit-testing.
+    // In a browser the full-viewport modal backdrop is the topmost
+    // element under any page point, so dispatch on it instead.
+    await openModalInFeedbackMode();
+    const backdrop = Array.from(document.querySelectorAll('body > div')).find(
+      (d) => (d as HTMLElement).style.zIndex === '2147483645'
+    ) as HTMLElement;
+    expect(backdrop).toBeTruthy();
+
+    (document.querySelector('button[data-markup-tool="arrow"]') as HTMLButtonElement).click();
+    backdrop.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: 100, clientY: 50 }));
+    backdrop.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: 250, clientY: 200 }));
+
+    const previewList = document.querySelector('[data-markup-preview-list="1"]') as HTMLElement;
+    expect(previewList.querySelectorAll('canvas')).toHaveLength(1);
+    expect(previewList.textContent).toMatch(/Arrow/);
+    // Still exactly one modal open.
+    expect(document.querySelectorAll('textarea')).toHaveLength(1);
+  });
+
   it('Freehand tool: arms on click, captures pointer-move events, queues, and POSTs the path on Save', async () => {
     // End-to-end check: user clicks Freehand, drags across the
     // page, releases, and the resulting path lands in the queue.

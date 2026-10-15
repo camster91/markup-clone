@@ -72,7 +72,25 @@ export default function ScreenshotView({
   readOnly?: boolean;
 }) {
   const [activePinId, setActivePinId] = useState<string | null>(null);
-  const [pins, setPins] = useState<Pin[]>(screenshot.pins);
+  // `screenshot.pins` (the parent's polled / SSE-refreshed copy) is the
+  // source of truth. Edits this view makes after a successful request
+  // are kept as idempotent patches and re-applied on top of every new
+  // prop value, so a poll that started before the edit landed can't
+  // briefly revert it. Patches expire after LOCAL_PIN_PATCH_TTL_MS, by
+  // which time any later poll already includes the server-side change.
+  const [localPinPatches, setLocalPinPatches] = useState<LocalPinPatch[]>([]);
+  const pins = useMemo(
+    () => applyLocalPinPatches(screenshot.pins, localPinPatches),
+    [screenshot.pins, localPinPatches]
+  );
+  const setPins = useCallback((apply: LocalPinPatch['apply']) => {
+    setLocalPinPatches((previous) => [...previous, { at: Date.now(), apply }]);
+  }, []);
+  useEffect(() => {
+    // A fresh server copy arrived: drop patches old enough that it
+    // must already reflect them.
+    setLocalPinPatches((previous) => pruneLocalPinPatches(previous, Date.now()));
+  }, [screenshot.pins]);
   const [width, setWidth] = useState(screenshot.width);
   const [height, setHeight] = useState(screenshot.height);
   const [capturedAt, setCapturedAt] = useState(screenshot.capturedAt);
@@ -677,6 +695,25 @@ export default function ScreenshotView({
       )}
     </div>
   );
+}
+
+// === Local pin edits ========================================================
+// Every patch must be idempotent (set a field, add-if-missing, filter):
+// it is re-applied to each new server copy until it expires, including
+// copies that already contain the change.
+
+type LocalPinPatch = { at: number; apply: (pins: Pin[]) => Pin[] };
+
+/** Longer than the parent's 5s poll plus a slow round trip. */
+const LOCAL_PIN_PATCH_TTL_MS = 15_000;
+
+function applyLocalPinPatches(serverPins: Pin[], patches: LocalPinPatch[]): Pin[] {
+  return patches.reduce((current, patch) => patch.apply(current), serverPins);
+}
+
+function pruneLocalPinPatches(patches: LocalPinPatch[], now: number): LocalPinPatch[] {
+  const kept = patches.filter((patch) => now - patch.at < LOCAL_PIN_PATCH_TTL_MS);
+  return kept.length === patches.length ? patches : kept;
 }
 
 // === Annotation rendering helpers ============================================
