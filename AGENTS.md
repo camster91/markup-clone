@@ -43,7 +43,7 @@ If you're an agent (human or AI), start here. Then read in this order
   (`assertProjectAccessible`, `assertProjectAdmin`, `assertOperator`).
   `requireDashboardOrigin` alone is a CSRF helper, not authentication.
   All `/api/*` write paths are gated.
-- **Tests:** Vitest, ~1,000 tests across ~150 files, all passing. `npm test` and `npm run lint`
+- **Tests:** Vitest, 1,150+ tests across ~160 files, all passing. `npm test` and `npm run lint`
   are the real local gates; CI on this private repo is on the
   spending-limit plan and may show failures that aren't real.
 

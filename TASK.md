@@ -14,8 +14,17 @@ its stated evidence exists; local tests do not silently close it.
 
 ### P0 — Stop feedback data loss and cross-team access
 
-- **Status:** in-progress (code done on branch `ccr-ff82cc8e-enzsdu`; awaiting
-  review, merge, and an approved deploy)
+- **Status:** in-progress — merged to `main`, **not yet deployed**. Remaining
+  step: an approved production deploy before 2026-11-06, then
+  `DRY_RUN=1 bash scripts/prune-screenshots.sh` on the host to confirm no
+  pinned, uploaded or PDF screenshot is listed.
+- **Merged (2026-10-15):** #78 `0f0292b` (P0 fixes), #79 `c929abb` (Next.js
+  critical + sharp advisories), #82 `d3e1eb4` (route project scoping, audit
+  log, request bodies), #81 `510eedb` (client-IP trust, rate-limit bounds,
+  SSRF guard, chat escaping, delivery queue, CSRF), #83 `c5afb30` (widget
+  annotation tools, head embeds, scrolled captures), #80 `a2e5941` (schema
+  index drift, recapture URL, project delete files, CI gates), and this
+  cleanup PR.
 - **Source:** `docs/plans/p0-data-loss-and-tenant-isolation-2026-10-15.md`
 - **Why first:** the nightly prune cron erases pins and comments on screenshots
   older than 90 days, and deletes in-use images. Earliest production exposure
