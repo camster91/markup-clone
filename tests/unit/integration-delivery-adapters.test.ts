@@ -7,7 +7,9 @@ vi.mock('@/lib/safe-url', () => ({
 import { dispatchDelivery } from '@/lib/integrations/dispatcher';
 import { postEvent as postWebhookEvent } from '@/lib/integrations/webhook';
 import type { PinCreatedEventV1 } from '@/lib/integrations/events';
-import type { IntegrationDeliveryPayload } from '@/lib/integrations/types';
+import type { IntegrationDeliveryPayload, PinPayload } from '@/lib/integrations/types';
+import { buildSlackBody, escapeSlackText } from '@/lib/integrations/slack';
+import { buildDiscordBody } from '@/lib/integrations/discord';
 
 const event: PinCreatedEventV1 = {
   schema: 'visual-feedback.event.v1',
@@ -154,5 +156,47 @@ describe('versioned delivery adapters', () => {
       retryable: false,
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('chat adapter output escaping', () => {
+  const hostile: PinPayload = {
+    pin: {
+      id: 'pin-1', screenshotId: 'shot-1', xPercent: 10, yPercent: 20, status: 'OPEN',
+      authorName: '<!here> Mallory', createdAt: '2026-08-08T04:00:00.000Z',
+    },
+    project: { id: 'project-1', name: 'Acme & <Co>', domain: 'example.com' },
+    path: '/x<https://evil.example|Docs>',
+    commentText: '<!channel> click <https://evil.example|https://bank.example> & @everyone\nline2',
+  };
+
+  it('escapes &, < and > in every user-controlled Slack field', () => {
+    const body = buildSlackBody(hostile);
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain('<!channel>');
+    expect(serialized).not.toContain('<!here>');
+    expect(serialized).not.toContain('<https://evil.example');
+    expect(body.text).toBe('New pin on Acme &amp; &lt;Co&gt; (/x&lt;https://evil.example|Docs&gt;)');
+    const section = body.blocks[0] as { text: { text: string } };
+    expect(section.text.text).toContain(
+      '>&lt;!channel&gt; click &lt;https://evil.example|https://bank.example&gt; &amp; @everyone\n>line2',
+    );
+    const context = body.blocks[1] as { elements: Array<{ text: string }> };
+    expect(context.elements[0]!.text).toContain('*Author:* &lt;!here&gt; Mallory');
+  });
+
+  it('escapeSlackText escapes & first so entities are not double-decoded', () => {
+    expect(escapeSlackText('&lt;!channel&gt;')).toBe('&amp;lt;!channel&amp;gt;');
+  });
+
+  it('disables every Discord mention type', () => {
+    const body = buildDiscordBody(hostile);
+    expect(body.allowed_mentions).toEqual({ parse: [] });
+  });
+
+  it('sends allowed_mentions on the wire for Discord deliveries', async () => {
+    await dispatchDelivery('discord', { webhookUrl: 'https://discord.com/api/webhooks/1/x' }, delivery);
+    const sent = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(sent.allowed_mentions).toEqual({ parse: [] });
   });
 });

@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   page: { findMany: vi.fn() },
   screenshot: { findUnique: vi.fn(), delete: vi.fn(), findMany: vi.fn() }, // findMany is used by the DELETE cascade
   reviewAsset: { findMany: vi.fn() },
+  screenshotVersion: { findMany: vi.fn().mockResolvedValue([]) },
+  attachment: { findMany: vi.fn().mockResolvedValue([]) },
   pin: { delete: vi.fn() },
   subscriber: { findMany: vi.fn(), create: vi.fn(), findUnique: vi.fn(), delete: vi.fn() },
   auditLog: { create: vi.fn().mockResolvedValue({ id: 'audit-log-1' }) },
@@ -260,6 +262,43 @@ describe('PATCH /api/projects/[id]', () => {
     // The mocked apiKey is what we set; the test below validates the shape
     // of the GENERATED key via generateApiKey() in a unit test.
     expect(body.apiKey).toBe('mk_NEWKEY123');
+  });
+
+  it('never returns share credentials (sharePasswordHash / shareToken) in the PATCH response', async () => {
+    // Simulate Prisma: with a `select`, only the selected columns come
+    // back; without one, the full row (including the bcrypt hash) does.
+    const fullRow: Record<string, unknown> = {
+      id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', name: 'New Name', domain: 'example.com',
+      apiKey: 'mk_xx', teamId: null, archivedAt: null,
+      shareToken: 'share-token-secret', shareExpiresAt: new Date(),
+      sharePasswordHash: '$2b$12$hashhashhashhashhashhash',
+      activeReviewRoundId: null, createdAt: new Date(), updatedAt: new Date(),
+    };
+    mocks.project.update.mockImplementation(async ({ select }: { select?: Record<string, boolean> }) => (
+      select
+        ? Object.fromEntries(Object.keys(select).filter((k) => select[k]).map((k) => [k, fullRow[k]]))
+        : fullRow
+    ));
+    const res = await PATCH(reqWithBody('PATCH', { name: 'New Name' }, { origin: 'https://markup.ashbi.ca' }),
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.name).toBe('New Name');
+    expect(body.apiKey).toBe('mk_xx');
+    expect(body).not.toHaveProperty('sharePasswordHash');
+    expect(body).not.toHaveProperty('shareToken');
+    expect(body).not.toHaveProperty('shareExpiresAt');
+  });
+
+  it('records the caller email (not the project id) as the audit actor', async () => {
+    mocks.project.update.mockResolvedValue({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', name: 'New Name' });
+    mocks.auditLog.create.mockClear();
+    mocks.auditLog.create.mockResolvedValue({ id: 'audit-log-1' });
+    const res = await PATCH(reqWithBody('PATCH', { name: 'New Name' }, { origin: 'https://markup.ashbi.ca' }),
+      { params: Promise.resolve({ id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) });
+    expect(res.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mocks.auditLog.create.mock.calls[0][0].data.actor).toBe('operator@example.com');
   });
 
   it('regenerates the apiKey with mk_ prefix and 40 hex chars (real generation)', async () => {

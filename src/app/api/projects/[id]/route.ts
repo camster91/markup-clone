@@ -8,16 +8,35 @@
 // scoped routes via lib/teams.ts).
 
 import { NextResponse } from 'next/server';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardAuth, generateApiKey } from '@/lib/auth';
 import { audit } from '@/lib/audit';
 import { unlink } from 'fs/promises';
+import path from 'path';
 import { validateProjectName, validateProjectId } from '@/lib/validation';
 import { assertProjectAccessible, assertProjectAdmin } from '@/lib/teams';
 import { requireCsrfToken } from '@/lib/csrf';
 import { projectDetailInclude, serializeProjectDetail } from '@/lib/project-detail-dto';
 
 const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || '/data/screenshots';
+const ATTACHMENTS_DIR = process.env.ATTACHMENTS_DIR || '/data/attachments';
+
+// Columns PATCH echoes back. Deliberately excludes the share credentials
+// (shareToken, shareExpiresAt, sharePasswordHash): the password hash must
+// never leave the server, and the share token has its own admin route.
+// apiKey stays because the "Regenerate API key" flow shows the new key
+// once from this response.
+const projectPatchSelect = {
+  id: true,
+  name: true,
+  domain: true,
+  apiKey: true,
+  teamId: true,
+  archivedAt: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.ProjectSelect;
 
 export async function GET(
   req: Request,
@@ -78,34 +97,62 @@ export async function DELETE(
       where: { id },
       select: { id: true, name: true, domain: true },
     });
-    const screenshots = await prisma.screenshot.findMany({
-      where: { page: { projectId: id } },
-      select: { storageKey: true },
-    });
-    const reviewAssets = await prisma.reviewAsset.findMany({
-      where: { projectId: id },
-      select: { storageKey: true },
-    });
+    // Collect every file the project owns before the rows cascade away:
+    // screenshots, their recapture history, PDF sources, and comment
+    // attachments (older attachment rows may only link via the comment).
+    const [screenshots, versions, reviewAssets, attachments] = await Promise.all([
+      prisma.screenshot.findMany({
+        where: { page: { projectId: id } },
+        select: { storageKey: true },
+      }),
+      prisma.screenshotVersion.findMany({
+        where: { screenshot: { page: { projectId: id } } },
+        select: { storageKey: true },
+      }),
+      prisma.reviewAsset.findMany({
+        where: { projectId: id },
+        select: { storageKey: true },
+      }),
+      prisma.attachment.findMany({
+        where: {
+          OR: [
+            { projectId: id },
+            { comment: { pin: { screenshot: { page: { projectId: id } } } } },
+          ],
+        },
+        select: { storageKey: true },
+      }),
+    ]);
+    const files = new Set<string>([
+      ...[...screenshots, ...versions, ...reviewAssets].map((f) => path.join(SCREENSHOTS_DIR, f.storageKey)),
+      ...attachments.map((f) => path.join(ATTACHMENTS_DIR, f.storageKey)),
+    ]);
+
+    // Delete the rows first. If this fails, every file is still in place
+    // and the project keeps working; unlinking first would leave rows
+    // pointing at missing images.
+    await prisma.project.delete({ where: { id } });
 
     let filesRemoved = 0;
-    for (const file of [...screenshots, ...reviewAssets]) {
+    let filesFailed = 0;
+    for (const file of files) {
       try {
-        await unlink(`${SCREENSHOTS_DIR}/${file.storageKey}`);
+        await unlink(file);
         filesRemoved++;
-      } catch {
-        // File may already be missing; continue
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        filesFailed++;
+        console.error('Project delete: could not remove file', file, err);
       }
     }
-
-    await prisma.project.delete({ where: { id } });
     audit({
-      actor: id,
+      actor: access.caller.email,
       action: 'project.delete',
       target: id,
       metadata: { name: project?.name, domain: project?.domain, teamId: access.teamId },
     });
 
-    return NextResponse.json({ deleted: true, filesRemoved, projects: 1 });
+    return NextResponse.json({ deleted: true, filesRemoved, filesFailed, projects: 1 });
   } catch (error) {
     console.error('Project delete error:', error);
     return NextResponse.json({ error: 'Failed to delete project' }, { status: 500 });
@@ -131,7 +178,15 @@ export async function PATCH(
       return NextResponse.json({ error: access.error }, { status: access.status });
     }
 
-    const body = await req.json();
+    let body;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 });
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: 'JSON body must be an object' }, { status: 400 });
+    }
     const { name, regenerateKey, archived } = body as {
       name?: string;
       regenerateKey?: boolean;
@@ -176,9 +231,9 @@ export async function PATCH(
     if (regenerateKey === true) changes.apiKey = 'rotated';
     if (archived !== undefined) changes.archived = archived;
 
-    const project = await prisma.project.update({ where: { id }, data });
+    const project = await prisma.project.update({ where: { id }, data, select: projectPatchSelect });
     audit({
-      actor: id,
+      actor: access.caller.email,
       action: 'project.update',
       target: id,
       metadata: { changes, teamId: access.teamId },

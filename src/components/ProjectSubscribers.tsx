@@ -22,10 +22,12 @@ export default function ProjectSubscribers({ projectId }: ProjectSubscribersProp
       const res = await fetch(`/api/projects/${projectId}/subscribers`, {
         headers: dashboardHeaders(),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setSubscribers(Array.isArray(data) ? data : (data.subscribers ?? []));
+      if (!res.ok) {
+        setError(`Failed to load subscribers (HTTP ${res.status})`);
+        return;
       }
+      const data = await res.json();
+      setSubscribers(Array.isArray(data) ? data : (data.subscribers ?? []));
     } catch {
       setError('Failed to load subscribers');
     } finally {
@@ -33,15 +35,15 @@ export default function ProjectSubscribers({ projectId }: ProjectSubscribersProp
     }
   }, [projectId]);
 
+  // Load whenever the panel is opened (and again if the project changes
+  // while it is open). Re-fetching on every expand is cheap and means an
+  // empty or failed first load is never stuck; add/remove re-fetch on
+  // success themselves, so there is no optimistic state to clobber.
   useEffect(() => {
-    if (expanded && subscribers.length === 0) {
-      fetchSubscribers();
+    if (expanded) {
+      void fetchSubscribers();
     }
-    // fetchSubscribers is stable (useCallback keyed on projectId); subscribers.length
-    // is intentionally omitted — including it would re-fire fetchSubscribers() every
-    // time the list updates, which would clobber optimistic UI in handleAdd/handleRemove.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expanded, projectId, fetchSubscribers]);
+  }, [expanded, fetchSubscribers]);
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -118,7 +120,16 @@ export default function ProjectSubscribers({ projectId }: ProjectSubscribersProp
           {loading ? (
             <p className="text-sm text-gray-400 py-2">Loading...</p>
           ) : error ? (
-            <p className="text-sm text-red-500 py-2">{error}</p>
+            <div role="alert" className="flex items-center justify-between gap-2 py-2">
+              <p className="text-sm text-red-600">{error}</p>
+              <button
+                type="button"
+                onClick={() => void fetchSubscribers()}
+                className="text-sm text-blue-700 hover:underline"
+              >
+                Retry
+              </button>
+            </div>
           ) : subscribers.length === 0 ? (
             <p className="text-sm text-gray-400 py-2 italic">No subscribers yet.</p>
           ) : (

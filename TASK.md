@@ -1,6 +1,6 @@
 # TASK.md — markup-clone execution board
 
-**Last updated:** 2026-09-06
+**Last updated:** 2026-10-15
 **Governing roadmap:**
 `docs/plans/launch-and-saas-replacement-roadmap-2026-08-28.md`
 
@@ -11,6 +11,17 @@ its stated evidence exists; local tests do not silently close it.
 ---
 
 ## In progress
+
+### P0 — Stop feedback data loss and cross-team access
+
+- **Status:** in-progress (code done on branch `ccr-ff82cc8e-enzsdu`; awaiting
+  review, merge, and an approved deploy)
+- **Source:** `docs/plans/p0-data-loss-and-tenant-isolation-2026-10-15.md`
+- **Why first:** the nightly prune cron erases pins and comments on screenshots
+  older than 90 days, and deletes in-use images. Earliest production exposure
+  is 2026-11-06. This blocks L1 QA writes and the L3 pilot.
+- **Also open:** PR #65 (security residuals, merged 2026-09-14) has no recorded
+  production deploy; the next approved deploy should carry both.
 
 ### L1 — Provision the first production operator and run authenticated QA
 

@@ -21,15 +21,23 @@ import { _resetBucket } from '../../src/lib/rate-limit';
 const mocks = vi.hoisted(() => ({
   screenshot: { findUnique: vi.fn() },
 }));
+const teams = vi.hoisted(() => ({
+  assertProjectAccessible: vi.fn(),
+}));
 
 vi.mock('@/lib/prisma', () => ({
   prisma: mocks,
 }));
+vi.mock('@/lib/teams', () => teams);
 
 import { GET } from '../../src/app/api/screenshots/[id]/status/route';
 
 const FIXED_CAPTURED_AT = new Date('2026-06-14T15:00:00.000Z');
-const STATUS_ORIGIN_KEY = 'status:origin:https://markup.ashbi.ca';
+const PROJECT_ID = '99999999-9999-4999-8999-999999999999';
+// Per-screenshot bucket in the documented `<endpoint>:origin:<host>:<id>`
+// shape. The old origin-only key was one global bucket for every user.
+const STATUS_ORIGIN_KEY = 'status:origin:https://markup.ashbi.ca:11111111-1111-1111-1111-111111111111';
+const OTHER_SHOT_KEY = 'status:origin:https://markup.ashbi.ca:33333333-3333-3333-3333-333333333333';
 
 function makeReq(url: string, headers: Record<string, string> = {}): Request {
   return new Request(url, { method: 'GET', headers });
@@ -42,6 +50,14 @@ beforeEach(() => {
     width: 1280,
     height: 720,
     capturedAt: FIXED_CAPTURED_AT,
+    page: { projectId: PROJECT_ID },
+  });
+  teams.assertProjectAccessible.mockResolvedValue({
+    ok: true,
+    projectId: PROJECT_ID,
+    teamId: null,
+    caller: { id: 'u-1', email: 'reviewer@example.com', role: 'reviewer' },
+    membershipRole: 'legacy-reviewer',
   });
 });
 
@@ -68,11 +84,31 @@ describe('GET /api/screenshots/[id]/status', () => {
     expect(body.width).toBe(1280);
     expect(body.height).toBe(720);
     expect(body.capturedAt).toBe(FIXED_CAPTURED_AT.toISOString());
-    // The query must select only the columns we actually return.
+    // The query selects the returned columns plus the owning project
+    // (for the access check) — and the project id is not echoed back.
     expect(mocks.screenshot.findUnique).toHaveBeenCalledWith({
       where: { id: '11111111-1111-1111-1111-111111111111' },
-      select: { width: true, height: true, capturedAt: true },
+      select: { width: true, height: true, capturedAt: true, page: { select: { projectId: true } } },
     });
+    expect(Object.keys(body).sort()).toEqual(['capturedAt', 'height', 'width']);
+    expect(teams.assertProjectAccessible).toHaveBeenCalledWith(PROJECT_ID);
+  });
+
+  it('returns the access status (403) when the caller cannot access the owning project', async () => {
+    teams.assertProjectAccessible.mockResolvedValue({
+      ok: false,
+      status: 403,
+      error: "Not a member of this project's team",
+    });
+    const res = await GET(
+      makeReq('https://markup.ashbi.ca/api/screenshots/11111111-1111-1111-1111-111111111111/status', {
+        origin: 'https://markup.ashbi.ca',
+      }),
+      { params: Promise.resolve({ id: '11111111-1111-1111-1111-111111111111' }) }
+    );
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.width).toBeUndefined();
   });
 
   it('returns 304 with no body when ?since is at or after capturedAt', async () => {
@@ -145,12 +181,14 @@ describe('GET /api/screenshots/[id]/status — rate limit', () => {
   // doesn't sneak tokens back in between loop iterations.
   beforeEach(() => {
     _resetBucket(STATUS_ORIGIN_KEY);
+    _resetBucket(OTHER_SHOT_KEY);
     vi.useFakeTimers({ shouldAdvanceTime: false });
     vi.setSystemTime(new Date('2026-06-14T15:00:00.000Z'));
   });
 
   afterEach(() => {
     _resetBucket(STATUS_ORIGIN_KEY);
+    _resetBucket(OTHER_SHOT_KEY);
     vi.useRealTimers();
   });
 
@@ -192,5 +230,17 @@ describe('GET /api/screenshots/[id]/status — rate limit', () => {
     const seconds = Number(retryAfter);
     expect(Number.isFinite(seconds)).toBe(true);
     expect(seconds).toBeGreaterThan(0);
+  });
+
+  it('draining one screenshot bucket does not throttle polling of another screenshot', async () => {
+    const params1 = { params: Promise.resolve({ id: '11111111-1111-1111-1111-111111111111' }) };
+    for (let i = 0; i < 121; i++) {
+      await GET(makeReq('https://markup.ashbi.ca/api/screenshots/11111111-1111-1111-1111-111111111111/status', { origin: 'https://markup.ashbi.ca' }), params1);
+    }
+    const res = await GET(
+      makeReq('https://markup.ashbi.ca/api/screenshots/33333333-3333-3333-3333-333333333333/status', { origin: 'https://markup.ashbi.ca' }),
+      { params: Promise.resolve({ id: '33333333-3333-3333-3333-333333333333' }) }
+    );
+    expect(res.status).toBe(200);
   });
 });

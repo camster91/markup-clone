@@ -3,13 +3,10 @@ import { prisma } from '@/lib/prisma';
 import { requireDashboardAuth } from '@/lib/auth';
 import { requireCsrfToken } from '@/lib/csrf';
 import { audit } from '@/lib/audit';
-import { unlink } from 'fs/promises';
 import { validatePinId } from '@/lib/validation';
 import { assertProjectAccessible, assertProjectAdmin } from '@/lib/teams';
 import { parseIssueMetadataPatch } from '@/lib/issue-metadata';
 import { sendProjectMemberNotification } from '@/lib/project-notification-delivery';
-
-const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || '/data/screenshots';
 
 async function resolvePinProject(pinId: string): Promise<{
   projectId: string;
@@ -229,38 +226,19 @@ export async function DELETE(
       return NextResponse.json({ error: access.error }, { status: access.status });
     }
 
-    // Find the pin and its screenshot
-    const pin = await prisma.pin.findUnique({
-      where: { id },
-      select: { screenshotId: true },
-    });
-    if (!pin) return NextResponse.json({ error: 'Pin not found' }, { status: 404 });
-
-    const screenshot = await prisma.screenshot.findUnique({
-      where: { id: pin.screenshotId },
-      select: { storageKey: true },
-    });
-
-    // Delete the screenshot file from disk
-    if (screenshot) {
-      try {
-        await unlink(`${SCREENSHOTS_DIR}/${screenshot.storageKey}`);
-      } catch {
-        // File may already be missing
-      }
-      // Delete the screenshot row (cascade removes comments)
-      await prisma.screenshot.delete({ where: { id: pin.screenshotId } });
+    // Delete only this pin. Its comments, annotations, tags and
+    // comment attachments cascade from Pin. The screenshot is shared
+    // by every pin on an uploaded image, PDF page, or dashboard-pinned
+    // capture, so deleting it here would wipe sibling pins and the
+    // page image. A widget capture left with no pins is reclaimed by
+    // scripts/prune-screenshots.sh once it ages out.
+    const deleted = await prisma.pin.deleteMany({ where: { id } });
+    if (deleted.count === 0) {
+      return NextResponse.json({ error: 'Pin not found' }, { status: 404 });
     }
+    audit({ actor: access.caller.email, action: 'pin.delete', target: id, metadata: { projectId } });
 
-    // Delete the pin
-    await prisma.pin.delete({ where: { id } });
-    audit({ actor: pin.screenshotId, action: 'pin.delete', target: id });
-
-    return NextResponse.json({
-      deleted: true,
-      pin: 1,
-      screenshotFile: screenshot?.storageKey ?? null,
-    });
+    return NextResponse.json({ deleted: true, pin: 1 });
   } catch (error) {
     console.error('Pin delete error:', error);
     return NextResponse.json({ error: 'Failed to delete pin' }, { status: 500 });

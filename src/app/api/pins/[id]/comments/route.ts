@@ -10,11 +10,15 @@ import { parseMentions } from '@/lib/mentions';
 import { sendProjectMemberNotification } from '@/lib/project-notification-delivery';
 import { assertProjectAccessible } from '@/lib/teams';
 
-// Closed set of comment authorRole values. Dashboard comments are
-// typically 'reviewer' / 'operator'; widget-originated pin comments
-// use 'client'. Anything else is rejected so a caller can't plant
-// arbitrary role labels into the thread UI.
-const AUTHOR_ROLES = new Set(['operator', 'reviewer', 'client']);
+// Comment authorRole is derived from the caller's session, never from the
+// request body: a guest must not be able to label their reply 'operator'.
+// Dashboard comments are 'operator' (global operators) or 'reviewer'
+// (everyone else); 'client' is reserved for widget-originated pin
+// comments (POST /api/pins). The body's `authorRole` field is accepted
+// for wire compatibility with older dashboards but ignored.
+function authorRoleFor(globalRole: string): 'operator' | 'reviewer' {
+  return globalRole === 'operator' ? 'operator' : 'reviewer';
+}
 
 export async function POST(
   req: Request,
@@ -63,25 +67,29 @@ export async function POST(
       return NextResponse.json({ error: access.error }, { status: access.status });
     }
 
-    const { text, author, authorRole, attachmentIds } = await req.json();
+    let body;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 });
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: 'JSON body must be an object' }, { status: 400 });
+    }
+    const { text, author, attachmentIds } = body;
 
-    const authorRaw = typeof author === 'string' && author.length > 0 ? author : 'Reviewer';
+    // `author` is the free-text display name from the dashboard's "Your
+    // name" field (same contract as the dashboard pin-create route's
+    // authorName). It is a label only — identity and role come from the
+    // session — so it stays client-supplied, sanitized, and falls back to
+    // the caller's email.
+    const authorRaw = typeof author === 'string' && author.trim().length > 0 ? author : access.caller.email;
     const authorRes = sanitizeText(authorRaw, LIMITS.AUTHOR_NAME_MAX, 'author');
     if (!authorRes.ok) {
       return NextResponse.json({ error: authorRes.error }, { status: 400 });
     }
     const authorNormalized = authorRes.value;
-
-    let authorRoleNormalized = 'reviewer';
-    if (authorRole !== undefined && authorRole !== null && authorRole !== '') {
-      if (typeof authorRole !== 'string' || !AUTHOR_ROLES.has(authorRole)) {
-        return NextResponse.json(
-          { error: 'authorRole must be one of: operator, reviewer, client' },
-          { status: 400 }
-        );
-      }
-      authorRoleNormalized = authorRole;
-    }
+    const authorRoleNormalized = authorRoleFor(access.caller.role);
     // Use the same validator as the pin-create flow (R0.3) so the comment
     // text gets the same length cap, trim, and null-byte rejection. A
     // missing/empty/whitespace-only text is rejected here (it would
@@ -138,22 +146,28 @@ export async function POST(
     if (typeof text !== 'string') {
       return NextResponse.json({ error: 'text required' }, { status: 400 });
     }
+    // `commentText` is what gets stored, broadcast and parsed for
+    // mentions: the trimmed value returned by validatePinText, never the
+    // raw body string.
+    let commentText = '';
     if (normalizedAttachmentIds.length === 0) {
       // No attachments — text must be valid on its own.
       const textRes = validatePinText(text);
       if (!textRes.ok) {
         return NextResponse.json({ error: textRes.error }, { status: 400 });
       }
+      commentText = textRes.value;
     } else {
       // Has attachments — text is optional. If present, still
       // run the validator (length cap + null-byte rejection),
       // but accept an empty/whitespace string. The 8MB
       // attachment is the bound on the comment's "weight".
-      if (text.length > 0) {
+      if (text.trim().length > 0) {
         const textRes = validatePinText(text);
         if (!textRes.ok) {
           return NextResponse.json({ error: textRes.error }, { status: 400 });
         }
+        commentText = textRes.value;
       }
     }
 
@@ -195,7 +209,7 @@ export async function POST(
     const comment = await prisma.comment.create({
       data: {
         pinId: id,
-        text,
+        text: commentText,
         author: authorNormalized,
         authorRole: authorRoleNormalized,
         // Claim the uploaded attachments by linking them to the
@@ -309,7 +323,7 @@ export async function POST(
     // address. The screenshot URL fragment is `#comment-<id>` so the
     // recipient lands on the screenshot view scrolled to the new
     // comment.
-    const mentioned = parseMentions(text);
+    const mentioned = parseMentions(commentText);
     let mentionedUserIds: string[] = [];
     if (mentioned.length > 0) {
       try {
@@ -340,7 +354,7 @@ export async function POST(
           // the matched list is in metadata; final delivery still applies
           // project membership and each user's mention preference).
           audit({
-            actor: comment.author,
+            actor: access.caller.email,
             action: 'comment.mention',
             target: comment.id,
             metadata: { pinId: id, emails: emailsToSend },
@@ -351,7 +365,7 @@ export async function POST(
               pinId: id,
               event: 'mention',
               title: 'You were mentioned',
-              message: `${comment.author} mentioned you: ${text}`,
+              message: `${comment.author} mentioned you: ${commentText}`,
               actorUserId: access.caller.id,
               targetUserIds: userIdsToNotify,
             });
@@ -371,7 +385,7 @@ export async function POST(
         pinId: id,
         event: 'new-comment',
         title: 'New thread reply',
-        message: `${comment.author} replied${text ? `: ${text}` : '.'}`,
+        message: `${comment.author} replied${commentText ? `: ${commentText}` : '.'}`,
         actorUserId: access.caller.id,
         ...(mentionedUserIds.length > 0 ? { excludeUserIds: mentionedUserIds } : {}),
       });

@@ -15,7 +15,7 @@
 
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { randomBytes } from 'crypto';
+import { randomBytes, timingSafeEqual } from 'crypto';
 import { CSRF_COOKIE, CSRF_HEADER } from './csrf-constants';
 
 export { CSRF_COOKIE, CSRF_HEADER };
@@ -62,14 +62,39 @@ export function requireCsrfToken(req: Request): NextResponse | null {
 
   const headerToken = req.headers.get(CSRF_HEADER);
   // Cookie header may contain multiple cookies; parse markup.csrf.
+  // The cookie name is regex-escaped: an unescaped `.` would also match
+  // e.g. `markupXcsrf=`, a different cookie the double-submit check
+  // must not accept.
   const cookieHeader = req.headers.get('cookie') ?? '';
-  const match = cookieHeader.match(
-    new RegExp(`(?:^|;\\s*)${CSRF_COOKIE}=([^;]*)`)
-  );
-  const cookieToken = match?.[1] ? decodeURIComponent(match[1]) : null;
+  const match = cookieHeader.match(COOKIE_PATTERN);
+  let cookieToken: string | null = null;
+  if (match?.[1]) {
+    try {
+      cookieToken = decodeURIComponent(match[1]);
+    } catch (error) {
+      // Malformed percent-encoding: the token is unusable, so the request
+      // fails the CSRF check below (403) instead of throwing a 500.
+      console.warn('[csrf] malformed csrf cookie encoding:', error instanceof Error ? error.message : error);
+      cookieToken = null;
+    }
+  }
 
-  if (!headerToken || !cookieToken || headerToken !== cookieToken) {
+  if (!headerToken || !cookieToken || !tokensMatch(headerToken, cookieToken)) {
     return NextResponse.json({ error: 'Invalid CSRF token' }, { status: 403 });
   }
   return null;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const COOKIE_PATTERN = new RegExp(`(?:^|;\\s*)${escapeRegExp(CSRF_COOKIE)}=([^;]*)`);
+
+/** Constant-time string compare (length mismatch short-circuits safely). */
+export function tokensMatch(a: string, b: string): boolean {
+  const left = Buffer.from(a, 'utf8');
+  const right = Buffer.from(b, 'utf8');
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
 }

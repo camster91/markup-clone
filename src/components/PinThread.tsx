@@ -146,7 +146,7 @@ export default function PinThread({
   // pending so the user can't submit a comment without the
   // attachment rows. uploadErrors surfaces the most recent
   // paste failure to the user (rate-limited, too large, etc.).
-  const [pendingAttachments, setPendingAttachments] = useState<{ id: string; url: string; mimeType: string; size: number }[]>([]);
+  const [pendingAttachments, setPendingAttachments] = useState<{ id: string; url: string; mimeType: string; size: number; previewUrl: string }[]>([]);
   const [uploadsInFlight, setUploadsInFlight] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
   // Pending-paste preview URLs (ObjectURLs). We need to keep
@@ -314,7 +314,7 @@ export default function PinThread({
       pendingPreviewsRef.current.set(att.id, previewUrl);
       setPendingAttachments((prev) => [
         ...prev,
-        { id: att.id, url: att.url, mimeType: file.type, size: file.size },
+        { id: att.id, url: att.url, mimeType: file.type, size: file.size, previewUrl },
       ]);
     } catch (err) {
       // Network error, abort, etc. — don't leave the user
@@ -773,7 +773,6 @@ export default function PinThread({
         {pendingAttachments.length > 0 && (
           <div className="flex flex-wrap gap-2">
             {pendingAttachments.map((a) => {
-              const previewUrl = pendingPreviewsRef.current.get(a.id);
               return (
                 <div
                   key={a.id}
@@ -781,7 +780,7 @@ export default function PinThread({
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element -- local ObjectURL, not a static asset the optimizer can resolve. */}
                   <img
-                    src={previewUrl ?? a.url}
+                    src={a.previewUrl || a.url}
                     alt="pasted attachment"
                     className="max-h-20 max-w-[120px] rounded border border-gray-300"
                   />

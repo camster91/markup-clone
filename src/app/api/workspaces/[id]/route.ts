@@ -45,7 +45,16 @@ export async function PATCH(
     const idRes = validateUuidParam(id, 'id');
     if (!idRes.ok) return NextResponse.json({ error: idRes.error }, { status: 400 });
 
-    const body = await req.json() as Record<string, unknown>;
+    let jsonBody;
+    try {
+      jsonBody = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 });
+    }
+    if (!jsonBody || typeof jsonBody !== 'object' || Array.isArray(jsonBody)) {
+      return NextResponse.json({ error: 'JSON body must be an object' }, { status: 400 });
+    }
+    const body = jsonBody as Record<string, unknown>;
     const data: {
       name?: string;
       brandName?: string | null;

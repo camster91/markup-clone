@@ -1,12 +1,22 @@
 name: Deploy to Coolify
 
+# Deploys only after "CI Build" passes on a push to main (or by hand).
+# It used to fire on every push to main, in parallel with CI, so a commit
+# that failed its tests could still reach Coolify.
 on:
-  push:
+  workflow_run:
+    workflows: ['CI Build']
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: deploy-coolify
+  cancel-in-progress: false
+
 jobs:
   deploy:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Coolify Deploy

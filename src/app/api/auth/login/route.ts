@@ -33,6 +33,11 @@ import { randomBytes } from 'crypto';
 
 export const dynamic = 'force-dynamic';
 
+// RFC 5321 caps a forward-path address at 254 octets; nothing longer
+// can be a stored account. Rejecting before the rate-limit keeps an
+// unauthenticated caller from minting huge `login:email:<...>` keys.
+const MAX_LOGIN_EMAIL_LENGTH = 254;
+
 export async function POST(req: Request) {
   let body: { email?: unknown; password?: unknown };
   try {
@@ -51,6 +56,9 @@ export async function POST(req: Request) {
   }
   if (typeof body.password !== 'string' || body.password.length === 0) {
     return NextResponse.json({ error: 'email and password required' }, { status: 400 });
+  }
+  if (body.email.length > MAX_LOGIN_EMAIL_LENGTH) {
+    return NextResponse.json({ error: 'invalid email or password' }, { status: 400 });
   }
   const email = body.email.toLowerCase();
 

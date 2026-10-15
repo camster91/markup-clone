@@ -36,6 +36,7 @@
 
 import { requireDashboardAuth } from '@/lib/auth';
 import { subscribe, type LiveEvent } from '@/lib/events';
+import { assertProjectAccessible } from '@/lib/teams';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -106,6 +107,17 @@ export async function GET(req: Request) {
         headers: { 'Content-Type': 'application/json' },
       });
     }
+  }
+
+  // A session alone is not enough: the stream carries comment text,
+  // author names and attachment URLs, so the caller must be able to
+  // access this project (team member, scoped guest, or operator).
+  const access = await assertProjectAccessible(projectId as string);
+  if (!access.ok) {
+    return new Response(JSON.stringify({ error: access.error }), {
+      status: access.status,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 
   // AbortSignal-driven cleanup. The stream's `cancel` callback runs

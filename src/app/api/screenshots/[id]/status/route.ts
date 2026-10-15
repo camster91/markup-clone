@@ -20,6 +20,7 @@ import { prisma } from '@/lib/prisma';
 import { requireDashboardAuth } from '@/lib/auth';
 import { validateScreenshotId } from '@/lib/validation';
 import { consume } from '@/lib/rate-limit';
+import { assertProjectAccessible } from '@/lib/teams';
 
 export async function GET(
   req: Request,
@@ -39,18 +40,29 @@ export async function GET(
   // never throttle the normal recapture polling loop. Note: rate-limit
   // state is in-process (see src/lib/rate-limit.ts) — fine for the current
   // single-instance deploy.
+  //
+  // Keyed per screenshot (`<endpoint>:origin:<host>:<id>`): every dashboard
+  // user shares one Origin, so an origin-only key was a single global
+  // bucket — one runaway tab could 429 every other user's polling.
   const origin = req.headers.get('origin') ?? 'unknown';
-  const rateCheck = consume(`status:origin:${origin}`, { maxTokens: 120, refillRate: 2.0 });
+  const rateCheck = consume(`status:origin:${origin}:${id}`, { maxTokens: 120, refillRate: 2.0 });
   if (!rateCheck.ok) {
     return new NextResponse(null, { status: 429, headers: { 'Retry-After': String(rateCheck.retryAfterSec) } });
   }
 
+  // Resolve screenshot -> page -> project so the read is tenant-scoped:
+  // a caller outside the owning project's team gets 403, not the dims.
   const ss = await prisma.screenshot.findUnique({
     where: { id },
-    select: { width: true, height: true, capturedAt: true },
+    select: { width: true, height: true, capturedAt: true, page: { select: { projectId: true } } },
   });
-  if (!ss) {
+  const projectId = ss?.page?.projectId;
+  if (!ss || !projectId) {
     return NextResponse.json({ error: 'screenshot not found' }, { status: 404 });
+  }
+  const access = await assertProjectAccessible(projectId);
+  if (!access.ok) {
+    return NextResponse.json({ error: access.error }, { status: access.status });
   }
 
   // Optional ?since=<ISO timestamp> — short-circuit with 304 when nothing

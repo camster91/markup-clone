@@ -25,6 +25,10 @@ which are retained as implementation evidence.
 
 ## Active implementation
 
+- `p0-data-loss-and-tenant-isolation-2026-10-15.md` — **Implemented; not
+  deployed.** Stops the nightly prune and single-pin delete from erasing client
+  feedback, and closes cross-team pin writes and live-feed reads. Deploy before
+  2026-11-06.
 - `mobile-dashboard-accessibility-2026-09-01.md` — **Deployed; authenticated
   production repetition pending.** The exact deployed reply-dedup
   release passed its live repetition, then the 375px owner surface exposed

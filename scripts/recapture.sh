@@ -69,7 +69,7 @@ fi
 #      a URL as a positional arg). Use DATABASE_URL env to extract params.
 #   2. Fall back to docker exec into the postgres container (host use case).
 PSQL=""
-if command -v psql >/dev/null 2>&1 && [ -n "$DATABASE_URL" ]; then
+if command -v psql >/dev/null 2>&1 && [ -n "${DATABASE_URL:-}" ]; then
   # Parse postgresql connection URL into its parts.
   # Use bash parameter expansion to split on the LAST at-sign (so passwords
   # containing at-signs do not break the parse) and URL-decode the password
@@ -115,8 +115,10 @@ PG_CONTAINER="${PG_CONTAINER:-markup-postgres}"
 NEW_VERSION_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
 OUT_FILE="$SCREENSHOTS_DIR/$NEW_VERSION_ID.png"
 
-# Look up the project domain + page path
-read -r DOMAIN PATH_ < <($PSQL -t -A -F'|' \
+# Look up the project domain + page path. psql prints `domain|path`;
+# IFS='|' splits on that separator (the default IFS would leave the
+# whole line in DOMAIN and produce an invalid capture URL).
+IFS='|' read -r DOMAIN PATH_ < <($PSQL -t -A -F'|' \
   -c "SELECT p.domain, pa.path FROM \"Screenshot\" s JOIN \"Page\" pa ON pa.id = s.\"pageId\" JOIN \"Project\" p ON p.id = pa.\"projectId\" WHERE s.id = '$SCREENSHOT_ID'")
 
 if [ -z "$DOMAIN" ]; then
