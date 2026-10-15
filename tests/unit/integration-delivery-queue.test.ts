@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  DeliveryClaimLostError,
   enqueuePinCreatedEvent,
   processDeliveryBatch,
   type DeliveryClaim,
@@ -134,7 +135,7 @@ describe('durable integration delivery processor', () => {
     });
 
     expect(store.claimDue).toHaveBeenCalledWith({ workerId: 'worker-1', now, batchSize: 50 });
-    expect(result).toEqual({ claimed: 1, succeeded: 1, retryScheduled: 0, deadLettered: 0 });
+    expect(result).toEqual({ claimed: 1, succeeded: 1, retryScheduled: 0, deadLettered: 0, claimLost: 0 });
     expect(recorded).toEqual([expect.objectContaining({
       status: 'SUCCEEDED', attemptNumber: 1, statusCode: 204,
     })]);
@@ -153,7 +154,7 @@ describe('durable integration delivery processor', () => {
       store, dispatch, workerId: 'worker-1', now: new Date('2026-08-08T04:00:00.000Z'),
     });
 
-    expect(result).toEqual({ claimed: 2, succeeded: 0, retryScheduled: 1, deadLettered: 1 });
+    expect(result).toEqual({ claimed: 2, succeeded: 0, retryScheduled: 1, deadLettered: 1, claimLost: 0 });
     expect(recorded[0]).toEqual(expect.objectContaining({
       status: 'RETRY_SCHEDULED',
       attemptNumber: 1,
@@ -248,5 +249,143 @@ describe('durable integration delivery processor', () => {
     expect(recorded[0]).toEqual(expect.objectContaining({
       status: 'DEAD_LETTER', error: 'GitHub credential is unavailable',
     }));
+  });
+
+  function githubClaim(overrides: Partial<DeliveryClaim> = {}): DeliveryClaim {
+    return claim({
+      integration: {
+        id: 'integration-github', kind: 'github',
+        configJson: JSON.stringify({ owner: 'acme', repo: 'site', labels: [] }),
+        signingSecret: null,
+        credentialCiphertext: encryptIntegrationCredential('github_pat_x', Buffer.alloc(32, 3)),
+      },
+      ...overrides,
+    });
+  }
+
+  it('logs and RETRIES (not dead-letters) when INTEGRATION_ENCRYPTION_KEY is missing', async () => {
+    vi.stubEnv('INTEGRATION_ENCRYPTION_KEY', '');
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { store, recorded } = storeFor([githubClaim()]);
+      const dispatch = vi.fn();
+      const now = new Date('2026-08-08T04:00:00.000Z');
+
+      const result = await processDeliveryBatch({ store, dispatch, workerId: 'worker-1', now });
+
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(result.retryScheduled).toBe(1);
+      expect(recorded[0]).toEqual(expect.objectContaining({
+        status: 'RETRY_SCHEDULED',
+        error: 'Integration encryption key is not configured',
+        nextAttemptAt: new Date('2026-08-08T04:01:00.000Z'),
+      }));
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('integration encryption key is not usable'),
+        'INTEGRATION_ENCRYPTION_KEY is not configured',
+      );
+    } finally {
+      errorSpy.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('logs and retries when the configured key cannot open the credential', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { store, recorded } = storeFor([githubClaim()]);
+      await processDeliveryBatch({
+        store, dispatch: vi.fn(), workerId: 'worker-1', credentialKey: Buffer.alloc(32, 9),
+      });
+      expect(recorded[0]).toEqual(expect.objectContaining({
+        status: 'RETRY_SCHEDULED', error: 'GitHub credential is unavailable',
+      }));
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('dead-letters a key misconfiguration once the attempt cap is reached', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { store, recorded } = storeFor([githubClaim({ attemptCount: 4 })]);
+      await processDeliveryBatch({
+        store, dispatch: vi.fn(), workerId: 'worker-1', credentialKey: Buffer.alloc(32, 9),
+      });
+      expect(recorded[0]).toEqual(expect.objectContaining({ status: 'DEAD_LETTER', attemptNumber: 5 }));
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});
+
+describe('claim renewal and lost ownership', () => {
+  const ok = async (): Promise<DeliveryDispatchResult> => ({ ok: true, statusCode: 204 });
+
+  it('renews each claim right before sending it', async () => {
+    const order: string[] = [];
+    const { store } = storeFor([claim({ id: 'd1' }), claim({ id: 'd2' })]);
+    store.renewClaim = vi.fn(async (c: DeliveryClaim) => { order.push(`renew:${c.id}`); return true; });
+    const dispatch = vi.fn(async (_k, _c, payload: { deliveryId: string }) => {
+      order.push(`send:${payload.deliveryId}`);
+      return ok();
+    });
+
+    const result = await processDeliveryBatch({ store, dispatch, workerId: 'worker-1' });
+
+    expect(order).toEqual(['renew:d1', 'send:d1', 'renew:d2', 'send:d2']);
+    expect(result).toEqual({ claimed: 2, succeeded: 2, retryScheduled: 0, deadLettered: 0, claimLost: 0 });
+  });
+
+  it('skips (does not send) an item whose claim was reclaimed, and continues the batch', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { store, recorded } = storeFor([claim({ id: 'd1' }), claim({ id: 'd2' }), claim({ id: 'd3' })]);
+      store.renewClaim = vi.fn(async (c: DeliveryClaim) => c.id !== 'd2');
+      const sent: string[] = [];
+      const dispatch = vi.fn(async (_k: unknown, _c: unknown, payload: { deliveryId: string }) => {
+        sent.push(payload.deliveryId);
+        return ok();
+      });
+
+      const result = await processDeliveryBatch({ store, dispatch, workerId: 'worker-1' });
+
+      expect(dispatch).toHaveBeenCalledTimes(2);
+      expect(sent).toEqual(['d1', 'd3']);
+      expect(recorded).toHaveLength(2);
+      expect(result).toEqual({ claimed: 3, succeeded: 2, retryScheduled: 0, deadLettered: 0, claimLost: 1 });
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('delivery d2 was reclaimed'));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('continues the batch when recordOutcome reports a lost claim', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const recorded: string[] = [];
+      const store: DeliveryStore = {
+        claimDue: vi.fn(async () => [claim({ id: 'd1' }), claim({ id: 'd2' })]),
+        recordOutcome: vi.fn(async (c: DeliveryClaim) => {
+          if (c.id === 'd1') throw new DeliveryClaimLostError(c.id);
+          recorded.push(c.id);
+        }),
+      };
+      const result = await processDeliveryBatch({ store, dispatch: vi.fn(ok), workerId: 'worker-1' });
+      expect(recorded).toEqual(['d2']);
+      expect(result).toEqual({ claimed: 2, succeeded: 1, retryScheduled: 0, deadLettered: 0, claimLost: 1 });
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('still aborts the batch on any other store failure', async () => {
+    const store: DeliveryStore = {
+      claimDue: vi.fn(async () => [claim({ id: 'd1' }), claim({ id: 'd2' })]),
+      recordOutcome: vi.fn(async () => { throw new Error('database unavailable'); }),
+    };
+    await expect(processDeliveryBatch({ store, dispatch: vi.fn(ok), workerId: 'worker-1' }))
+      .rejects.toThrow('database unavailable');
   });
 });

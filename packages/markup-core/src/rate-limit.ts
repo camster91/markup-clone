@@ -7,6 +7,17 @@
  * { ok: false, retryAfterSec } if the bucket is empty.
  *
  * Old buckets are cleaned up every 5 minutes to avoid memory leaks.
+ * Between sweeps the store is additionally bounded:
+ *   - keys longer than MAX_KEY_LENGTH are folded to a fixed-size
+ *     prefix + SHA-256 digest, so a caller that embeds client input in
+ *     the key (e.g. `login:email:<email>`) cannot pin megabytes per bucket;
+ *   - at most MAX_BUCKETS buckets are held. When a new key would exceed
+ *     the cap, stale buckets are swept first and, if still full, the
+ *     least-recently-used bucket is evicted (Map insertion order is kept
+ *     as LRU order by re-inserting on every hit).
+ * Eviction resets a bucket to full, so an attacker who can mint
+ * MAX_BUCKETS fresh keys faster than a throttled bucket refills could
+ * reset their own throttle; the cap trades that for bounded memory.
  *
  * ─── Per-process limitation ────────────────────────────────────────────────
  * Bucket state is held in a module-level `Map` that lives entirely in this
@@ -27,6 +38,8 @@
  * For now, do not horizontally scale this service without first swapping
  * the implementation. Documented at the callsites too.
  */
+
+import { createHash } from 'crypto';
 
 interface Bucket {
   tokens: number;
@@ -49,12 +62,42 @@ const DEFAULT_OPTIONS: RateLimiterOptions = {
   refillRate: 0.5, // 1 token every 2 seconds
 };
 
+/** Keys longer than this are folded to `<prefix>#<sha256>` (see normalizeKey). */
+export const MAX_KEY_LENGTH = 256;
+/** Upper bound on live buckets; LRU-evicted past this. */
+export const MAX_BUCKETS = 50_000;
+const KEY_PREFIX_LENGTH = MAX_KEY_LENGTH - 65; // room for '#' + 64 hex chars
+
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const STALE_AGE_MS = 5 * 60 * 1000; // 5 minutes
 
 // Module-level state
 const buckets = new Map<string, Bucket>();
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+// ─── Key / capacity bounds ───────────────────────────────────────────────────
+
+/**
+ * Bound key length. Short keys are returned unchanged (existing callers'
+ * bucket keys are untouched); long keys keep a readable prefix and a
+ * collision-resistant digest of the full key, so two distinct long keys
+ * never share a bucket.
+ */
+export function normalizeKey(key: string): string {
+  if (key.length <= MAX_KEY_LENGTH) return key;
+  const digest = createHash('sha256').update(key, 'utf8').digest('hex');
+  return `${key.slice(0, KEY_PREFIX_LENGTH)}#${digest}`;
+}
+
+function makeRoomForNewBucket(): void {
+  if (buckets.size < MAX_BUCKETS) return;
+  cleanup();
+  while (buckets.size >= MAX_BUCKETS) {
+    const oldest = buckets.keys().next();
+    if (oldest.done) break;
+    buckets.delete(oldest.value);
+  }
+}
 
 // ─── Bucket math ─────────────────────────────────────────────────────────────
 
@@ -86,11 +129,16 @@ export function consume(
   const { maxTokens, refillRate } = { ...DEFAULT_OPTIONS, ...opts };
   const now = Date.now();
 
-  let bucket = buckets.get(key);
-  if (!bucket) {
+  const bucketKey = normalizeKey(key);
+  let bucket = buckets.get(bucketKey);
+  if (bucket) {
+    // Move to the tail so Map iteration order is least-recently-used first.
+    buckets.delete(bucketKey);
+  } else {
+    makeRoomForNewBucket();
     bucket = { tokens: maxTokens, lastRefill: now };
-    buckets.set(key, bucket);
   }
+  buckets.set(bucketKey, bucket);
 
   const elapsedSec = (now - bucket.lastRefill) / 1000;
   const tokens = computeRefill(bucket, elapsedSec, maxTokens, refillRate);
@@ -111,7 +159,7 @@ export function consume(
  * Reset a bucket (for testing).
  */
 export function _resetBucket(key: string): void {
-  buckets.delete(key);
+  buckets.delete(normalizeKey(key));
 }
 
 /**
