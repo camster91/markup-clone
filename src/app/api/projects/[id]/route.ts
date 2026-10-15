@@ -8,6 +8,7 @@
 // scoped routes via lib/teams.ts).
 
 import { NextResponse } from 'next/server';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardAuth, generateApiKey } from '@/lib/auth';
 import { audit } from '@/lib/audit';
@@ -20,6 +21,22 @@ import { projectDetailInclude, serializeProjectDetail } from '@/lib/project-deta
 
 const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || '/data/screenshots';
 const ATTACHMENTS_DIR = process.env.ATTACHMENTS_DIR || '/data/attachments';
+
+// Columns PATCH echoes back. Deliberately excludes the share credentials
+// (shareToken, shareExpiresAt, sharePasswordHash): the password hash must
+// never leave the server, and the share token has its own admin route.
+// apiKey stays because the "Regenerate API key" flow shows the new key
+// once from this response.
+const projectPatchSelect = {
+  id: true,
+  name: true,
+  domain: true,
+  apiKey: true,
+  teamId: true,
+  archivedAt: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.ProjectSelect;
 
 export async function GET(
   req: Request,
@@ -129,7 +146,7 @@ export async function DELETE(
       }
     }
     audit({
-      actor: id,
+      actor: access.caller.email,
       action: 'project.delete',
       target: id,
       metadata: { name: project?.name, domain: project?.domain, teamId: access.teamId },
@@ -161,7 +178,15 @@ export async function PATCH(
       return NextResponse.json({ error: access.error }, { status: access.status });
     }
 
-    const body = await req.json();
+    let body;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 });
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: 'JSON body must be an object' }, { status: 400 });
+    }
     const { name, regenerateKey, archived } = body as {
       name?: string;
       regenerateKey?: boolean;
@@ -206,9 +231,9 @@ export async function PATCH(
     if (regenerateKey === true) changes.apiKey = 'rotated';
     if (archived !== undefined) changes.archived = archived;
 
-    const project = await prisma.project.update({ where: { id }, data });
+    const project = await prisma.project.update({ where: { id }, data, select: projectPatchSelect });
     audit({
-      actor: id,
+      actor: access.caller.email,
       action: 'project.update',
       target: id,
       metadata: { changes, teamId: access.teamId },

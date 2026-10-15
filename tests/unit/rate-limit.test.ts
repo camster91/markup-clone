@@ -178,3 +178,51 @@ describe('consume — memory cleanup for old buckets', () => {
     expect(_bucketCount()).toBe(0);
   });
 });
+
+// ─── Store bounds: key length + bucket count ────────────────────────────────
+
+describe('store bounds', () => {
+  it('leaves short keys untouched and folds long keys to a bounded digest form', async () => {
+    vi.resetModules();
+    const { normalizeKey, MAX_KEY_LENGTH } = await import('@/lib/rate-limit');
+    expect(normalizeKey('login:ip:203.0.113.1')).toBe('login:ip:203.0.113.1');
+    const long = `login:email:${'a'.repeat(100_000)}@example.com`;
+    const folded = normalizeKey(long);
+    expect(folded.length).toBeLessThanOrEqual(MAX_KEY_LENGTH);
+    expect(folded.startsWith('login:email:aaa')).toBe(true);
+    // Distinct long keys with an identical prefix must not share a bucket.
+    expect(normalizeKey(`${long}x`)).not.toBe(folded);
+    expect(normalizeKey(long)).toBe(folded);
+  });
+
+  it('long keys still throttle (same long key → same bucket)', async () => {
+    vi.resetModules();
+    const { consume } = await import('@/lib/rate-limit');
+    const key = `login:email:${'b'.repeat(10_000)}`;
+    const opts = { maxTokens: 2, refillRate: 0 };
+    expect(consume(key, opts).ok).toBe(true);
+    expect(consume(key, opts).ok).toBe(true);
+    expect(consume(key, opts).ok).toBe(false);
+  });
+
+  it('caps the number of buckets and evicts the least-recently-used first', async () => {
+    vi.resetModules();
+    const { consume, _bucketCount, MAX_BUCKETS } = await import('@/lib/rate-limit');
+    const opts = { maxTokens: 1, refillRate: 0 };
+    // `hot` is created first but touched again before the cap is hit,
+    // so it is not the least-recently-used entry.
+    expect(consume('hot', opts).ok).toBe(true);
+    expect(consume('cold', opts).ok).toBe(true);
+    for (let i = 0; i < MAX_BUCKETS - 3; i++) consume(`flood:${i}`, opts);
+    expect(consume('hot', opts).ok).toBe(false); // touch → moves to MRU
+    expect(_bucketCount()).toBe(MAX_BUCKETS - 1);
+
+    consume('new-1', opts); // fills to the cap
+    consume('new-2', opts); // must evict the LRU entry ('cold')
+    expect(_bucketCount()).toBe(MAX_BUCKETS);
+    // `hot` kept its drained state; `cold` was evicted and starts fresh.
+    expect(consume('hot', opts).ok).toBe(false);
+    expect(consume('cold', opts).ok).toBe(true);
+    expect(_bucketCount()).toBe(MAX_BUCKETS);
+  });
+});

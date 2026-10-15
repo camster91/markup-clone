@@ -1,10 +1,15 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
-import type {
-  DeliveryClaim,
-  DeliveryRecordedOutcome,
-  DeliveryStore,
+import {
+  DeliveryClaimLostError,
+  type DeliveryClaim,
+  type DeliveryRecordedOutcome,
+  type DeliveryStore,
 } from './delivery-queue';
 
+// A PROCESSING row whose lockedAt is older than this is considered
+// abandoned (worker crashed) and may be reclaimed by the next run. The
+// processor calls `renewClaim` right before each outbound send, so a
+// live worker's claim is always much younger than this.
 const STALE_CLAIM_MS = 5 * 60_000;
 
 export class PrismaDeliveryStore implements DeliveryStore {
@@ -72,6 +77,14 @@ export class PrismaDeliveryStore implements DeliveryStore {
     });
   }
 
+  async renewClaim(claim: DeliveryClaim, now: Date): Promise<boolean> {
+    const renewed = await this.prisma.integrationDelivery.updateMany({
+      where: { id: claim.id, status: 'PROCESSING', lockedBy: claim.lockedBy },
+      data: { lockedAt: now, updatedAt: now },
+    });
+    return renewed.count === 1;
+  }
+
   async recordOutcome(
     claim: DeliveryClaim,
     outcome: DeliveryRecordedOutcome,
@@ -93,7 +106,7 @@ export class PrismaDeliveryStore implements DeliveryStore {
         },
       });
       if (updated.count !== 1) {
-        throw new Error(`Integration delivery claim ownership was lost for ${claim.id}`);
+        throw new DeliveryClaimLostError(claim.id);
       }
 
       await tx.integrationDeliveryAttempt.create({

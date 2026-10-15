@@ -223,6 +223,15 @@ describe('POST /api/auth/login — invalid creds', () => {
     expect(mocks.session.create).not.toHaveBeenCalled();
   });
 
+  it('rejects an over-long email before touching the rate limiter or DB', async () => {
+    const { _bucketCount } = await import('../../src/lib/rate-limit');
+    const before = _bucketCount();
+    const res = await loginPOST(loginReq({ email: `${'a'.repeat(300)}@example.com`, password: 'x' }));
+    expect(res.status).toBe(400);
+    expect(_bucketCount()).toBe(before);
+    expect(mocks.user.findUnique).not.toHaveBeenCalled();
+  });
+
   it('returns 400 when password is missing', async () => {
     const res = await loginPOST(loginReq({ email: 'alice@example.com' }));
     expect(res.status).toBe(400);

@@ -69,6 +69,14 @@ let pendingClick: PendingClick | null = null;
 let _pinCounter = 0;
 let modalKeydownHandler: ((event: KeyboardEvent) => void) | null = null;
 let returnFocusElement: HTMLElement | null = null;
+/** True while showModal() is awaiting the screenshot, i.e. before
+ *  currentModal exists. Further clicks are ignored during that window
+ *  so they can't start a second modal and overwrite pendingClick. */
+let modalOpening = false;
+/** Bumped by hideModal(). An in-flight showModal() compares it after
+ *  the screenshot await and gives up if the modal was dismissed in the
+ *  meantime (feedback mode turned off, widget destroyed). */
+let modalGeneration = 0;
 
 /** The current tool state. Read by tests via `getToolState()`. */
 let toolState: ToolState = { kind: 'idle', clicks: 0, points: [] };
@@ -92,15 +100,16 @@ interface ActiveCapture {
   pointerDownHandler: ((e: PointerEvent) => void) | null;
   pointerMoveHandler: ((e: PointerEvent) => void) | null;
   pointerUpHandler: ((e: PointerEvent) => void) | null;
-  /** Transparent page-wide overlay that captures pointerdown for freehand. */
-  overlayEl: HTMLDivElement | null;
+  /** The modal backdrop while it acts as the armed tool's capture
+   *  surface (crosshair cursor, touch-action:none). Restored on detach. */
+  surfaceEl: HTMLDivElement | null;
 }
 const activeCapture: ActiveCapture = {
   clickHandler: null,
   pointerDownHandler: null,
   pointerMoveHandler: null,
   pointerUpHandler: null,
-  overlayEl: null,
+  surfaceEl: null,
 };
 
 function nextPinNumber(): number {
@@ -179,12 +188,18 @@ export function clientToScreenshotSpace(
 /** True if a click/pointer event landed inside the current modal box
  *  or the existing pin marker. We use this to ignore events that
  *  hit the modal itself (so the user can still type in the textarea,
- *  click the tool buttons, etc. while a tool is armed). */
+ *  click the tool buttons, etc. while a tool is armed).
+ *
+ *  The backdrop (`currentModal.overlay`) deliberately does NOT count:
+ *  it is a full-viewport fixed layer, so in a real browser every
+ *  click/pointerdown on "the page" while the modal is open hits the
+ *  backdrop. Treating it as "in the modal" made the armed annotation
+ *  tools ignore every page click. The armed tools use the backdrop as
+ *  their capture surface instead (see armTool). */
 function eventIsInModalOrPin(target: EventTarget | null): boolean {
   if (!target || !(target instanceof Element)) return false;
   if (currentModal) {
     if (currentModal.box && currentModal.box.contains(target)) return true;
-    if (currentModal.overlay && currentModal.overlay.contains(target)) return true;
   }
   // The pin marker has pointer-events:none set by renderPin, so it
   // shouldn't normally be a target, but the existing global click
@@ -217,10 +232,11 @@ function detachActiveCapture(): void {
     document.removeEventListener('pointerup', activeCapture.pointerUpHandler, true);
     activeCapture.pointerUpHandler = null;
   }
-  if (activeCapture.overlayEl && activeCapture.overlayEl.parentNode) {
-    activeCapture.overlayEl.parentNode.removeChild(activeCapture.overlayEl);
+  if (activeCapture.surfaceEl) {
+    activeCapture.surfaceEl.style.cursor = '';
+    activeCapture.surfaceEl.style.touchAction = '';
   }
-  activeCapture.overlayEl = null;
+  activeCapture.surfaceEl = null;
 }
 
 /** Reset the tool buttons' visual state (white background, dark text). */
@@ -340,9 +356,9 @@ function renderAnnotationPreview(ann: QueuedAnnotation): void {
 /** Arm a tool. For arrow/box we listen for the next two document
  *  clicks (capture phase on `window`, so we run BEFORE the
  *  lifecycle.ts click listener on document) and ignore clicks
- *  inside the modal. For freehand we install a transparent
- *  page-wide overlay and listen for pointerdown / pointermove /
- *  pointerup. The overlay is removed when capturing ends. */
+ *  inside the modal box. For freehand we listen for pointerdown /
+ *  pointermove / pointerup. In both cases the modal backdrop is the
+ *  capture surface a real pointer hits. */
 function armTool(kind: AnnotationKind): void {
   if (!currentModal) return;
   // Detach any previous capture first so we never double-listen
@@ -370,6 +386,20 @@ function armTool(kind: AnnotationKind): void {
       resetToolButtonStyles(currentModal.toolRow);
     }
   };
+
+  // The modal backdrop covers the whole viewport (z-index just below
+  // the modal box), so it is what a real click/pointerdown on "the
+  // page" hits while the modal is open. It doubles as the armed
+  // tool's capture surface: crosshair cursor, and touch-action:none
+  // so a freehand drag on touch screens draws instead of scrolling.
+  // Using the persistent backdrop (rather than a temporary overlay
+  // that's removed on pointerup) also means the click that follows a
+  // freehand stroke lands on the backdrop, which the lifecycle click
+  // handler ignores — it can't open a second modal.
+  const surface = currentModal.overlay;
+  surface.style.cursor = 'crosshair';
+  if (kind === 'freehand') surface.style.touchAction = 'none';
+  activeCapture.surfaceEl = surface;
 
   if (kind === 'arrow' || kind === 'box') {
     // The two-click tools listen on `window` with `capture: true` so
@@ -402,18 +432,11 @@ function armTool(kind: AnnotationKind): void {
     window.addEventListener('click', handler, true);
   } else if (kind === 'freehand') {
     // Freehand uses pointer events (not click), so the lifecycle
-    // click handler doesn't interfere. We can attach the listeners
-    // to document with capture, and the pointerdown handler
-    // installs a page-wide overlay that captures subsequent
-    // pointermoves / pointerups.
-    const overlay = document.createElement('div');
-    overlay.style.cssText =
-      'position:fixed;inset:0;z-index:2147483643;background:transparent;cursor:crosshair';
-    document.body.appendChild(overlay);
-    activeCapture.overlayEl = overlay;
-
+    // click handler doesn't interfere. We attach the listeners to
+    // document with capture; in a real browser the pointerdown
+    // target is the modal backdrop (the capture surface above).
     const rectFromOverlay = function () {
-      const r = overlay.getBoundingClientRect();
+      const r = surface.getBoundingClientRect();
       return {
         left: r.left,
         top: r.top,
@@ -632,8 +655,12 @@ function buildModal(
   submitBtn.disabled = true;
   submitBtn.style.cssText =
     'min-height:44px;padding:9px 14px;background:#0F172A;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px;font-weight:500;font-family:inherit;opacity:0.5';
+  // True while this modal's pin POST (and its annotation POSTs) are in
+  // flight. Typing fires `input` → updateBtn, which must not re-enable
+  // Save mid-request or a second click would create a duplicate pin.
+  let saving = false;
   function updateBtn() {
-    const ok = textarea.value.trim().length > 0;
+    const ok = !saving && textarea.value.trim().length > 0;
     submitBtn.disabled = !ok;
     submitBtn.style.opacity = ok ? '1' : '0.5';
   }
@@ -644,10 +671,22 @@ function buildModal(
       submitBtn.click();
     }
   });
-  submitBtn.onclick = function () {
+  submitBtn.onclick = async function () {
+    if (saving) return;
     const text = textarea.value.trim();
     if (!text) return;
-    submitPending(text, authorInput.value || 'Client', screenshotBlob, apiUrl, apiKey, projectId);
+    saving = true;
+    submitBtn.textContent = 'Saving...';
+    updateBtn();
+    try {
+      await submitPending(text, authorInput.value || 'Client', screenshotBlob, apiUrl, apiKey, projectId);
+    } finally {
+      // On success the modal is already gone; on failure the user can
+      // retry, so restore the label and re-derive the enabled state.
+      saving = false;
+      submitBtn.textContent = 'Save pin';
+      updateBtn();
+    }
   };
 
   footer.appendChild(cancelBtn);
@@ -671,6 +710,9 @@ function hideModal(): void {
   toolState = { kind: 'idle', clicks: 0, points: [] };
   // Drop any queued annotations — they belong to this pin only.
   annotationQueue = [];
+  // Cancel a showModal() that is still awaiting its screenshot.
+  modalGeneration++;
+  modalOpening = false;
   if (modalKeydownHandler) {
     document.removeEventListener('keydown', modalKeydownHandler, true);
     modalKeydownHandler = null;
@@ -736,7 +778,12 @@ export async function showModal(
   apiKey: string,
   projectId: string
 ): Promise<void> {
+  // A previous click is still capturing its screenshot: ignore this
+  // one rather than opening a second modal on top of it.
+  if (modalOpening) return;
   if (currentModal) hideModal();
+  modalOpening = true;
+  const generation = modalGeneration;
   const activeElement = document.activeElement;
   returnFocusElement =
     clickTarget instanceof HTMLElement && clickTarget.tabIndex >= 0
@@ -762,6 +809,12 @@ export async function showModal(
     captureError = err as Error;
     console.error('[markup] screenshot capture failed:', err);
   }
+
+  // hideModal() ran while we were capturing (feedback mode switched
+  // off, widget destroyed): it already removed our placeholder pin,
+  // so just don't open the modal.
+  if (generation !== modalGeneration) return;
+  modalOpening = false;
 
   const structuralSelector = getCssPath(clickTarget);
   const developerContext = captureDeveloperContext(clickTarget, structuralSelector);
@@ -789,7 +842,10 @@ export async function showModal(
   document.body.appendChild(currentModal.overlay);
   document.body.appendChild(currentModal.box);
   installModalKeyboardHandling(currentModal.box);
-  setTimeout(() => currentModal!.textarea.focus(), 0);
+  const opened = currentModal;
+  setTimeout(() => {
+    if (currentModal === opened) opened.textarea.focus();
+  }, 0);
 }
 
 /** Derive the annotations endpoint from the pin endpoint. The widget
@@ -828,10 +884,11 @@ async function submitPending(
     fd.append('screenshot', screenshotBlob, 'capture.png');
   }
 
-  if (currentModal && currentModal.submitBtn) {
-    currentModal.submitBtn.disabled = true;
-    currentModal.submitBtn.textContent = 'Saving...';
-  }
+  // The Save button's disabled/"Saving..." state is owned by the
+  // modal's click handler (buildModal), which awaits this function.
+  // Remember which modal started the save so a slow response can't
+  // close a different modal the user opened in the meantime.
+  const modalAtStart = currentModal;
 
   // Snapshot the queue so a re-entrant showModal (e.g. if the user
   // clicks another element while we're awaiting fetch) can't mutate
@@ -926,13 +983,9 @@ async function submitPending(
 
     // Success: keep the pin in place, close modal
     emitWidgetEvent('submitted', { pinId, projectId });
-    hideModal();
+    if (currentModal === modalAtStart) hideModal();
   } catch (err) {
     console.error('[markup] save failed:', err);
-    if (currentModal && currentModal.submitBtn) {
-      currentModal.submitBtn.disabled = false;
-      currentModal.submitBtn.textContent = 'Save pin';
-    }
     const message = err instanceof Error ? err.message : 'Unknown error';
     const code = err instanceof Error && err.name === 'ReviewFeedbackPaused'
       ? 'NEW_FEEDBACK_PAUSED'

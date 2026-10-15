@@ -290,7 +290,9 @@ describe('POST /api/pins/[id]/comments — @-mention dispatch', () => {
 
     expect(mocks.audit).toHaveBeenCalledTimes(1);
     expect(mocks.audit).toHaveBeenCalledWith({
-      actor: 'Reviewer',
+      // Actor is the authenticated caller (tests/setup.ts session stub),
+      // not the free-text display name from the request body.
+      actor: 'integration-test@example.com',
       action: 'comment.mention',
       target: 'c-1',
       metadata: {

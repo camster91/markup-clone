@@ -80,7 +80,15 @@ export async function POST(req: Request) {
   }
 
   try {
-    const body = await req.json();
+    let body;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 });
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: 'JSON body must be an object' }, { status: 400 });
+    }
     const { name } = body as { name?: unknown };
     const nameRes = validateWorkspaceName(name);
     if (!nameRes.ok) return NextResponse.json({ error: nameRes.error }, { status: 400 });

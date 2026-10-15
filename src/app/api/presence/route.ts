@@ -6,14 +6,14 @@
 //   body: { projectId, userId, screenshotId?, cursorX?, cursorY? }
 //   - upsert by (userId, projectId); bumps lastSeenAt = now()
 //   - returns the row back so the caller can confirm
-//   - auth: dashboard origin (same as the rest of /api/*)
+//   - auth: dashboard session + assertProjectAccessible(projectId)
 //
 // GET   /api/presence?projectId=X&since=ISO
 //   - returns rows for that project whose lastSeenAt > since
 //   - `since` is an ISO date string. If omitted or unparseable, the
 //     route uses the 60s TTL as the floor (matches the dashboard's
 //     "online" definition — anything older is offline).
-//   - auth: dashboard origin
+//   - auth: dashboard session + assertProjectAccessible(projectId)
 //
 // Why no auth on `userId`: F10 will add a real User model + session and
 // replace the client-generated UUID with a server-issued id. For now the
@@ -30,6 +30,7 @@ import { requireDashboardAuth, requireAuth } from '@/lib/auth';
 import { requireCsrfToken } from '@/lib/csrf';
 import { validateScreenshotId, validatePercent } from '@/lib/validation';
 import { sanitizeText, LIMITS } from '@/lib/validation';
+import { assertProjectAccessible } from '@/lib/teams';
 
 // Presence TTL. Anything older than this is "offline" and the GET route
 // excludes it. Bumped by the heartbeat on every POST. The dashboard
@@ -98,6 +99,14 @@ export async function POST(req: Request) {
   const projectIdErr = requireUuid(body.projectId, 'projectId');
   if (projectIdErr) return NextResponse.json({ error: projectIdErr }, { status: 400 });
   const projectId = body.projectId as string;
+
+  // Tenant scope: only callers who can access the project may publish a
+  // cursor into it. An unknown projectId is a 404 here rather than a
+  // foreign-key violation (500) from the upsert below.
+  const access = await assertProjectAccessible(projectId);
+  if (!access.ok) {
+    return NextResponse.json({ error: access.error }, { status: access.status });
+  }
 
   // screenshotId: optional. If present, must be a UUID. The route
   // intentionally does NOT verify the screenshot belongs to the
@@ -174,6 +183,13 @@ export async function GET(req: Request) {
   const projectIdErr = requireUuid(projectIdParam, 'projectId');
   if (projectIdErr) return NextResponse.json({ error: projectIdErr }, { status: 400 });
   const projectId = projectIdParam as string;
+
+  // Tenant scope: presence rows reveal who is reviewing which project, so
+  // only callers who can access the project may list them.
+  const access = await assertProjectAccessible(projectId);
+  if (!access.ok) {
+    return NextResponse.json({ error: access.error }, { status: access.status });
+  }
 
   // The cursor: rows whose lastSeenAt is strictly after this. If the
   // client passed nothing (or something unparseable), use the 60s

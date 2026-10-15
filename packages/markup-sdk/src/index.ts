@@ -89,7 +89,8 @@ export class MarkupSDK {
       script.async = true;
       script.dataset.apiKey = this.apiKey;
       script.dataset.projectId = this.projectId;
-      if (this.authorName) script.dataset.author = this.authorName;
+      // The widget reads data-author-name (dataset.authorName).
+      if (this.authorName) script.dataset.authorName = this.authorName;
       script.addEventListener('error', () => {
         cleanup();
         this.mountPromise = null;

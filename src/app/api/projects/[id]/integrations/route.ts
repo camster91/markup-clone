@@ -151,7 +151,16 @@ export async function POST(
       return NextResponse.json({ error: access.error }, { status: access.status });
     }
 
-    const body = (await req.json()) as { kind?: unknown; config?: unknown };
+    let jsonBody;
+    try {
+      jsonBody = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 });
+    }
+    if (!jsonBody || typeof jsonBody !== 'object' || Array.isArray(jsonBody)) {
+      return NextResponse.json({ error: 'JSON body must be an object' }, { status: 400 });
+    }
+    const body = jsonBody as { kind?: unknown; config?: unknown };
 
     // 1. Validate kind against the closed set. We use the same
     //    isIntegrationKind() helper as the dispatcher so the

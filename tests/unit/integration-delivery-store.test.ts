@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PrismaDeliveryStore } from '@/lib/integrations/prisma-delivery-store';
-import type { DeliveryClaim, DeliveryRecordedOutcome } from '@/lib/integrations/delivery-queue';
+import {
+  DeliveryClaimLostError,
+  type DeliveryClaim,
+  type DeliveryRecordedOutcome,
+} from '@/lib/integrations/delivery-queue';
 
 const now = new Date('2026-08-08T04:00:00.000Z');
 
@@ -109,6 +113,22 @@ describe('Postgres integration delivery store', () => {
     };
 
     await expect(store.recordOutcome(claimed, outcome)).rejects.toThrow('claim ownership');
+    await expect(store.recordOutcome(claimed, outcome)).rejects.toBeInstanceOf(DeliveryClaimLostError);
     expect(tx.integrationDeliveryAttempt.create).not.toHaveBeenCalled();
+  });
+
+  it('renews a claim only while this worker still owns it', async () => {
+    const updateMany = vi.fn()
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+    const store = new PrismaDeliveryStore({ integrationDelivery: { updateMany } } as never);
+    const later = new Date(now.getTime() + 60_000);
+
+    await expect(store.renewClaim(claimed, later)).resolves.toBe(true);
+    await expect(store.renewClaim(claimed, later)).resolves.toBe(false);
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: 'delivery-1', status: 'PROCESSING', lockedBy: 'worker-1' },
+      data: { lockedAt: later, updatedAt: later },
+    });
   });
 });
