@@ -61,7 +61,11 @@ beforeEach(() => {
   mocks.order.length = 0;
   process.env.SCREENSHOTS_DIR = '/data/screenshots';
   process.env.ATTACHMENTS_DIR = '/data/attachments';
-  mocks.assertProjectAdmin.mockResolvedValue({ ok: true, teamId: null });
+  mocks.assertProjectAdmin.mockResolvedValue({
+    ok: true,
+    teamId: null,
+    caller: { id: 'admin-1', email: 'admin@example.com', role: 'operator' },
+  });
   mocks.project.findUnique.mockResolvedValue({ id: PROJECT_ID, name: 'P', domain: 'p.com' });
   mocks.screenshot.findMany.mockResolvedValue([{ storageKey: 'shot.png' }]);
   mocks.screenshotVersion.findMany.mockResolvedValue([{ storageKey: 'old-version.png' }]);
