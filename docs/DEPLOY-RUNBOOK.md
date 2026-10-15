@@ -1,6 +1,6 @@
 # Deploy Runbook — "I just deployed and it broke"
 
-Incident-response doc. If you're here, the deploy is on fire and you need to fix it in 5 minutes, not read essays. The README's [Known pitfalls](../README.md#known-pitfalls) and [Troubleshooting](../README.md#troubleshooting) sections are the *root-cause* write-ups (use those when starting fresh or doing a postmortem); this runbook is the *on-call* doc with copy-pasteable fixes.
+Incident-response doc. If you're here, the deploy is on fire and you need to fix it in 5 minutes, not read essays. The README's [Known pitfalls](OPERATIONS.md#known-pitfalls) and [Troubleshooting](OPERATIONS.md#troubleshooting) sections are the *root-cause* write-ups (use those when starting fresh or doing a postmortem); this runbook is the *on-call* doc with copy-pasteable fixes.
 
 > **Current edge (verified 2026-08-08): Traefik owns ports 80/443.** Do not run
 > the legacy Caddy cleanup or restart commands on this host; host-visible Caddy

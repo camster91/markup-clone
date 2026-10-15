@@ -97,6 +97,7 @@ The dashboard shows the exact snippet for each project.
 
 ## Developer docs
 
+- [Operations: env vars, deploy flow, pitfalls](docs/OPERATIONS.md)
 - [Developer API v1](docs/developer-api-v1.md)
 - [OpenAPI spec](docs/api/openapi-v1.yaml) (also served at `/api/v1/openapi.json`)
 - [Browser SDK](packages/markup-sdk/README.md)

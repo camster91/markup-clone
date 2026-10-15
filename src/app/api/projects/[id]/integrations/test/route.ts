@@ -27,6 +27,7 @@ import { requireDashboardAuth } from '@/lib/auth';
 import { requireCsrfToken } from '@/lib/csrf';
 import { validateProjectId } from '@/lib/validation';
 import { assertProjectAdmin } from '@/lib/teams';
+import { audit } from '@/lib/audit';
 import { dispatch } from '@/lib/integrations/dispatcher';
 import { isIntegrationKind } from '@/lib/integrations/types';
 import { validateStoredConfig } from '@/lib/integrations/validate';
@@ -122,7 +123,8 @@ export async function POST(
             loadIntegrationEncryptionKey(),
           ),
         };
-      } catch {
+      } catch (err) {
+        console.error('Integration test: GitHub credential unavailable:', err instanceof Error ? err.message : err);
         return NextResponse.json({ error: 'GitHub credential is unavailable' }, { status: 500 });
       }
     }
@@ -156,6 +158,12 @@ export async function POST(
     //    {ok,error?} result so we don't have to try/catch
     //    a stringified error.
     const result = await dispatch(row.kind, runtimeConfig, testPayload);
+    audit({
+      actor: access.caller.email,
+      action: 'integration.test.send',
+      target: integrationId,
+      metadata: { projectId, kind: row.kind, ok: result.ok },
+    });
 
     // 6. Persist outcome. We use the prisma update
     //    directly (not a transaction) — the adapter's

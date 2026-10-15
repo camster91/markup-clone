@@ -11,9 +11,10 @@ If you're an agent (human or AI), start here. Then read in this order
 
 1. **`AGENTS.md`** (this file) — the universal on-ramp.
 2. **`CLAUDE.md`** — Claude-specific conventions and hard don'ts.
-3. **`README.md`** — current stack, deploy flow, pitfalls M1/M2/M3, env
-   vars. The pitfalls section is non-optional reading; the bash
-   heredoc comment trap (`<<'EOF'` vs `<<EOF`) bit us once already.
+3. **`README.md`** — product overview, stack, local setup and tests.
+   **`docs/OPERATIONS.md`** — env vars, deploy flow, cron jobs, and the
+   known pitfalls. The pitfalls section is non-optional reading; the
+   bash heredoc comment trap (`<<'EOF'` vs `<<EOF`) bit us once already.
 4. **`docs/plans/README.md`** — index of every active plan in the
    repo, with dates and status. Read the **active** plans, not
    `archive/`.
@@ -33,21 +34,21 @@ If you're an agent (human or AI), start here. Then read in this order
 - **Stack:** Next.js 16 (App Router), Prisma 6 + PostgreSQL,
   Tailwind 4, Mailgun HTTP API, headless Chromium for recapture.
 - **Deploy:** `scripts/deploy.sh` to `coolify` VPS (Caddy route
-  guard, `markup-net` bridge, pg_hba trust rule). See README §"VPS
-  deploy flow".
-- **Auth:** `requireProjectKey` (widget) + `requireDashboardOrigin`
-  (dashboard) in `src/lib/auth.ts`. **No session-cookie auth on
-  public API routes.** All `/api/*` write paths are gated by one of
-  these.
-- **Tests:** Vitest, 259+/259+ passing. `npm test` and `npm run lint`
+  guard, `markup-net` bridge, pg_hba trust rule). See
+  `docs/OPERATIONS.md` §"VPS deploy flow".
+- **Auth:** `requireProjectKey` (widget: project API key, or a
+  dashboard session that can access the project) and
+  `requireDashboardAuth` (dashboard: Origin check + session cookie) in
+  `src/lib/auth.ts`, plus the project/team checks in `src/lib/teams.ts`
+  (`assertProjectAccessible`, `assertProjectAdmin`, `assertOperator`).
+  `requireDashboardOrigin` alone is a CSRF helper, not authentication.
+  All `/api/*` write paths are gated.
+- **Tests:** Vitest, 1,150+ tests across ~160 files, all passing. `npm test` and `npm run lint`
   are the real local gates; CI on this private repo is on the
   spending-limit plan and may show failures that aren't real.
 
 ## Hard don'ts
 
-- **Don't trust root `CONSOLIDATION-PLAN.md`.** It's an orphaned FFH
-  WordPress plan, unrelated to this repo. Scheduled for deletion; do
-  not act on it.
 - **Don't open `docs/plans/archive/*` and start building from it.**
   Plans in `archive/` are quarantined for a reason. See
   `docs/plans/archive/README.md`.

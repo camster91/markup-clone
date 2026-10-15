@@ -128,6 +128,4 @@ new dated plan is added:
 - Update `TASK.md` when work changes state.
 - Keep completed plans as evidence; do not reclassify them as active because
   production QA is pending.
-- Do not execute root `CONSOLIDATION-PLAN.md`; it is an unrelated FFH WordPress
-  artifact.
 - Do not start work from `archive/`.
