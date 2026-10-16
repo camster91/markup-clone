@@ -12,6 +12,14 @@ its stated evidence exists; local tests do not silently close it.
 
 ## In progress
 
+### Node 24 runtime
+
+- **Status:** in-progress — code on branch `ccr-ff82cc8e-enzsdu`; ships with the
+  next approved deploy (no `deploy.sh` change).
+- **Source:** `docs/plans/node-24-runtime-2026-10-16.md`
+- **Follow-up:** run the container as a non-root user after a host-side
+  ownership check of `/data/screenshots` and `/data/attachments`.
+
 ### P0 — Stop feedback data loss and cross-team access
 
 - **Status:** in-progress — merged to `main`, **not yet deployed**. Remaining

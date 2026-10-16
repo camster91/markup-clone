@@ -25,6 +25,11 @@ which are retained as implementation evidence.
 
 ## Active implementation
 
+- `node-24-runtime-2026-10-16.md` — **Implemented; not deployed.** Moves the
+  image, CI and local tooling from end-of-life Node 20 to Node 24 LTS, with the
+  base image pinned by digest. Verified by a full image build, an in-image
+  Chromium/psql/Poppler check, a booted health + sign-in check, and the full
+  suite under Node 24.
 - `p0-data-loss-and-tenant-isolation-2026-10-15.md` — **Implemented; not
   deployed.** Stops the nightly prune and single-pin delete from erasing client
   feedback, and closes cross-team pin writes and live-feed reads. Deploy before
