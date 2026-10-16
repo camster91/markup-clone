@@ -18,7 +18,12 @@
 # run time via env or --env-file.
 
 # ── Base layer (shared) ──────────────────────────────────────────────────────
-FROM node:20-alpine AS base
+# Node 24 LTS (maintained to 2028-04), pinned by multi-arch index digest so a
+# rebuild cannot silently change the runtime. Dependabot (docker ecosystem)
+# proposes digest bumps; to bump by hand:
+#   docker pull node:24-alpine && docker image inspect node:24-alpine \
+#     --format '{{index .RepoDigests 0}}'
+FROM node:24-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f AS base
 WORKDIR /app
 
 # ── Deps layer (cached unless package.json changes) ──────────────────────────

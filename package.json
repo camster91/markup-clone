@@ -5,6 +5,9 @@
   "workspaces": [
     "packages/*"
   ],
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "npm run build:packages && next build",
@@ -40,7 +43,7 @@
     "@playwright/test": "^1.64.1",
     "@tailwindcss/postcss": "^4",
     "@types/jsdom": "^28.0.3",
-    "@types/node": "^20",
+    "@types/node": "^24",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/supertest": "^7.2.1",
