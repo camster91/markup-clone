@@ -23,6 +23,12 @@ Dependabot's `docker` ecosystem now proposes digest bumps weekly.
   runs match production. `@types/node` follows to `^24`.
 - `.github/dependabot.yml`: add the `docker` ecosystem.
 - README requirement line.
+- `.github/workflows/build-and-push.yml`: default platform `linux/amd64`. On
+  Node 24 the QEMU-emulated arm64 leg hung in `npm ci` until the 30-minute
+  job limit (the amd64 leg finished in ~2 minutes), and on Node 20 the same leg
+  already failed intermittently (`ECONNRESET` in #84's run). Nothing pulls the
+  GHCR images — `deploy.sh` and the Coolify config build on the host — so
+  arm64 is opt-in via the `platforms` input, ideally on a native arm64 runner.
 
 ## Verification
 
