@@ -95,8 +95,10 @@ These are created by earlier deploys; the script assumes they exist:
 - `/opt/caddy/Caddyfile` and `/etc/caddy/Caddyfile` — markup's route is appended to both
 - `/data/screenshots` — bind-mounted into the container at the same path.
   It is the only volume for user files: screenshots, uploads, PDF pages and
-  comment attachments (`attachments/`). Back it up with the database; the
-  Postgres backup scripts do not copy files
+  comment attachments (`attachments/`). The nightly backup archives it; see
+  "Backups" below
+- `/data/markup-clone/backups` — mounted at `/data/backups`; nightly database
+  dumps and file archives
 - `/data/markup-clone/postgres` (or external volume name) — postgres data
 - `markup-postgres` container on the `markup-net` bridge
 
@@ -104,7 +106,7 @@ These are created by earlier deploys; the script assumes they exist:
 
 The jobs are written by `scripts/install-cron.sh`, which `deploy.sh` calls on a
 successful health check. In Traefik mode it installs pruning and integration
-delivery, invokes tracked scripts through Bash without changing their Git modes,
+delivery plus the nightly backup, invokes tracked scripts through Bash without changing their Git modes,
 and removes the obsolete Caddy guard cron. The Caddy guard is installed only on a
 legacy host explicitly detected as Caddy.
 
@@ -113,6 +115,38 @@ legacy host explicitly detected as Caddy.
 | `/etc/cron.d/markup-clone` | `0 3 * * *` (daily 03:00 UTC) | `prune-screenshots.sh` — removes website screenshots older than 90 days **that have no pins**, plus history versions and unreferenced files older than 90 days. Pinned screenshots, uploads and PDF pages are kept (see #78). | `scripts/prune-screenshots.sh` |
 | `/etc/cron.d/markup-caddy-guard` | Legacy Caddy hosts only | Re-adds the inline Caddy route. Removed automatically when Traefik is detected. | `scripts/markup-caddy-guard.sh` |
 | `/etc/cron.d/markup-integration-delivery` | `* * * * *` (every minute) | Claims a bounded Postgres delivery batch and invokes the protected in-container processor. | `POST /api/internal/integration-deliveries/process` |
+| `/etc/cron.d/markup-backup` | `15 2 * * *` (daily 02:15 UTC) | Database dump plus a tar of every user file, both checksummed, then keeps the newest 14 dumps and 3 file archives. Log: `/var/log/markup-backup.log`. | `scripts/nightly-backup.sh` |
+
+### Backups
+
+`nightly-backup.sh` runs inside the app container and writes to
+`/data/backups` (host: `/data/markup-clone/backups`):
+
+- `markup-<stamp>.dump` — `backup-postgres.sh`, a custom-format dump.
+- `markup-files-<stamp>.tar` — `backup-files.sh`, every file under
+  `SCREENSHOTS_DIR`: screenshots, uploads, PDF pages and comment attachments.
+  If `ATTACHMENTS_DIR` points outside it, attachments go to a separate
+  `markup-attachments-<stamp>.tar`. The file backup is skipped (and the run
+  fails) when free space is below the data size plus 10%.
+
+Each has a `.sha256` sidecar. The dump is taken first and the app keeps
+running, so the archive can also hold files created a moment later (harmless
+orphans). Old backups are removed only after both new ones succeed. Change the counts with `BACKUP_KEEP_DB` / `BACKUP_KEEP_FILES` in
+the app `.env`. Manual backups count toward the same limits.
+
+These copies live on the same disk as the data, so they cover mistakes, not a
+lost disk or server. Copy the newest `.dump` and `.tar` (with their `.sha256`)
+off the host for disaster recovery.
+
+Restore the database first (`restore-postgres.sh`, see the deploy runbook),
+then the files. The file restore only adds missing files and never overwrites
+or deletes, so it is safe while the app runs. A `markup-attachments-*` archive
+restores into `ATTACHMENTS_DIR`; confirm that directory instead:
+
+```bash
+docker exec -e RESTORE_CONFIRM_DIR=/data/screenshots markup-clone \
+  bash /opt/app-scripts/restore-files.sh /data/backups/markup-files-<stamp>.tar
+```
 
 ### Reliable outbound integrations
 

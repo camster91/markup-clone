@@ -133,6 +133,10 @@ On the VPS, use `docker exec markup-clone` for the first command. Copy both the
 `.dump` and `.dump.sha256` files off-host; a same-host backup is only a recovery
 convenience, not disaster recovery.
 
+User files (screenshots, uploads, PDF pages, comment attachments) are archived
+by `backup-files.sh`; `nightly-backup.sh` runs both every night at 02:15 UTC.
+See `docs/OPERATIONS.md` §"Backups" for retention and the file restore.
+
 ### Restore drill
 
 First prove the guard refuses a non-empty database. Then stop every writer,

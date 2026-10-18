@@ -25,6 +25,10 @@ which are retained as implementation evidence.
 
 ## Active implementation
 
+- `file-backups-2026-10-18.md` — **Implemented; not deployed.** Nightly
+  database dump plus an archive of every screenshot, upload, PDF page and
+  comment attachment, with retention and a restore that only adds missing
+  files. Same-host only; off-host copies need an operator-chosen destination.
 - `attachment-storage-2026-10-18.md` — **Implemented; not deployed.** Comment
   attachments were stored inside the container and deleted by every deploy.
   They now default to `<SCREENSHOTS_DIR>/attachments` on the mounted volume.
