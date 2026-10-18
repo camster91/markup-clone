@@ -42,16 +42,25 @@ A plain `USER node` line was not safe on its own:
 - Rollback to an older image still works: it runs as root and can read and
   write uid-1000 files.
 
-## Verification (pending: image build in progress)
+## Verification
 
-- Image built from this Dockerfile (Node 24, Alpine).
-- Booted against a disposable Postgres 16, with a pre-filled root-owned
-  screenshots volume:
-  - the app process runs as `node`;
-  - the volume is handed over;
-  - `/api/health` passes.
-- As `node` in the image:
-  - headless Chromium writes a screenshot into the volume;
-  - Poppler (`pdftoppm`) renders into the volume.
-- `docker exec` still runs as root, and the nightly backup succeeds.
-- `tests/unit/container-user.test.ts` pins the wiring.
+Done on 2026-10-18 with an image built from this Dockerfile, against a
+disposable Postgres 16 with every migration applied.
+
+- **Image build:** passes, including the in-image PDF renderer check.
+- **Boot over a volume pre-filled with root-owned files** (as on the VPS):
+  - `next-server` runs as `node`; only `dumb-init` (PID 1) stays root;
+  - the files and `attachments/` were handed to uid 1000;
+  - `/api/health` returned ok;
+  - the app's `HOME` is `/home/node` and its umask is `0022`.
+- **As `node` in the container:**
+  - headless Chromium wrote a screenshot into the volume, with the same flags
+    as `recapture.sh`;
+  - `pdftoppm` rendered a PDF into it;
+  - `.next/cache` is writable; `/app/server.js` is not.
+- **`docker exec` jobs:**
+  - they still run as root;
+  - `nightly-backup.sh` wrote root-only (`0600`) backups;
+  - `restore-files.sh` re-created a deleted `attachments/` owned by uid 1000,
+    and `node` could write into it afterwards.
+- **Unit tests:** `tests/unit/container-user.test.ts` pins the wiring.
