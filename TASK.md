@@ -12,10 +12,19 @@ its stated evidence exists; local tests do not silently close it.
 
 ## In progress
 
+### Nightly database and file backups
+
+- **Status:** in-progress — code on branch `ccr-ff82cc8e-enzsdu`; the cron is
+  installed by the next approved deploy (no `deploy.sh` change).
+- **Source:** `docs/plans/file-backups-2026-10-18.md`
+- **Before that deploy:** check `du -sh /data/screenshots` against
+  `df -h /data`; each kept file archive is about that size.
+- **Follow-up:** off-host copies once a destination is chosen.
+
 ### Comment attachments survive deploys
 
-- **Status:** in-progress — code on branch `ccr-ff82cc8e-enzsdu`; ships with
-  the next approved deploy (no `deploy.sh` change).
+- **Status:** in-progress — merged to `main` in #88 (`7f79343`), **not yet
+  deployed**; ships with the next approved deploy (no `deploy.sh` change).
 - **Source:** `docs/plans/attachment-storage-2026-10-18.md`
 - **Before that deploy:** run the rescue `docker cp` from the plan, or every
   attachment uploaded since the last deploy is deleted.

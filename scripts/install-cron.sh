@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Install the markup-clone cron jobs (prune + delivery worker + Caddy guard).
+# Install the markup-clone cron jobs (prune + delivery worker + Caddy guard +
+# nightly backup).
 #
-# Three jobs are installed:
+# Four jobs are installed:
 #
 # 1. /etc/cron.d/markup-clone — daily 03:00 UTC prune of screenshots
 #    older than 90 days. The DELETEs run inside the postgres
@@ -19,6 +20,9 @@
 #
 # 3. /etc/cron.d/markup-integration-delivery — every-minute bounded
 #    delivery worker invocation using the app container's dedicated secret.
+#
+# 4. /etc/cron.d/markup-backup — daily 02:15 UTC database dump plus an
+#    archive of every user file, with retention (nightly-backup.sh).
 #
 # Both files are written idempotently (cat >) so re-running this
 # script is safe. The deploy script also calls this on every
@@ -128,6 +132,23 @@ chmod 644 /etc/cron.d/markup-integration-delivery
 touch "$DELIVERY_LOG"
 chmod 644 "$DELIVERY_LOG"
 echo "Installed durable integration delivery worker (every minute). Log: $DELIVERY_LOG"
+
+# Idempotent install of the nightly backup: database dump plus an archive of
+# every user file, with retention (scripts/nightly-backup.sh). It runs before
+# the 03:00 prune so the newest recovery point predates any prune deletion.
+BACKUP_LOG="/var/log/markup-backup.log"
+cat > /etc/cron.d/markup-backup <<'EOF'
+# /etc/cron.d/markup-backup
+# Nightly same-host recovery point (database + user files). Copy off-host for
+# disaster recovery; see docs/OPERATIONS.md.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+15 2 * * * root docker exec markup-clone bash /opt/app-scripts/nightly-backup.sh >> /var/log/markup-backup.log 2>&1
+EOF
+chmod 644 /etc/cron.d/markup-backup
+touch "$BACKUP_LOG"
+chmod 644 "$BACKUP_LOG"
+echo "Installed nightly backup (02:15 UTC). Log: $BACKUP_LOG"
 
 echo "Installed /etc/cron.d/markup-clone:"
 cat /etc/cron.d/markup-clone
