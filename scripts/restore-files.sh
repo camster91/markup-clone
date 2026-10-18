@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Guarded restore of an archive made by backup-files.sh.
-# It only adds files that are missing from SCREENSHOTS_DIR. It never
-# overwrites or deletes a file that is already there, so it can run while the
-# app is serving. Restore the matching database dump first; files with no
+# Guarded restore of an archive made by backup-files.sh. A markup-files-*
+# archive restores into SCREENSHOTS_DIR, a markup-attachments-* archive into
+# ATTACHMENTS_DIR. It only adds files that are missing from that directory. It
+# never overwrites or deletes a file that is already there, so it can run while
+# the app is serving. Restore the matching database dump first; files with no
 # database row are removed by the nightly prune after 90 days.
 #   docker exec -e RESTORE_CONFIRM_DIR=/data/screenshots markup-clone \
 #     bash /opt/app-scripts/restore-files.sh /data/backups/markup-files-<stamp>.tar
@@ -11,12 +12,18 @@ set -euo pipefail
 umask 022
 
 SCREENSHOTS_DIR="${SCREENSHOTS_DIR:-/data/screenshots}"
-: "${RESTORE_CONFIRM_DIR:?RESTORE_CONFIRM_DIR is required; set it to the target SCREENSHOTS_DIR}"
+: "${RESTORE_CONFIRM_DIR:?RESTORE_CONFIRM_DIR is required; set it to the target directory}"
 BACKUP_PATH="${1:-}"
 if [ -z "$BACKUP_PATH" ] || [ ! -f "$BACKUP_PATH" ]; then
   echo "Usage: restore-files.sh /absolute/path/to/markup-files-<stamp>.tar" >&2
   exit 2
 fi
+case "$(basename -- "$BACKUP_PATH")" in
+  markup-attachments-*)
+    TARGET_DIR="${ATTACHMENTS_DIR:?ATTACHMENTS_DIR must be set to restore an attachments archive}"
+    ;;
+  *) TARGET_DIR=$SCREENSHOTS_DIR ;;
+esac
 case "$BACKUP_PATH" in
   /*) ;;
   *) echo "Backup path must be absolute" >&2; exit 2 ;;
@@ -25,12 +32,12 @@ if [ ! -f "$BACKUP_PATH.sha256" ]; then
   echo "Missing checksum: $BACKUP_PATH.sha256" >&2
   exit 2
 fi
-if [ ! -d "$SCREENSHOTS_DIR" ]; then
-  echo "SCREENSHOTS_DIR does not exist: $SCREENSHOTS_DIR" >&2
+if [ ! -d "$TARGET_DIR" ]; then
+  echo "Target directory does not exist: $TARGET_DIR" >&2
   exit 2
 fi
-if [ "$RESTORE_CONFIRM_DIR" != "$SCREENSHOTS_DIR" ]; then
-  echo "Directory confirmation does not match SCREENSHOTS_DIR" >&2
+if [ "$RESTORE_CONFIRM_DIR" != "$TARGET_DIR" ]; then
+  echo "Directory confirmation does not match the target directory $TARGET_DIR" >&2
   exit 3
 fi
 
@@ -50,7 +57,7 @@ if tar -tf "$BACKUP_PATH" | grep -Eq '^/|(^|/)\.\.(/|$)'; then
 fi
 
 # Stage inside the target so the final moves stay on one filesystem.
-STAGE=$(mktemp -d "$SCREENSHOTS_DIR/.restore-XXXXXX")
+STAGE=$(mktemp -d "$TARGET_DIR/.restore-XXXXXX")
 trap 'rm -rf -- "$STAGE"' EXIT
 tar -xf "$BACKUP_PATH" -C "$STAGE"
 
@@ -58,7 +65,7 @@ ADDED=0
 KEPT=0
 while IFS= read -r -d '' file; do
   rel=${file#"$STAGE"/}
-  dest="$SCREENSHOTS_DIR/$rel"
+  dest="$TARGET_DIR/$rel"
   if [ -e "$dest" ]; then
     KEPT=$((KEPT + 1))
     continue
@@ -69,4 +76,4 @@ while IFS= read -r -d '' file; do
 done < <(find "$STAGE" -type f -print0)
 
 printf 'Restored %d missing files into %s; kept %d existing files unchanged\n' \
-  "$ADDED" "$SCREENSHOTS_DIR" "$KEPT"
+  "$ADDED" "$TARGET_DIR" "$KEPT"

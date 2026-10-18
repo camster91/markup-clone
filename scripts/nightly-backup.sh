@@ -4,7 +4,8 @@
 #   docker exec markup-clone bash /opt/app-scripts/nightly-backup.sh
 #
 # Retention keeps the newest BACKUP_KEEP_DB dumps (default 14) and the newest
-# BACKUP_KEEP_FILES file archives (default 3), manual backups included. It runs
+# BACKUP_KEEP_FILES archives of each file kind (default 3), manual backups
+# included. It runs
 # only after both backups succeed, so a failing night never deletes older
 # recovery points.
 #
@@ -32,6 +33,12 @@ log() {
 
 # Assign before logging: a failed command substitution inside log's arguments
 # would not stop the script under set -e.
+#
+# The dump comes first on purpose. The app keeps running, so the two are taken
+# moments apart. In this order every file a dumped row points to is still on
+# disk when the archive is made, unless it was deleted in between (rows the
+# user had just deleted anyway). Files created after the dump only add
+# orphans, which the prune removes.
 DB_BACKUP=$(BACKUP_DIR="$BACKUP_DIR" bash "$SCRIPT_DIR/backup-postgres.sh")
 log "database backup: $DB_BACKUP"
 FILES_BACKUP=$(BACKUP_DIR="$BACKUP_DIR" bash "$SCRIPT_DIR/backup-files.sh")
@@ -52,3 +59,4 @@ prune_backups() {
 }
 prune_backups 'markup-[0-9]*.dump' "$KEEP_DB"
 prune_backups 'markup-files-[0-9]*.tar' "$KEEP_FILES"
+prune_backups 'markup-attachments-[0-9]*.tar' "$KEEP_FILES"

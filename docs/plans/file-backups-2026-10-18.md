@@ -19,6 +19,9 @@
   - Checks the archive's member count against the listing.
   - Refuses to run when free space is below the data size plus 10%.
   - No compression: the files are already PNG, JPEG or WebM.
+  - If `ATTACHMENTS_DIR` points outside `SCREENSHOTS_DIR` (a supported
+    override), it gets its own `markup-attachments-<stamp>.tar`, restored back
+    into `ATTACHMENTS_DIR`.
 - `scripts/restore-files.sh` — guarded restore.
   - Needs `RESTORE_CONFIRM_DIR` and a valid checksum.
   - Extracts to a staging directory and only adds files that are missing.
@@ -31,6 +34,16 @@
   through `docker exec markup-clone`, before the 03:00 prune.
   - `install-cron.sh` already runs after every healthy deploy; `deploy.sh` is
     unchanged.
+
+## Consistency
+
+The app keeps running during the backup, so the dump and the archive are
+taken moments apart. The dump runs first. Every file a dumped row points to is
+therefore still on disk when the archive is made, unless that row was deleted
+in between, which means the user had just deleted it. Files created after the
+dump are extra orphans that the prune removes. A fully consistent pair would
+need the app stopped or a filesystem snapshot; not worth it for a few seconds
+at 02:15.
 
 ## Not covered
 

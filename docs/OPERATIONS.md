@@ -125,11 +125,13 @@ legacy host explicitly detected as Caddy.
 - `markup-<stamp>.dump` — `backup-postgres.sh`, a custom-format dump.
 - `markup-files-<stamp>.tar` — `backup-files.sh`, every file under
   `SCREENSHOTS_DIR`: screenshots, uploads, PDF pages and comment attachments.
-  The file backup is skipped (and the run fails) when free space is below the
-  data size plus 10%.
+  If `ATTACHMENTS_DIR` points outside it, attachments go to a separate
+  `markup-attachments-<stamp>.tar`. The file backup is skipped (and the run
+  fails) when free space is below the data size plus 10%.
 
-Each has a `.sha256` sidecar. Old backups are removed only after both new
-ones succeed. Change the counts with `BACKUP_KEEP_DB` / `BACKUP_KEEP_FILES` in
+Each has a `.sha256` sidecar. The dump is taken first and the app keeps
+running, so the archive can also hold files created a moment later (harmless
+orphans). Old backups are removed only after both new ones succeed. Change the counts with `BACKUP_KEEP_DB` / `BACKUP_KEEP_FILES` in
 the app `.env`. Manual backups count toward the same limits.
 
 These copies live on the same disk as the data, so they cover mistakes, not a
@@ -138,7 +140,8 @@ off the host for disaster recovery.
 
 Restore the database first (`restore-postgres.sh`, see the deploy runbook),
 then the files. The file restore only adds missing files and never overwrites
-or deletes, so it is safe while the app runs:
+or deletes, so it is safe while the app runs. A `markup-attachments-*` archive
+restores into `ATTACHMENTS_DIR`; confirm that directory instead:
 
 ```bash
 docker exec -e RESTORE_CONFIRM_DIR=/data/screenshots markup-clone \

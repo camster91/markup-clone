@@ -33,6 +33,7 @@ function run(script: string, args: string[] = [], env: Record<string, string> = 
       ...process.env,
       PATH: `${bin}:${process.env.PATH}`,
       SCREENSHOTS_DIR: shots,
+      ATTACHMENTS_DIR: '',
       BACKUP_DIR: backups,
       ...env,
     },
@@ -51,8 +52,10 @@ function shim(name: string, body: string) {
   chmodSync(p, 0o755);
 }
 
-function archives(): string[] {
-  return readdirSync(backups).filter((f) => /^markup-files-.*\.tar$/.test(f)).sort();
+function archives(kind = 'files'): string[] {
+  return readdirSync(backups)
+    .filter((f) => f.startsWith(`markup-${kind}-`) && f.endsWith('.tar'))
+    .sort();
 }
 
 function members(archive: string): string[] {
@@ -88,6 +91,28 @@ describe('backup-files.sh', () => {
 
     const check = spawnSync('sha256sum', ['-c', `${archive}.sha256`], { cwd: backups });
     expect(check.status).toBe(0);
+  });
+
+  it('archives a separately mounted ATTACHMENTS_DIR on its own', () => {
+    const attachments = join(dir, 'attachments');
+    mkdirSync(attachments);
+    writeFileSync(join(attachments, 'voice.webm'), 'webm');
+    write('shot.png', 'png');
+
+    const res = run('backup-files.sh', [], { ATTACHMENTS_DIR: attachments });
+    expect(res.status, res.stderr).toBe(0);
+    expect(res.stdout.trim().split('\n')).toHaveLength(2);
+    expect(members(join(backups, archives('files')[0]))).toEqual(['./shot.png']);
+    expect(members(join(backups, archives('attachments')[0]))).toEqual(['./voice.webm']);
+  });
+
+  it('makes one archive when ATTACHMENTS_DIR is inside the screenshots directory', () => {
+    write('shot.png', 'png');
+    write('attachments/voice.webm', 'webm');
+    const res = run('backup-files.sh', [], { ATTACHMENTS_DIR: join(shots, 'attachments') });
+    expect(res.status, res.stderr).toBe(0);
+    expect(archives('attachments')).toEqual([]);
+    expect(members(join(backups, archives('files')[0]))).toEqual(['./attachments/voice.webm', './shot.png']);
   });
 
   it('refuses a backup directory inside the screenshots directory', () => {
@@ -148,6 +173,25 @@ describe('restore-files.sh', () => {
     expect(readdirSync(shots).sort()).toEqual(['attachments', 'kept.png', 'lost.png']);
   });
 
+  it('restores an attachments archive into ATTACHMENTS_DIR', () => {
+    const attachments = join(dir, 'attachments');
+    mkdirSync(attachments);
+    writeFileSync(join(attachments, 'voice.webm'), 'webm');
+    const res = run('backup-files.sh', [], { ATTACHMENTS_DIR: attachments });
+    expect(res.status, res.stderr).toBe(0);
+    const archive = join(backups, archives('attachments')[0]);
+    rmSync(join(attachments, 'voice.webm'));
+
+    // Confirming the screenshots directory is not enough for this archive.
+    expect(
+      run('restore-files.sh', [archive], { ATTACHMENTS_DIR: attachments, RESTORE_CONFIRM_DIR: shots }).status
+    ).toBe(3);
+    const ok = run('restore-files.sh', [archive], { ATTACHMENTS_DIR: attachments, RESTORE_CONFIRM_DIR: attachments });
+    expect(ok.status, ok.stderr).toBe(0);
+    expect(readFileSync(join(attachments, 'voice.webm'), 'utf8')).toBe('webm');
+    expect(existsSync(join(shots, 'voice.webm'))).toBe(false);
+  });
+
   it('refuses an archive whose checksum does not match', () => {
     write('shot.png', 'png');
     const archive = backupNow();
@@ -197,8 +241,18 @@ exit 0`
     seedOld('markup-20250102T000000Z.dump');
     seedOld('markup-files-20250101T000000Z.tar');
     seedOld('markup-files-20250102T000000Z.tar');
+    seedOld('markup-attachments-20250101T000000Z.tar');
+    seedOld('markup-attachments-20250102T000000Z.tar');
+    const attachments = join(dir, 'attachments');
+    mkdirSync(attachments);
+    writeFileSync(join(attachments, 'voice.webm'), 'webm');
 
-    const res = run('nightly-backup.sh', [], { ...DB_ENV, BACKUP_KEEP_DB: '2', BACKUP_KEEP_FILES: '2' });
+    const res = run('nightly-backup.sh', [], {
+      ...DB_ENV,
+      ATTACHMENTS_DIR: attachments,
+      BACKUP_KEEP_DB: '2',
+      BACKUP_KEEP_FILES: '2',
+    });
     expect(res.status, res.stderr).toBe(0);
     expect(res.stdout).toContain('database backup:');
     expect(res.stdout).toContain('file backup:');
@@ -211,6 +265,8 @@ exit 0`
     expect(left).not.toContain('markup-files-20250101T000000Z.tar');
     expect(left).toContain('markup-20250102T000000Z.dump');
     expect(left).toContain('markup-files-20250102T000000Z.tar');
+    expect(archives('attachments')).toHaveLength(2);
+    expect(left).not.toContain('markup-attachments-20250101T000000Z.tar');
   });
 
   it('deletes nothing when a backup fails', () => {
