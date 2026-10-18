@@ -66,6 +66,7 @@ RUN apk add --no-cache \
         postgresql16-client \
         poppler-utils \
         dumb-init \
+        su-exec \
     && ln -sf /usr/bin/chromium-browser /usr/local/bin/chromium 2>/dev/null || true
 
 # Prove the renderer contract in the runner layer itself. BuildKit removes
@@ -83,8 +84,15 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/prisma ./prisma
 
-# /data/screenshots is the bind-mount target for persisted screenshot files
-RUN mkdir -p /data/screenshots /data/backups /opt/app-scripts
+# /data/screenshots is the bind-mount target for persisted screenshot files.
+# The app runs as the image's unprivileged `node` user (uid 1000): it owns the
+# user-file volume and Next's cache directory. The rest of /app stays
+# root-owned and read-only to it.
+RUN mkdir -p /data/screenshots /data/backups /opt/app-scripts /app/.next/cache \
+    && chown node:node /data/screenshots /app/.next/cache
+
+# Starts as root to fix volume ownership, then drops to `node` with su-exec.
+COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 3000
 
@@ -92,5 +100,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=10s --timeout=3s --retries=6 --start-period=15s \
   CMD wget -qO- http://127.0.0.1:3000/api/health >/dev/null 2>&1 || exit 1
 
-ENTRYPOINT ["/usr/bin/dumb-init", "--"]
+ENTRYPOINT ["/usr/bin/dumb-init", "--", "sh", "/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "server.js"]

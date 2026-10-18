@@ -12,10 +12,19 @@ its stated evidence exists; local tests do not silently close it.
 
 ## In progress
 
+### Non-root app container
+
+- **Status:** in-progress — code on branch `ccr-ff82cc8e-enzsdu`; ships with the
+  next approved deploy (no `deploy.sh` change).
+- **Source:** `docs/plans/non-root-container-2026-10-18.md`
+- **Note:** the first start changes the owner of `/data/screenshots` on the
+  host to uid 1000.
+
 ### Nightly database and file backups
 
-- **Status:** in-progress — code on branch `ccr-ff82cc8e-enzsdu`; the cron is
-  installed by the next approved deploy (no `deploy.sh` change).
+- **Status:** in-progress — merged to `main` in #89 (`28fde04`), **not yet
+  deployed**; the cron is installed by the next approved deploy (no
+  `deploy.sh` change).
 - **Source:** `docs/plans/file-backups-2026-10-18.md`
 - **Before that deploy:** check `du -sh /data/screenshots` against
   `df -h /data`; each kept file archive is about that size.
@@ -34,8 +43,7 @@ its stated evidence exists; local tests do not silently close it.
 - **Status:** in-progress — code on branch `ccr-ff82cc8e-enzsdu`; ships with the
   next approved deploy (no `deploy.sh` change).
 - **Source:** `docs/plans/node-24-runtime-2026-10-16.md`
-- **Follow-up:** run the container as a non-root user after a host-side
-  ownership check of `/data/screenshots` (attachments now live under it).
+- **Follow-up:** non-root container, see "Non-root app container".
 
 ### P0 — Stop feedback data loss and cross-team access
 

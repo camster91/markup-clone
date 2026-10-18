@@ -42,11 +42,8 @@ Dependabot's `docker` ecosystem now proposes digest bumps weekly.
 
 ## Out of scope
 
-Running the container as a non-root user. Existing files under the
-`/data/screenshots` bind mount on the VPS (which also holds comment
-attachments since `attachment-storage-2026-10-18.md`) are owned by root, so a
-`USER` change needs a host-side ownership migration first; it gets its own
-plan.
+Running the container as a non-root user: done separately in
+`non-root-container-2026-10-18.md`.
 
 ## Deploy
 
