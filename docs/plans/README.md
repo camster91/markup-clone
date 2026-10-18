@@ -25,6 +25,9 @@ which are retained as implementation evidence.
 
 ## Active implementation
 
+- `non-root-container-2026-10-18.md` — **Implemented; not deployed.** The app
+  now runs as the unprivileged `node` user. The entrypoint fixes ownership of
+  the existing root-owned volume on first start, then drops privileges.
 - `file-backups-2026-10-18.md` — **Implemented; not deployed.** Nightly
   database dump plus an archive of every screenshot, upload, PDF page and
   comment attachment, with retention and a restore that only adds missing

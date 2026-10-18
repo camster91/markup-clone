@@ -75,5 +75,15 @@ while IFS= read -r -d '' file; do
   ADDED=$((ADDED + 1))
 done < <(find "$STAGE" -type f -print0)
 
+# `docker exec` runs this as root, but the app runs as `node` and must be able
+# to write into restored directories (attachments/). Give everything the
+# target directory's owner.
+if [ "$(id -u)" = "0" ]; then
+  OWNER_UID=$(stat -c %u "$TARGET_DIR")
+  OWNER_GID=$(stat -c %g "$TARGET_DIR")
+  find "$TARGET_DIR" -path "$STAGE" -prune -o \
+    \( ! -user "$OWNER_UID" -o ! -group "$OWNER_GID" \) -exec chown "$OWNER_UID:$OWNER_GID" {} +
+fi
+
 printf 'Restored %d missing files into %s; kept %d existing files unchanged\n' \
   "$ADDED" "$TARGET_DIR" "$KEPT"

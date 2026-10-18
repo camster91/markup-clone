@@ -96,7 +96,8 @@ These are created by earlier deploys; the script assumes they exist:
 - `/data/screenshots` — bind-mounted into the container at the same path.
   It is the only volume for user files: screenshots, uploads, PDF pages and
   comment attachments (`attachments/`). The nightly backup archives it; see
-  "Backups" below
+  "Backups" below. The app runs as uid 1000 (`node` in the image); the
+  container entrypoint gives this directory to that user on every start
 - `/data/markup-clone/backups` — mounted at `/data/backups`; nightly database
   dumps and file archives
 - `/data/markup-clone/postgres` (or external volume name) — postgres data
