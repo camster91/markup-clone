@@ -18,7 +18,8 @@ Required at runtime:
 - `DATABASE_URL` — PostgreSQL connection string (consumed by Prisma)
 - `NODE_ENV` — `production` in the deploy container
 - `DASHBOARD_HOST` — public hostname for the dashboard origin check + email links
-- `SCREENSHOTS_DIR` — bind-mounted path for screenshot PNGs
+- `SCREENSHOTS_DIR` — bind-mounted path for screenshot PNGs, uploads, PDF
+  pages and (in its `attachments/` subdirectory) comment attachments
 - `DELIVERY_WORKER_SECRET` — at least 32 random bytes used only by the
   internal durable-integration processor and its host cron
 - `INTEGRATION_ENCRYPTION_KEY` — exactly 32 random bytes encoded as 43
@@ -29,6 +30,9 @@ Optional:
 - `MAILGUN_API_KEY` / `MAILGUN_DOMAIN` — member notifications and external alerts
   (email is a no-op if either is empty)
 - `RECAPTURE_SCRIPT` — override the bind-mounted `recapture.sh` path
+- `ATTACHMENTS_DIR` — comment attachment directory (default
+  `$SCREENSHOTS_DIR/attachments`). Must be on a mounted volume; anything in
+  the container layer is deleted by the next deploy
 - `HOST_PORT` — host port the app container binds to (default `3030`)
 - `PUBLIC_HOSTNAME` — hostname the deploy script adds a Caddy route for (default `markup.ashbi.ca`)
 
@@ -89,7 +93,10 @@ These are created by earlier deploys; the script assumes they exist:
 
 - `/root/markup-clone/.env` — runtime env (see `.env.example`)
 - `/opt/caddy/Caddyfile` and `/etc/caddy/Caddyfile` — markup's route is appended to both
-- `/data/screenshots` — bind-mounted into the container at the same path
+- `/data/screenshots` — bind-mounted into the container at the same path.
+  It is the only volume for user files: screenshots, uploads, PDF pages and
+  comment attachments (`attachments/`). Back it up with the database; the
+  Postgres backup scripts do not copy files
 - `/data/markup-clone/postgres` (or external volume name) — postgres data
 - `markup-postgres` container on the `markup-net` bridge
 

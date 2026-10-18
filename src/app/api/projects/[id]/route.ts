@@ -18,9 +18,7 @@ import { validateProjectName, validateProjectId } from '@/lib/validation';
 import { assertProjectAccessible, assertProjectAdmin } from '@/lib/teams';
 import { requireCsrfToken } from '@/lib/csrf';
 import { projectDetailInclude, serializeProjectDetail } from '@/lib/project-detail-dto';
-
-const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || '/data/screenshots';
-const ATTACHMENTS_DIR = process.env.ATTACHMENTS_DIR || '/data/attachments';
+import { attachmentsDir, screenshotsDir } from '@/lib/storage-dirs';
 
 // Columns PATCH echoes back. Deliberately excludes the share credentials
 // (shareToken, shareExpiresAt, sharePasswordHash): the password hash must
@@ -124,8 +122,8 @@ export async function DELETE(
       }),
     ]);
     const files = new Set<string>([
-      ...[...screenshots, ...versions, ...reviewAssets].map((f) => path.join(SCREENSHOTS_DIR, f.storageKey)),
-      ...attachments.map((f) => path.join(ATTACHMENTS_DIR, f.storageKey)),
+      ...[...screenshots, ...versions, ...reviewAssets].map((f) => path.join(screenshotsDir(), f.storageKey)),
+      ...attachments.map((f) => path.join(attachmentsDir(), f.storageKey)),
     ]);
 
     // Delete the rows first. If this fails, every file is still in place

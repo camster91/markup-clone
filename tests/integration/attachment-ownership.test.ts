@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const PROJECT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const PIN_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -201,7 +201,13 @@ describe('attachment upload rate limit', () => {
 });
 
 describe('attachment upload cleanup', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('removes the written file and returns 500 when the DB insert fails', async () => {
+    vi.stubEnv('SCREENSHOTS_DIR', '/data/screenshots');
+    vi.stubEnv('ATTACHMENTS_DIR', '');
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     mocks.attachment.create.mockRejectedValue(new Error('db down'));
 
@@ -210,6 +216,9 @@ describe('attachment upload cleanup', () => {
     expect(response.status).toBe(500);
     expect(mocks.writeFile).toHaveBeenCalledTimes(1);
     const writtenPath = mocks.writeFile.mock.calls[0][0];
+    // Default location is inside the mounted screenshots volume, so the
+    // file survives a redeploy (see src/lib/storage-dirs.ts).
+    expect(writtenPath).toMatch(/^\/data\/screenshots\/attachments\/[0-9a-f-]{36}\.png$/);
     expect(mocks.unlink).toHaveBeenCalledWith(writtenPath);
     // The original DB error is still logged and surfaced.
     expect(errorSpy).toHaveBeenCalledWith('Attachment create error:', expect.objectContaining({ message: 'db down' }));
