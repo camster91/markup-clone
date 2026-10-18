@@ -12,10 +12,16 @@ its stated evidence exists; local tests do not silently close it.
 
 ## In progress
 
-### Non-root app container
+### Attachment claim race and stale row pruning
 
 - **Status:** in-progress — code on branch `ccr-ff82cc8e-enzsdu`; ships with the
-  next approved deploy (no `deploy.sh` change).
+  next approved deploy.
+- **Source:** `docs/plans/comment-claim-and-row-pruning-2026-10-18.md`
+
+### Non-root app container
+
+- **Status:** in-progress — merged to `main` in #90 (`b268768`), **not yet
+  deployed**; ships with the next approved deploy (no `deploy.sh` change).
 - **Source:** `docs/plans/non-root-container-2026-10-18.md`
 - **Note:** the first start changes the owner of `/data/screenshots` on the
   host to uid 1000.

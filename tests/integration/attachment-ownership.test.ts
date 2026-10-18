@@ -6,8 +6,10 @@ const ATTACHMENT_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const CSRF_TOKEN = 'attachment-ownership-csrf';
 
 const mocks = vi.hoisted(() => ({
-  attachment: { create: vi.fn(), findMany: vi.fn() },
-  comment: { create: vi.fn(), findUnique: vi.fn() },
+  attachment: { create: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() },
+  comment: { create: vi.fn(), findUnique: vi.fn(), findUniqueOrThrow: vi.fn() },
+  // Interactive transactions run the callback against the same mocks.
+  $transaction: vi.fn(),
   pin: { findUnique: vi.fn(), update: vi.fn() },
   mkdir: vi.fn(),
   writeFile: vi.fn(),
@@ -74,14 +76,18 @@ beforeEach(() => {
   });
   mocks.attachment.create.mockResolvedValue({ id: ATTACHMENT_ID, kind: 'image', size: 4 });
   mocks.attachment.findMany.mockResolvedValue([{ id: ATTACHMENT_ID }]);
-  mocks.comment.create.mockResolvedValue({
+  mocks.attachment.updateMany.mockResolvedValue({ count: 1 });
+  mocks.$transaction.mockImplementation((fn: (tx: typeof mocks) => unknown) => fn(mocks));
+  const created = {
     id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
     text: '',
     author: 'Reviewer',
     authorRole: 'reviewer',
     createdAt: new Date('2026-08-08T12:00:00.000Z'),
     attachments: [],
-  });
+  };
+  mocks.comment.create.mockResolvedValue(created);
+  mocks.comment.findUniqueOrThrow.mockResolvedValue(created);
   mocks.comment.findUnique.mockResolvedValue({
     id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
     pin: { screenshot: { page: { projectId: PROJECT_ID } } },
@@ -172,6 +178,26 @@ describe('attachment project ownership', () => {
       },
       select: { id: true },
     });
+    // The claim itself is conditional, inside the transaction.
+    expect(mocks.$transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.attachment.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: [ATTACHMENT_ID] }, commentId: null, projectId: PROJECT_ID },
+      data: { commentId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd' },
+    });
+  });
+
+  it('rejects a double submit whose attachment another comment already claimed', async () => {
+    // Both requests passed the lookup; the other one committed first.
+    mocks.attachment.updateMany.mockResolvedValue({ count: 0 });
+
+    const response = await createComment(commentRequest(), {
+      params: Promise.resolve({ id: PIN_ID }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'attachment is already on another comment' });
+    // Thrown inside the transaction, so the comment row is rolled back.
+    await expect(mocks.$transaction.mock.results[0].value).rejects.toThrow();
   });
 });
 

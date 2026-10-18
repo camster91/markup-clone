@@ -120,6 +120,15 @@ describe('prune-screenshots.sh retention', () => {
     expect(deleteSql).toMatch(/NOT LIKE '\/uploads\/%'/);
   });
 
+  it('removes expired sessions and stale presence rows', () => {
+    writeFileSync(survivors, '');
+    const res = run();
+    expect(res.status).toBe(0);
+    const sqls = psqlCalls().map((args) => args[args.indexOf('-c') + 1]);
+    expect(sqls).toContain('DELETE FROM "Session" WHERE "expiresAt" < NOW()');
+    expect(sqls).toContain(`DELETE FROM "Presence" WHERE "lastSeenAt" < NOW() - INTERVAL '1 day'`);
+  });
+
   it('keeps files still referenced by the DB and deletes the rest', () => {
     oldFile('kept.png');
     oldFile('orphan.png');

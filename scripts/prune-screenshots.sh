@@ -79,6 +79,19 @@ if [ "${DRY_RUN:-}" != "1" ]; then
   docker exec "$PG_CONTAINER" psql -U markup -d markup_db -c \
     "DELETE FROM \"ScreenshotVersion\" WHERE \"capturedAt\" < NOW() - INTERVAL '$DAYS days'" \
     2>&1 | tee -a "$LOG_FILE" || log "WARN: ScreenshotVersion DB cleanup failed (container or query error)"
+
+  # Nothing else removes these rows. Expired sessions can never authenticate
+  # again, and presence older than its 60-second "online" window is never
+  # shown (GET /api/presence clamps its cursor), so a day is a safe margin.
+  log "Pruning expired Session rows..."
+  docker exec "$PG_CONTAINER" psql -U markup -d markup_db -c \
+    "DELETE FROM \"Session\" WHERE \"expiresAt\" < NOW()" \
+    2>&1 | tee -a "$LOG_FILE" || log "WARN: Session DB cleanup failed (container or query error)"
+
+  log "Pruning Presence rows not seen for a day..."
+  docker exec "$PG_CONTAINER" psql -U markup -d markup_db -c \
+    "DELETE FROM \"Presence\" WHERE \"lastSeenAt\" < NOW() - INTERVAL '1 day'" \
+    2>&1 | tee -a "$LOG_FILE" || log "WARN: Presence DB cleanup failed (container or query error)"
 fi
 
 # ── Filter OLD_FILES against the DB's surviving storageKeys ──────────────────

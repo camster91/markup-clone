@@ -20,6 +20,8 @@ function authorRoleFor(globalRole: string): 'operator' | 'reviewer' {
   return globalRole === 'operator' ? 'operator' : 'reviewer';
 }
 
+class AttachmentAlreadyClaimedError extends Error {}
+
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -177,9 +179,9 @@ export async function POST(
     // commentId=null — the route accepts both the orphan path
     // for the paste-then-submit UX and the bound path when a
     // caller already has a commentId), then POSTs
-    // /api/pins/[id]/comments with those attachmentIds. The
-    // comment-create route's `connect: [{ id }]` binds the
-    // orphan attachments to the new comment in one shot.
+    // /api/pins/[id]/comments with those attachmentIds, which
+    // claims the orphan attachments for the new comment in one
+    // transaction (below).
     //
     // We re-validate at comment-create time so a caller can't
     // smuggle in an attachment id that doesn't exist (e.g. a
@@ -206,24 +208,48 @@ export async function POST(
       }
     }
 
-    const comment = await prisma.comment.create({
-      data: {
-        pinId: id,
-        text: commentText,
-        author: authorNormalized,
-        authorRole: authorRoleNormalized,
-        // Claim the uploaded attachments by linking them to the
-        // new comment. `connect` is the right shape because the
-        // Attachment rows already exist — the scoped lookup above proved
-        // each row is unbound and owned by this project.
-        ...(normalizedAttachmentIds.length > 0
-          ? { attachments: { connect: normalizedAttachmentIds.map((aid) => ({ id: aid })) } }
-          : {}),
-      },
-      include: {
-        attachments: { select: { id: true, kind: true, size: true, mimeType: true } },
-      },
-    });
+    const commentData = {
+      pinId: id,
+      text: commentText,
+      author: authorNormalized,
+      authorRole: authorRoleNormalized,
+    };
+    const commentInclude = {
+      attachments: { select: { id: true, kind: true, size: true, mimeType: true } },
+    } as const;
+    let comment;
+    if (normalizedAttachmentIds.length === 0) {
+      comment = await prisma.comment.create({ data: commentData, include: commentInclude });
+    } else {
+      // Claim the uploaded attachments inside one transaction. Two requests
+      // with the same attachmentIds (a double submit) both pass the scoped
+      // lookup above, and a plain `connect` would silently move the files to
+      // the second comment, leaving the first one empty. The conditional
+      // updateMany only claims rows that are still unbound: Postgres re-checks
+      // `commentId IS NULL` once the other transaction commits, so the loser
+      // claims fewer rows and rolls back its comment.
+      try {
+        comment = await prisma.$transaction(async (tx) => {
+          const created = await tx.comment.create({ data: commentData });
+          const claimed = await tx.attachment.updateMany({
+            where: { id: { in: normalizedAttachmentIds }, commentId: null, projectId: scopedProjectId },
+            data: { commentId: created.id },
+          });
+          if (claimed.count !== normalizedAttachmentIds.length) {
+            throw new AttachmentAlreadyClaimedError();
+          }
+          return tx.comment.findUniqueOrThrow({ where: { id: created.id }, include: commentInclude });
+        });
+      } catch (err) {
+        if (err instanceof AttachmentAlreadyClaimedError) {
+          return NextResponse.json(
+            { error: 'attachment is already on another comment' },
+            { status: 409 }
+          );
+        }
+        throw err;
+      }
+    }
 
     // Look up the pin's projectId so we can scope the new-comment event
     // and member notifications. We
