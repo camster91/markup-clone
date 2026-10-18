@@ -8,7 +8,10 @@ name: Build and Push Image
 #
 # Conventions:
 #   - Image: ghcr.io/camster91/<repo>:main (or :<tag> for releases)
-#   - Multi-arch: linux/amd64 + linux/arm64 (Raspberry Pi, Apple Silicon hosts)
+#   - Platform: linux/amd64 by default. Nothing pulls these images today
+#     (deploy.sh and Coolify build on the host), and arm64 under QEMU hangs
+#     in `npm ci` on Node 24. Callers can still pass `platforms` to add arm64
+#     (ideally on a native arm64 runner).
 #   - Buildx layer cache in the GitHub Actions cache (type=gha)
 #   - Pull requests build only; they never push or move :latest
 #   - SBOM + provenance attestations enabled (for supply-chain trust)
@@ -31,10 +34,10 @@ on:
         type: string
         default: 'Dockerfile'
       platforms:
-        description: 'Buildx platforms (default: amd64 + arm64)'
+        description: 'Buildx platforms (default: linux/amd64)'
         required: false
         type: string
-        default: 'linux/amd64,linux/arm64'
+        default: 'linux/amd64'
 
 permissions:
   contents: read
@@ -96,7 +99,7 @@ jobs:
         with:
           context: .
           file: ${{ inputs.dockerfile || 'Dockerfile' }}
-          platforms: ${{ inputs.platforms || 'linux/amd64,linux/arm64' }}
+          platforms: ${{ inputs.platforms || 'linux/amd64' }}
           # Pull requests build to prove the image builds, but never push:
           # a PR image must not overwrite a deployable tag.
           push: ${{ github.event_name != 'pull_request' }}
@@ -123,5 +126,5 @@ jobs:
           echo "**Pull:** \`docker pull ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Run:** \`docker run -d -p 3000:3000 --name ${{ github.event.repository.name }} ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Platforms:** ${{ inputs.platforms || 'linux/amd64,linux/arm64' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Platforms:** ${{ inputs.platforms || 'linux/amd64' }}" >> $GITHUB_STEP_SUMMARY
           echo "**SHA:** ${{ steps.meta.outputs.sha }}" >> $GITHUB_STEP_SUMMARY

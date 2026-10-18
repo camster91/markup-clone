@@ -52,7 +52,7 @@ It is built as a self-hosted alternative to hosted tools like Markup.io, with ro
 
 ## Getting started
 
-Requirements: Docker with Compose, or Node.js 20+ and a PostgreSQL database.
+Requirements: Docker with Compose, or Node.js 24 (see `.nvmrc`) and a PostgreSQL database.
 
 ### With Docker Compose (recommended)
 
