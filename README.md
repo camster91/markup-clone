@@ -111,7 +111,7 @@ these host cron jobs:
 
 | Cron file | Schedule | Job |
 |-----------|----------|-----|
-| `/etc/cron.d/markup-clone` | `0 3 * * *` (daily 03:00 UTC) | `scripts/prune-screenshots.sh` — removes website screenshots older than 90 days **that have no pins**, plus screenshot history versions and unreferenced files older than 90 days. Pinned screenshots, uploaded images and PDF pages are never pruned. |
+| `/etc/cron.d/markup-clone` | `0 3 * * *` (daily 03:00 UTC) | `scripts/prune-screenshots.sh` — removes website screenshots older than 90 days **that have no pins**, plus screenshot history versions and unreferenced files older than 90 days. Pinned screenshots, uploaded images and PDF pages are never pruned. It also deletes expired login sessions and stale presence rows. |
 | `/etc/cron.d/markup-integration-delivery` | `* * * * *` (every minute) | Claims a bounded delivery batch and calls the protected processor at `POST /api/internal/integration-deliveries/process`. |
 | `/etc/cron.d/markup-backup` | `15 2 * * *` (daily 02:15 UTC) | `scripts/nightly-backup.sh` — database dump plus an archive of every screenshot, upload, PDF page and comment attachment, with retention. Same-host only; copy off-host for disaster recovery. |
 

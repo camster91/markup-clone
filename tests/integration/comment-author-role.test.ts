@@ -17,17 +17,19 @@ const ORIGIN = 'https://markup.ashbi.ca';
 const CSRF_TOKEN = 'comment-author-role-csrf';
 
 const mocks = vi.hoisted(() => ({
-  comment: { create: vi.fn() },
+  comment: { create: vi.fn(), findUniqueOrThrow: vi.fn() },
   pin: { findUnique: vi.fn(), update: vi.fn() },
   user: { findMany: vi.fn() },
-  attachment: { findMany: vi.fn() },
+  attachment: { findMany: vi.fn(), updateMany: vi.fn() },
   assertProjectAccessible: vi.fn(),
   emit: vi.fn(),
 }));
 
-vi.mock('@/lib/prisma', () => ({
-  prisma: { comment: mocks.comment, pin: mocks.pin, user: mocks.user, attachment: mocks.attachment },
-}));
+vi.mock('@/lib/prisma', () => {
+  const prisma = { comment: mocks.comment, pin: mocks.pin, user: mocks.user, attachment: mocks.attachment };
+  // Attachment claims run in an interactive transaction against the same mocks.
+  return { prisma: { ...prisma, $transaction: (fn: (tx: typeof prisma) => unknown) => fn(prisma) } };
+});
 vi.mock('@/lib/teams', () => ({ assertProjectAccessible: mocks.assertProjectAccessible }));
 vi.mock('@/lib/audit', () => ({ audit: vi.fn() }));
 vi.mock('@/lib/events', () => ({ emit: mocks.emit }));
@@ -75,6 +77,10 @@ beforeEach(() => {
     authorRole: data.authorRole,
     createdAt: new Date('2026-10-01T00:00:00.000Z'),
     attachments: [],
+  }));
+  mocks.comment.findUniqueOrThrow.mockImplementation(async () => mocks.comment.create.mock.results[0].value);
+  mocks.attachment.updateMany.mockImplementation(async ({ where }: { where: { id: { in: string[] } } }) => ({
+    count: where.id.in.length,
   }));
   mocks.user.findMany.mockResolvedValue([]);
   grantAccess('reviewer', 'guest');

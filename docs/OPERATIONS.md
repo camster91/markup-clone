@@ -113,7 +113,7 @@ legacy host explicitly detected as Caddy.
 
 | Cron file | Schedule | Job | Source |
 |-----------|----------|-----|--------|
-| `/etc/cron.d/markup-clone` | `0 3 * * *` (daily 03:00 UTC) | `prune-screenshots.sh` — removes website screenshots older than 90 days **that have no pins**, plus history versions and unreferenced files older than 90 days. Pinned screenshots, uploads and PDF pages are kept (see #78). | `scripts/prune-screenshots.sh` |
+| `/etc/cron.d/markup-clone` | `0 3 * * *` (daily 03:00 UTC) | `prune-screenshots.sh` — removes website screenshots older than 90 days **that have no pins**, plus history versions and unreferenced files older than 90 days. Pinned screenshots, uploads and PDF pages are kept (see #78). Also deletes expired sessions and presence rows older than a day. | `scripts/prune-screenshots.sh` |
 | `/etc/cron.d/markup-caddy-guard` | Legacy Caddy hosts only | Re-adds the inline Caddy route. Removed automatically when Traefik is detected. | `scripts/markup-caddy-guard.sh` |
 | `/etc/cron.d/markup-integration-delivery` | `* * * * *` (every minute) | Claims a bounded Postgres delivery batch and invokes the protected in-container processor. | `POST /api/internal/integration-deliveries/process` |
 | `/etc/cron.d/markup-backup` | `15 2 * * *` (daily 02:15 UTC) | Database dump plus a tar of every user file, both checksummed, then keeps the newest 14 dumps and 3 file archives. Log: `/var/log/markup-backup.log`. | `scripts/nightly-backup.sh` |

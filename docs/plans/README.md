@@ -25,6 +25,10 @@ which are retained as implementation evidence.
 
 ## Active implementation
 
+- `comment-claim-and-row-pruning-2026-10-18.md` — **Implemented; not
+  deployed.** Double-submitting a comment can no longer move its attachment to
+  another comment. The nightly prune also deletes expired sessions and stale
+  presence rows.
 - `non-root-container-2026-10-18.md` — **Implemented; not deployed.** The app
   now runs as the unprivileged `node` user. The entrypoint fixes ownership of
   the existing root-owned volume on first start, then drops privileges.
