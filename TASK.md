@@ -1,6 +1,6 @@
 # TASK.md — markup-clone execution board
 
-**Last updated:** 2026-10-15
+**Last updated:** 2026-10-18
 **Governing roadmap:**
 `docs/plans/launch-and-saas-replacement-roadmap-2026-08-28.md`
 
@@ -12,13 +12,21 @@ its stated evidence exists; local tests do not silently close it.
 
 ## In progress
 
+### Comment attachments survive deploys
+
+- **Status:** in-progress — code on branch `ccr-ff82cc8e-enzsdu`; ships with
+  the next approved deploy (no `deploy.sh` change).
+- **Source:** `docs/plans/attachment-storage-2026-10-18.md`
+- **Before that deploy:** run the rescue `docker cp` from the plan, or every
+  attachment uploaded since the last deploy is deleted.
+
 ### Node 24 runtime
 
 - **Status:** in-progress — code on branch `ccr-ff82cc8e-enzsdu`; ships with the
   next approved deploy (no `deploy.sh` change).
 - **Source:** `docs/plans/node-24-runtime-2026-10-16.md`
 - **Follow-up:** run the container as a non-root user after a host-side
-  ownership check of `/data/screenshots` and `/data/attachments`.
+  ownership check of `/data/screenshots` (attachments now live under it).
 
 ### P0 — Stop feedback data loss and cross-team access
 

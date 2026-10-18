@@ -129,6 +129,22 @@ describe('prune-screenshots.sh retention', () => {
     expect(readdirSync(shots)).toEqual(['kept.png']);
   });
 
+  it('never touches comment attachments in the attachments/ subdirectory', () => {
+    // Pasted-image attachments are .png files too; they live in
+    // <screenshots>/attachments/ and are not Screenshot rows.
+    mkdirSync(join(shots, 'attachments'));
+    const att = join(shots, 'attachments', 'pasted.png');
+    writeFileSync(att, 'png');
+    const t = new Date(Date.now() - 200 * 24 * 60 * 60 * 1000);
+    utimesSync(att, t, t);
+    oldFile('orphan.png');
+    writeFileSync(survivors, '');
+    const res = run();
+    expect(res.status).toBe(0);
+    expect(readdirSync(shots)).toEqual(['attachments']);
+    expect(readdirSync(join(shots, 'attachments'))).toEqual(['pasted.png']);
+  });
+
   it('deletes no files when the survivor query fails', () => {
     oldFile('pinned.png');
     oldFile('orphan.png');

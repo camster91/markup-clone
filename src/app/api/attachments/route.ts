@@ -44,10 +44,10 @@
 //     read into memory so a 50MB upload fails fast (the size is on
 //     the File object).
 //
-// Storage: the file is written to ATTACHMENTS_DIR/<storageKey>. The
-// directory defaults to /data/attachments (the bind-mount in
-// docker-compose) and is created on demand so first-run deploys
-// don't 500. The storageKey is a fresh UUID + the file's extension
+// Storage: the file is written to attachmentsDir()/<storageKey>. The
+// directory defaults to <SCREENSHOTS_DIR>/attachments, inside the one
+// volume every deploy mounts (see src/lib/storage-dirs.ts), and is
+// created on demand so first-run deploys don't 500. The storageKey is a fresh UUID + the file's extension
 // so two uploads can't collide and so a path-traversal probe in
 // the GET route is confined to single-segment filenames (UUIDs
 // don't contain '/', '\', or '..').
@@ -63,8 +63,8 @@ import { validateProjectId } from '@/lib/validation';
 import { assertProjectAccessible } from '@/lib/teams';
 import { audit } from '@/lib/audit';
 import { consume } from '@/lib/rate-limit';
+import { attachmentsDir } from '@/lib/storage-dirs';
 
-const ATTACHMENTS_DIR = process.env.ATTACHMENTS_DIR || '/data/attachments';
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024; // 8MB
 
 // Closed set of supported attachment kinds. The schema column is
@@ -275,8 +275,9 @@ export async function POST(req: Request) {
     // we 500 — no DB row is written if the file write fails, so the
     // attachment id is "spent" but the storage is consistent (no
     // orphan Attachment row pointing at a missing file).
-    const storagePath = path.join(ATTACHMENTS_DIR, storageKey);
-    await mkdir(ATTACHMENTS_DIR, { recursive: true });
+    const dir = attachmentsDir();
+    const storagePath = path.join(dir, storageKey);
+    await mkdir(dir, { recursive: true });
     await writeFile(storagePath, bytes);
 
     // Insert the row. The mimeType is stored verbatim (browsers

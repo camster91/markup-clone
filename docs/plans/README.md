@@ -25,6 +25,10 @@ which are retained as implementation evidence.
 
 ## Active implementation
 
+- `attachment-storage-2026-10-18.md` — **Implemented; not deployed.** Comment
+  attachments were stored inside the container and deleted by every deploy.
+  They now default to `<SCREENSHOTS_DIR>/attachments` on the mounted volume.
+  Run the rescue `docker cp` in the plan **before** the next deploy.
 - `node-24-runtime-2026-10-16.md` — **Implemented; not deployed.** Moves the
   image, CI and local tooling from end-of-life Node 20 to Node 24 LTS, with the
   base image pinned by digest. Verified by a full image build, an in-image

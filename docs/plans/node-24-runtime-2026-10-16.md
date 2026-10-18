@@ -43,9 +43,10 @@ Dependabot's `docker` ecosystem now proposes digest bumps weekly.
 ## Out of scope
 
 Running the container as a non-root user. Existing files under the
-`/data/screenshots` and `/data/attachments` bind mounts on the VPS are owned by
-root, so a `USER` change needs a host-side ownership migration first; it gets
-its own plan.
+`/data/screenshots` bind mount on the VPS (which also holds comment
+attachments since `attachment-storage-2026-10-18.md`) are owned by root, so a
+`USER` change needs a host-side ownership migration first; it gets its own
+plan.
 
 ## Deploy
 

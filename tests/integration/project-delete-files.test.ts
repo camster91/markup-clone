@@ -60,7 +60,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.order.length = 0;
   process.env.SCREENSHOTS_DIR = '/data/screenshots';
-  process.env.ATTACHMENTS_DIR = '/data/attachments';
+  delete process.env.ATTACHMENTS_DIR;
   mocks.assertProjectAdmin.mockResolvedValue({
     ok: true,
     teamId: null,
@@ -86,12 +86,20 @@ describe('DELETE /api/projects/[id] files', () => {
     expect(res.status).toBe(200);
     expect(mocks.order[0]).toBe('db');
     expect(mocks.order.slice(1).sort()).toEqual([
-      'unlink:/data/attachments/note.webm',
+      'unlink:/data/screenshots/attachments/note.webm',
       'unlink:/data/screenshots/old-version.png',
       'unlink:/data/screenshots/shot.png',
       'unlink:/data/screenshots/source.pdf',
     ]);
     expect(await res.json()).toMatchObject({ deleted: true, filesRemoved: 4, filesFailed: 0 });
+  });
+
+  it('removes attachments from ATTACHMENTS_DIR when it is set', async () => {
+    process.env.ATTACHMENTS_DIR = '/mnt/attachments';
+    const res = await DELETE(deleteReq(), params);
+    expect(res.status).toBe(200);
+    expect(mocks.unlink).toHaveBeenCalledWith('/mnt/attachments/note.webm');
+    delete process.env.ATTACHMENTS_DIR;
   });
 
   it('removes no files when the DB delete fails', async () => {

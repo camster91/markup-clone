@@ -32,8 +32,7 @@ import { readFile, stat } from 'fs/promises';
 import path from 'path';
 import { assertProjectAccessible } from '@/lib/teams';
 import { requestHasShareAccess } from '@/lib/share-access';
-
-const ATTACHMENTS_DIR = process.env.ATTACHMENTS_DIR || '/data/attachments';
+import { attachmentsDir } from '@/lib/storage-dirs';
 
 export async function GET(
   req: Request,
@@ -141,7 +140,7 @@ export async function GET(
     }
     // Runtime uploads live on an external persistent mount and must not be
     // copied into the standalone build output by Turbopack's file tracer.
-    const filePath = path.join(/* turbopackIgnore: true */ ATTACHMENTS_DIR, storageKey);
+    const filePath = path.join(/* turbopackIgnore: true */ attachmentsDir(), storageKey);
     const fileStat = await stat(/* turbopackIgnore: true */ filePath);
     const buf = await readFile(/* turbopackIgnore: true */ filePath);
 
