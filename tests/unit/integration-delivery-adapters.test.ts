@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/safe-url', () => ({
   assertSafeOutboundUrl: vi.fn(async (url: string) => ({ ok: true, value: url })),
+  // The real safeFetch only adds a connect-time dispatcher; route it to the
+  // stubbed global fetch so the tests see the exact request.
+  safeFetch: (url: string, init: RequestInit) => fetch(url, init),
 }));
 
 import { dispatchDelivery } from '@/lib/integrations/dispatcher';

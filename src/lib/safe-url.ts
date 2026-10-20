@@ -17,24 +17,21 @@
 //     (blocks hostnames that statically resolve to a private IP,
 //     e.g. 127.0.0.1.nip.io)
 //
-// Known limitation — DNS rebinding (TOCTOU): `assertSafeOutboundUrl`
-// resolves the hostname, then the caller's `fetch()` resolves it AGAIN.
-// A hostile authoritative server with a 0-TTL record can answer the
-// check with a public IP and the fetch with a private one. Pinning the
-// checked address into the connection needs a custom undici dispatcher
-// (`undici` is not a declared dependency) or swapping every adapter off
-// `fetch` onto `node:https` + a pinned `lookup`. Until then the residual
-// risk is bounded by the https-only rule: a rebound connection to an
-// internal service still has to present a certificate valid for the
-// attacker's hostname, so the TLS handshake fails before any request
-// bytes are sent. `redirect: 'error'` on every adapter closes the
-// redirect variant.
+// DNS rebinding (TOCTOU): `assertSafeOutboundUrl` resolves the hostname,
+// then the connection resolves it AGAIN, so a hostile authoritative server
+// with a 0-TTL record could answer the check with a public IP and the
+// connection with a private one. `safeFetch` closes that gap: its
+// dispatcher re-checks every address at connect time, so the address the
+// socket actually uses is the one that was checked. `redirect: 'error'` on
+// every adapter closes the redirect variant.
 //
 // Callers pass the raw URL string; on success they get a normalized
 // absolute URL string ready to store / fetch.
 
 import { isIP } from 'net';
+import dns from 'dns';
 import { lookup } from 'dns/promises';
+import { Agent } from 'undici';
 
 export type UrlCheckResult =
   | { ok: true; value: string }
@@ -267,4 +264,50 @@ export async function assertSafeOutboundUrl(raw: string): Promise<UrlCheckResult
   }
 
   return { ok: true, value: shape.value };
+}
+
+type LookupCallback = (
+  err: NodeJS.ErrnoException | null,
+  address: string | dns.LookupAddress[],
+  family?: number,
+) => void;
+
+/**
+ * A `lookup` for socket connects that refuses blocked addresses. It runs
+ * at connect time, on the exact resolution the socket will use, which is
+ * what defeats DNS rebinding. `isBlocked` is injectable for tests.
+ */
+export function guardedLookup(isBlocked: (ip: string) => boolean = isBlockedIp) {
+  return (hostname: string, options: dns.LookupOptions, callback: LookupCallback): void => {
+    dns.lookup(hostname, { ...options, all: true }, (err, addresses) => {
+      if (err) {
+        callback(err, '');
+        return;
+      }
+      if (addresses.length === 0 || addresses.some((a) => isBlocked(a.address))) {
+        const blocked: NodeJS.ErrnoException = new Error(
+          `refusing to connect to ${hostname}: it resolves to a private/reserved address`,
+        );
+        blocked.code = 'EADDRBLOCKED';
+        callback(blocked, '');
+        return;
+      }
+      if (options.all) {
+        callback(null, addresses);
+        return;
+      }
+      callback(null, addresses[0]!.address, addresses[0]!.family);
+    });
+  };
+}
+
+const outboundAgent = new Agent({ connect: { lookup: guardedLookup() } });
+
+/**
+ * `fetch` for operator-supplied URLs. Call `assertSafeOutboundUrl` first
+ * for a clear rejection message; this adds the connect-time check that
+ * the pre-flight lookup cannot give.
+ */
+export function safeFetch(url: string, init: RequestInit): Promise<Response> {
+  return fetch(url, { ...init, dispatcher: outboundAgent } as RequestInit);
 }

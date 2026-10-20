@@ -1,6 +1,6 @@
 # TASK.md — markup-clone execution board
 
-**Last updated:** 2026-10-18
+**Last updated:** 2026-10-20
 **Governing roadmap:**
 `docs/plans/launch-and-saas-replacement-roadmap-2026-08-28.md`
 
@@ -12,10 +12,16 @@ its stated evidence exists; local tests do not silently close it.
 
 ## In progress
 
-### Attachment claim race and stale row pruning
+### DNS-rebinding protection for outbound webhooks
 
 - **Status:** in-progress — code on branch `ccr-ff82cc8e-enzsdu`; ships with the
   next approved deploy.
+- **Source:** `docs/plans/dns-rebinding-2026-10-20.md`
+
+### Attachment claim race and stale row pruning
+
+- **Status:** in-progress — merged to `main` in #91 (`26b07ee`), **not yet
+  deployed**; ships with the next approved deploy.
 - **Source:** `docs/plans/comment-claim-and-row-pruning-2026-10-18.md`
 
 ### Non-root app container

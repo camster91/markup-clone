@@ -27,7 +27,7 @@
 
 import type { DiscordConfig, IntegrationDeliveryPayload, PinPayload } from './types';
 import { pinPayloadFromEvent } from './types';
-import { assertSafeOutboundUrl } from '@/lib/safe-url';
+import { assertSafeOutboundUrl, safeFetch } from '@/lib/safe-url';
 import { IntegrationHttpError } from './errors';
 
 const EMBED_COLOR = 0x3b82f6; // blue-500; matches the dashboard's accent
@@ -74,7 +74,7 @@ export async function post(config: DiscordConfig, payload: PinPayload): Promise<
   if (!safe.ok) {
     throw new Error(`Discord webhook URL rejected: ${safe.error}`);
   }
-  const res = await fetch(safe.value, {
+  const res = await safeFetch(safe.value, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(buildDiscordBody(payload)),
@@ -92,7 +92,7 @@ export async function postEvent(
 ): Promise<number> {
   const safe = await assertSafeOutboundUrl(config.webhookUrl);
   if (!safe.ok) throw new Error(`Discord webhook URL rejected: ${safe.error}`);
-  const res = await fetch(safe.value, {
+  const res = await safeFetch(safe.value, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(buildDiscordBody(pinPayloadFromEvent(delivery.event))),

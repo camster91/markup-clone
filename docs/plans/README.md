@@ -25,6 +25,9 @@ which are retained as implementation evidence.
 
 ## Active implementation
 
+- `dns-rebinding-2026-10-20.md` — **Implemented; not deployed.** Webhook,
+  Slack and Discord deliveries re-check the resolved address at connect time,
+  so DNS rebinding cannot reach internal hosts.
 - `comment-claim-and-row-pruning-2026-10-18.md` — **Implemented; not
   deployed.** Double-submitting a comment can no longer move its attachment to
   another comment. The nightly prune also deletes expired sessions and stale
