@@ -23,7 +23,7 @@
 
 import type { IntegrationDeliveryPayload, PinPayload, SlackConfig } from './types';
 import { pinPayloadFromEvent } from './types';
-import { assertSafeOutboundUrl } from '@/lib/safe-url';
+import { assertSafeOutboundUrl, safeFetch } from '@/lib/safe-url';
 import { IntegrationHttpError } from './errors';
 
 const OUTBOUND_TIMEOUT_MS = 10_000;
@@ -100,7 +100,7 @@ export async function post(config: SlackConfig, payload: PinPayload): Promise<vo
   if (!safe.ok) {
     throw new Error(`Slack webhook URL rejected: ${safe.error}`);
   }
-  const res = await fetch(safe.value, {
+  const res = await safeFetch(safe.value, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(buildSlackBody(payload)),
@@ -118,7 +118,7 @@ export async function postEvent(
 ): Promise<number> {
   const safe = await assertSafeOutboundUrl(config.webhookUrl);
   if (!safe.ok) throw new Error(`Slack webhook URL rejected: ${safe.error}`);
-  const res = await fetch(safe.value, {
+  const res = await safeFetch(safe.value, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(buildSlackBody(pinPayloadFromEvent(delivery.event))),

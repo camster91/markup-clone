@@ -12,7 +12,7 @@
 // the failure on the integration row.
 
 import type { IntegrationDeliveryPayload, PinPayload, WebhookConfig } from './types';
-import { assertSafeOutboundUrl } from '@/lib/safe-url';
+import { assertSafeOutboundUrl, safeFetch } from '@/lib/safe-url';
 import { IntegrationHttpError } from './errors';
 import { buildSignedWebhookHeaders } from './signing';
 
@@ -57,7 +57,7 @@ export async function post(config: WebhookConfig, payload: PinPayload): Promise<
   if (!Object.keys(headers).some((k) => k.toLowerCase() === 'content-type')) {
     headers['Content-Type'] = 'application/json';
   }
-  const res = await fetch(safe.value, {
+  const res = await safeFetch(safe.value, {
     method: 'POST',
     headers,
     body: JSON.stringify(payload),
@@ -85,7 +85,7 @@ export async function postEvent(
     eventType: delivery.event.type,
     deliveryId: delivery.deliveryId,
   });
-  const res = await fetch(safe.value, {
+  const res = await safeFetch(safe.value, {
     method: 'POST',
     headers,
     body: delivery.payloadJson,
