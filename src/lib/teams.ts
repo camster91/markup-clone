@@ -145,9 +145,10 @@ export async function assertTeamRole(
  *
  * Returns 404 when the project is missing, 403 when it exists but the
  * caller is not a member of its team. Legacy / unscoped projects
- * (teamId IS NULL) remain open to authenticated dashboard callers
- * during the transitional single-project install. Global operators
- * can access every project.
+ * (teamId IS NULL) remain open to authenticated callers who belong to
+ * no team yet (the transitional single-project install) — the same rule
+ * as the project list in `getProjectScopeWhere`. Global operators can
+ * access every project.
  *
  * Exported so every project-scoped route (subscribers, share,
  * integrations, pins, screenshots, …) can reuse the same gate —
@@ -179,6 +180,15 @@ export async function assertProjectAccessible(projectId: string): Promise<
   }
 
   if (project.teamId === null) {
+    // A team member, client or guest never sees unscoped projects in their
+    // list, so they must not reach one by id either.
+    const anyMembership = await prisma.teamMember.findFirst({
+      where: { userId: caller.id },
+      select: { id: true },
+    });
+    if (anyMembership) {
+      return { ok: false, status: 403, error: "Not a member of this project's team" };
+    }
     return { ok: true, projectId: project.id, teamId: null, caller, membershipRole: 'legacy-reviewer' };
   }
 

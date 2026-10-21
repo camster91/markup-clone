@@ -9,6 +9,8 @@ const PROJECT_ID = '88888888-8888-4888-8888-888888888888';
 const CSRF = 'pin-patch-csrf';
 
 const mocks = vi.hoisted(() => ({
+  // The caller belongs to no team, so it may open the unscoped project.
+  teamMember: { findFirst: vi.fn(async () => null) },
   pin: { findUnique: vi.fn(), update: vi.fn() },
   project: { findUnique: vi.fn() },
   audit: vi.fn(),

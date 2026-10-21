@@ -90,6 +90,22 @@ describe('project notification recipient resolution', () => {
     expect(result?.recipients.sort()).toEqual(['operator@example.com', 'right@example.com']);
   });
 
+  it('notifies only users on no team about an unscoped project, matching who can open it', async () => {
+    client.project.findUnique.mockResolvedValue({ ...project, teamId: null, team: null });
+    client.user.findMany.mockResolvedValue([
+      user({ id: 'no-team', email: 'legacy@example.com', teamMembers: [] }),
+      user({ id: 'other-team', email: 'client@example.com', teamMembers: [{ role: 'client', projectId: null }] }),
+      user({ id: 'operator', email: 'operator@example.com', role: 'operator', teamMembers: [{ role: 'owner', projectId: null }] }),
+    ]);
+
+    const result = await resolveProjectNotificationRecipients({
+      projectId: PROJECT_ID,
+      event: 'status-change',
+    }, client as never);
+
+    expect(result?.recipients.sort()).toEqual(['legacy@example.com', 'operator@example.com']);
+  });
+
   it('keeps direct mentions enabled without a row, honors explicit opt-out, and limits targets', async () => {
     client.user.findMany.mockResolvedValue([
       user({ id: 'legacy', email: 'legacy@example.com', notificationPreferences: [] }),

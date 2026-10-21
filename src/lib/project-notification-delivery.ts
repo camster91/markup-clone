@@ -40,7 +40,10 @@ function hasCurrentProjectAccess(
   teamId: string | null,
   projectId: string
 ): boolean {
-  if (user.role === 'operator' || teamId === null) return true;
+  if (user.role === 'operator') return true;
+  // Unscoped projects are only open to users on no team (see
+  // assertProjectAccessible); their memberships are all loaded below.
+  if (teamId === null) return user.teamMembers.length === 0;
   return user.teamMembers.some((membership) => {
     const role = membership.role === 'reviewer' ? 'client' : membership.role;
     return role === 'owner'
