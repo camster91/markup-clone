@@ -1,7 +1,7 @@
 # deploy.sh: build before migrating, password auth before trust (2026-10-21)
 
-**Status:** implemented on branch `ccr-ff82cc8e-enzsdu`; dry-run on a stand-in
-host (see Verification). Not yet used for a production deploy.
+**Status:** implemented on branch `ccr-ff82cc8e-enzsdu`; dry-run passed on a
+stand-in host (see Verification). Not yet used for a production deploy.
 **Source:** 2026-10-15 review items "deploy ordering" and "pg_hba trust".
 CLAUDE.md requires a full `cleanup-caddy-orphans.sh && deploy.sh` dry-run on a
 non-prod host before any `deploy.sh` change; this plan records that run.
@@ -19,7 +19,20 @@ non-prod host before any `deploy.sh` change; this plan records that run.
 3. **The postgres "restart" never ran.** After adding the rule the script
    called `pg_ctl ... restart` through `docker exec` as root. `pg_ctl` refuses
    to run as root, so only the preceding SIGHUP (a reload, which is all
-   `pg_hba.conf` needs) ever took effect.
+   `pg_hba.conf` needs) ever took effect. The baseline dry-run logged
+   `pg_ctl: cannot be run as root`.
+
+Found during the dry-run:
+
+4. **The database password was printed on first installs.** The
+   create-postgres branch called `if ! read_pg_password; then`, which runs
+   the helper bare, so the password went to the deploy's stdout (the
+   operator's SSH terminal). It was then also passed in argv as
+   `-e POSTGRES_PASSWORD=<pw>`.
+5. **An image counted as a container.** `docker inspect "$APP_CONTAINER"`
+   also matches an image named `markup-clone`. A host with images but no
+   container was therefore treated as an upgrade, and the deploy failed the
+   rollback preflight.
 
 ## Change
 
@@ -32,6 +45,10 @@ non-prod host before any `deploy.sh` change; this plan records that run.
   - If the probe succeeds, no trust rule is added.
   - If it fails, the old subnet trust rule is added as before and applied with
     SIGHUP. The broken restart is removed.
+- **Password handling:** read once into a variable and passed to `docker run`
+  through its environment (`-e POSTGRES_PASSWORD` with no value), so it is
+  no longer printed and no longer in argv.
+- **Container checks** use `docker inspect --type container`.
 - **Existing hosts are unchanged:** a trust line already in `pg_hba.conf` is
   left in place. Removing it from production is a separate, manual step after
   confirming password auth works there.
@@ -49,13 +66,15 @@ Two adaptations applied only to the sandbox, not to the script:
 
 Runs, each `bash scripts/cleanup-caddy-orphans.sh && bash scripts/deploy.sh`:
 
-1. Baseline: `main` at `9f965e6`, first install on an empty host.
-2. New script, upgrade over run 1.
-3. New script, a commit with a new migration and a build that fails: the
-   deploy stops at the build, the migration is not applied, and the old
-   container keeps serving.
-4. New script, fresh host: password auth works, so no trust line is added.
-5. New script, `.env` password drifted from the database: the probe fails,
-   the trust rule is added with a reload, and the app is healthy.
+| # | Script | Scenario | Result |
+|---|--------|----------|--------|
+| 1 | `main` @ `9f965e6` | First install, empty host | DEPLOY OK; added the subnet **trust** rule although the password was correct; `pg_ctl: cannot be run as root`; **printed the DB password** |
+| 2 | new | Upgrade over run 1 | DEPLOY OK; build ran before the migration check; rollback and edge preflights passed |
+| 3 | new | Commit adding a migration plus a failing build | **FAIL at build**; migration not recorded, table not created; old container still healthy |
+| 3b | old (`9f965e6`) | Same commit | Applied the migration, **then** failed the build (the defect) |
+| 4 | new | Fresh host (containers, network and data removed) | DEPLOY OK; "login over markup-net works; no trust rule added"; no trust line in `pg_hba.conf`; password absent from all output; operator created through the app's DB login |
+| 5 | new | DB role password changed so `.env` no longer matches | Probe failed; trust rule added and reloaded with SIGHUP (postgres restart count 0); DEPLOY OK; operator created after the drift |
 
-Results are recorded below once the runs complete.
+Note: `deploy.sh` runs `git pull` itself, and bash keeps executing the
+version it started with. A `deploy.sh` change therefore takes effect on the
+deploy **after** the one that pulls it in. Run 2 was repeated for that reason.

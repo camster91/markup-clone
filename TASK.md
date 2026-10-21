@@ -12,10 +12,18 @@ its stated evidence exists; local tests do not silently close it.
 
 ## In progress
 
+### deploy.sh safety (build before migrate, no blanket trust, no password leak)
+
+- **Status:** in-progress — PR open; dry-run passed on a stand-in host.
+- **Source:** `docs/plans/deploy-script-safety-2026-10-21.md`
+- **Note:** a `deploy.sh` change takes effect on the deploy after the one that
+  pulls it in. Removing the existing trust line on production is a separate
+  manual step.
+
 ### Prisma 7 upgrade
 
-- **Status:** in-progress — PR open; **merge only after the 2026-11-06
-  production deploy**.
+- **Status:** in-progress — merged to `main` in #96 (`9f965e6`), **not yet
+  deployed**.
 - **Source:** `docs/plans/prisma-7-upgrade-2026-10-21.md`
 
 ### Unscoped project access matches the project list
