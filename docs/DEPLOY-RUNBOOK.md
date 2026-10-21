@@ -239,9 +239,11 @@ The current `deploy.sh` adds it only when a password login over `markup-net`
 fails, but it never removes a line that is already there. Removing it is this
 one-time manual step.
 
-**When:** after the *second* deploy that includes #97. `deploy.sh` runs
-`git pull` itself, and bash keeps executing the copy it started with, so the
-first deploy after #97 still runs the old script and re-adds the line.
+**When:** after the first deploy that includes #97 has finished. That deploy
+still runs the old script, because `deploy.sh` runs `git pull` itself and bash
+keeps executing the copy it started with. Every deploy after it runs the new
+script, which leaves the line out. Never remove the line *before* that first
+deploy: the old script would add it straight back.
 
 **1. Prove password login works.** Use the same probe that `deploy.sh` runs:
 
