@@ -439,7 +439,7 @@ docker network connect "$PG_NET" "$APP_CONTAINER" 2>/dev/null || true
 if docker run --rm --network "$PG_NET" --env-file "$APP_DIR/.env" \
     -e PGCONNECT_TIMEOUT=5 "$PG_IMAGE" \
     sh -c 'psql "$DATABASE_URL" -tAc "SELECT 1"' >/dev/null 2>&1; then
-  log "Postgres password auth over $PG_NET works; no trust rule needed"
+  log "Postgres login over $PG_NET works; no trust rule added"
 else
   # Discover the subnet dynamically: docker userland bridge networks get
   # assigned 172.x.0.0/16 subnets on creation, and the exact x depends on
