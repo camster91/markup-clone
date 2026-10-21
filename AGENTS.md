@@ -31,7 +31,7 @@ If you're an agent (human or AI), start here. Then read in this order
 
 - **Project:** Visual Feedback Tool (markup.io clone). Widget →
   `/api/pins` → Postgres → dashboard. Live at `markup.ashbi.ca`.
-- **Stack:** Next.js 16 (App Router), Prisma 6 + PostgreSQL,
+- **Stack:** Next.js 16 (App Router), Prisma 7 (pg driver adapter) + PostgreSQL,
   Tailwind 4, Mailgun HTTP API, headless Chromium for recapture.
 - **Deploy:** `scripts/deploy.sh` to `coolify` VPS (Caddy route
   guard, `markup-net` bridge, pg_hba trust rule). See

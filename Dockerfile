@@ -80,6 +80,9 @@ RUN --network=none node /usr/local/bin/verify-pdf-renderer-image.mjs
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
+# The whole @prisma scope, not just what Next traced: the container scripts
+# (scripts/lib/app-prisma.cjs) load @prisma/adapter-pg through its CommonJS
+# entry, which the app's ESM import does not pull into the standalone trace.
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/prisma ./prisma

@@ -10,7 +10,6 @@
  * Re-running with the same credentials is a no-op. A different password is
  * refused unless --rotate is explicit.
  */
-const { createRequire } = require('node:module');
 const { randomBytes, scryptSync, timingSafeEqual } = require('node:crypto');
 
 const N = 16384;
@@ -87,9 +86,8 @@ async function main() {
   fields.fill('');
   chunks.fill(Buffer.alloc(0));
 
-  const requireFromApp = createRequire('/app/server.js');
-  const { PrismaClient } = requireFromApp('@prisma/client');
-  const prisma = new PrismaClient();
+  const { createAppPrisma } = require('./lib/app-prisma.cjs');
+  const prisma = createAppPrisma();
   try {
     const result = await provisionOperator(prisma.user, email, password, process.argv.includes('--rotate'));
     process.stdout.write(`${JSON.stringify(result)}\n`);
