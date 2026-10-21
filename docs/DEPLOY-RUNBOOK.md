@@ -263,12 +263,12 @@ ssh coolify 'systemctl restart caddy && sleep 2 && journalctl -u caddy -n 20 --n
 ssh coolify
 SUBNET=$(docker network inspect markup-net -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}')
 docker exec markup-postgres bash -c "sed -i '1 a\\\n# manual: trust the app subnet\nhost all all $SUBNET trust' /var/lib/postgresql/data/pg_hba.conf"
-docker exec markup-postgres pg_ctl -D /var/lib/postgresql/data restart -m fast
+docker exec markup-postgres sh -c 'kill -HUP $(head -1 /var/lib/postgresql/data/postmaster.pid)'   # reload pg_hba; pg_ctl refuses to run as root
 ```
 
-Then re-run `deploy.sh` so the subnet rule gets pinned permanently.
+The lasting fix is to make the postgres password match `DATABASE_URL` in `.env`. Re-running `deploy.sh` also works: it adds this trust line only when a password login over `markup-net` fails.
 
-**Prevention:** `deploy.sh` step 8 inserts the trust line automatically. If you're changing the Docker network, re-run `deploy.sh` end-to-end. Never hard-code a subnet.
+**Prevention:** `deploy.sh` probes a password login over `markup-net` on every deploy and adds the trust line only if that login fails. It does not pin the rule on hosts where password auth works. If you're changing the Docker network, re-run `deploy.sh` end-to-end. Never hard-code a subnet.
 
 **Test command:** `ssh coolify 'docker exec markup-clone npx prisma db pull --print 2>&1 | tail -5'` — expect no `P1000` and a schema print, not a stack trace.
 
