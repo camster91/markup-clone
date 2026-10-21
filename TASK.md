@@ -12,10 +12,16 @@ its stated evidence exists; local tests do not silently close it.
 
 ## In progress
 
+### Prisma 7 upgrade
+
+- **Status:** in-progress — PR open; **merge only after the 2026-11-06
+  production deploy**.
+- **Source:** `docs/plans/prisma-7-upgrade-2026-10-21.md`
+
 ### Unscoped project access matches the project list
 
-- **Status:** in-progress — code on branch `ccr-ff82cc8e-enzsdu`; ships with the
-  next approved deploy.
+- **Status:** in-progress — merged to `main` in #95 (`93b69b3`), **not yet
+  deployed**; ships with the next approved deploy.
 - **Source:** `docs/plans/unscoped-project-access-2026-10-21.md`
 - **Owner decision still open:** retire the transitional "users on no team see
   every unscoped project" rule once every user is on a team.

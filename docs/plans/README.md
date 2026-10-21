@@ -25,6 +25,9 @@ which are retained as implementation evidence.
 
 ## Active implementation
 
+- `prisma-7-upgrade-2026-10-21.md` — **Implemented; hold until after the
+  2026-11-06 deploy.** Prisma 7.10.1 with the pg driver adapter; verified
+  against Postgres 16 in the built image.
 - `unscoped-project-access-2026-10-21.md` — **Implemented; not deployed.**
   Team members, clients and guests can no longer open unscoped projects by id;
   access and notifications now match the project list.
