@@ -34,10 +34,10 @@
     "@markup/core": "file:./packages/markup-core",
     "@prisma/client": "^6.6.0",
     "dotenv": "^16.4.5",
-    "next": "^16.4.1",
+    "next": "^16.4.2",
     "prisma": "^6.6.0",
-    "react": "19.3.0",
-    "react-dom": "19.3.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
     "undici": "^7.30.1"
   },
   "devDependencies": {
