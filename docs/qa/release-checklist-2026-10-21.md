@@ -28,15 +28,36 @@ All merged to `main`, none deployed yet:
 - **No new migrations** since `81836384`. The only migration step is the
   `_prisma_migrations` check.
 - **The `docker run` mounts are unchanged.**
-- **One deploy is enough.** `deploy.sh` pulls first, but bash keeps running
-  the copy it started with, so this deploy runs the old script. That is safe
-  here: there are no migrations to run before the build, and the mounts are
-  the same. From the next deploy on, the new script runs.
+- **One deploy is enough.** Step 4 pulls the checkout before starting
+  `deploy.sh`, so this deploy already runs the new script. Even without that
+  pull it would be safe: there are no migrations to run before the build, and
+  the mounts are the same.
+
+## 0. Pin the release
+
+- [ ] Record the approved 40-character SHA. It must be the head of `main`, and
+      `main` must not move until step 4 is done: no merges in the release
+      window.
+
+  ```bash
+  APPROVED_SHA=$(git ls-remote https://github.com/camster91/markup-clone refs/heads/main | cut -f1)
+  echo "$APPROVED_SHA"
+  ```
 
 ## 1. Preflight (read-only, the day of the release)
 
-- [ ] Run the runbook's **Pre-deploy checklist**, items 1–11, in
-      `docs/DEPLOY-RUNBOOK.md`. Item 5 is run locally on the release commit.
+- [ ] Run the runbook's **Pre-deploy checklist**, items 1–10, in
+      `docs/DEPLOY-RUNBOOK.md`. Item 5 is run locally on `$APPROVED_SHA`.
+- [ ] Run item 11 against what is live **now**. Run it from the deployed
+      commit `81836384`, not from the release: it compares the live
+      `widget.js` with the checkout's copy, and this release changes
+      `widget.js`. The verifier needs only Node, with no `npm install`.
+
+  ```bash
+  git worktree add ../markup-live 81836384c0245fb3e445847a36bda2c377acf71b
+  (cd ../markup-live && node scripts/verify-public-release.cjs --origin https://markup.ashbi.ca)
+  git worktree remove ../markup-live
+  ```
 - [ ] **TLS expiry:** the edge preflight (item 2) prints the certificate's
       expiry date. The certificate on record expires **2026-11-06**, the same
       day as the deadline. If it hasn't renewed, the deploy's public check
@@ -81,19 +102,27 @@ container, and the deploy deletes that container.
 
 ## 4. Deploy
 
-- [ ] Run the deploy:
+- [ ] Pull and confirm the host is at the approved commit. If the printed SHA
+      is not `$APPROVED_SHA`, stop: `main` moved after approval.
+
+  ```bash
+  ssh coolify 'cd /root/markup-clone && git pull --ff-only && git rev-parse HEAD'
+  ```
+
+- [ ] Run the deploy. Its own `git pull` is now a no-op.
 
   ```bash
   ssh coolify 'bash /root/markup-clone/scripts/deploy.sh'
   ```
 
-- [ ] It ends with `DEPLOY OK: <sha>`, and `<sha>` matches `main`.
+- [ ] It ends with `DEPLOY OK: <sha>`, and `<sha>` equals `$APPROVED_SHA`.
+      If it doesn't, an unapproved commit shipped: roll back (see below).
 
 ## 5. Verify
 
 - [ ] Local health: `ssh coolify 'curl -fsS http://127.0.0.1:3030/api/health'`
-- [ ] Public release: run `npm run verify:public-release` locally, from the
-      exact release commit.
+- [ ] Public release: run `npm run verify:public-release` locally, from a
+      checkout of `$APPROVED_SHA`.
 - [ ] The container runs as the non-root user. Expect `1000`:
       `ssh coolify 'docker exec markup-clone id -u'`
 - [ ] Rescued attachments are visible. Expect the count from step 3:
