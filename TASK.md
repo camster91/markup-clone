@@ -14,7 +14,8 @@ its stated evidence exists; local tests do not silently close it.
 
 ### deploy.sh safety (build before migrate, no blanket trust, no password leak)
 
-- **Status:** in-progress — PR open; dry-run passed on a stand-in host.
+- **Status:** in-progress — merged to `main` in #97 (`4638af7`), **not yet
+  deployed**. Dry-run passed on a stand-in host.
 - **Source:** `docs/plans/deploy-script-safety-2026-10-21.md`
 - **Note:** a `deploy.sh` change takes effect on the deploy after the one that
   pulls it in. Removing the existing trust line on production is a separate
