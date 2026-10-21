@@ -76,8 +76,8 @@ its stated evidence exists; local tests do not silently close it.
 
 ### Node 24 runtime
 
-- **Status:** in-progress — code on branch `ccr-ff82cc8e-enzsdu`; ships with the
-  next approved deploy (no `deploy.sh` change).
+- **Status:** in-progress — merged to `main` in #86 (`97ed018`), **not yet
+  deployed**; ships with the next approved deploy (no `deploy.sh` change).
 - **Source:** `docs/plans/node-24-runtime-2026-10-16.md`
 - **Follow-up:** non-root container, see "Non-root app container".
 
@@ -95,6 +95,9 @@ its stated evidence exists; local tests do not silently close it.
   index drift, recapture URL, project delete files, CI gates), and this
   cleanup PR.
 - **Source:** `docs/plans/p0-data-loss-and-tenant-isolation-2026-10-15.md`
+- **Release checklist:** `docs/qa/release-checklist-2026-10-21.md` covers this
+  deploy end to end: preflight, backup, attachment rescue, deploy, verify, the
+  prune dry run, trust line removal and rollback.
 - **Why first:** the nightly prune cron erases pins and comments on screenshots
   older than 90 days, and deletes in-use images. Earliest production exposure
   is 2026-11-06. This blocks L1 QA writes and the L3 pilot.
