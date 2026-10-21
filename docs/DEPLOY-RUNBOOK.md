@@ -232,6 +232,73 @@ application instance is a release stop until the limiter uses a shared store.
 
 ---
 
+## Remove the legacy `pg_hba` trust line (one-time)
+
+Deploys before #97 added `host all all <markup-net subnet> trust` on every run.
+The current `deploy.sh` adds it only when a password login over `markup-net`
+fails, but it never removes a line that is already there. Removing it is this
+one-time manual step.
+
+**When:** after the *second* deploy that includes #97. `deploy.sh` runs
+`git pull` itself, and bash keeps executing the copy it started with, so the
+first deploy after #97 still runs the old script and re-adds the line.
+
+**1. Prove password login works.** Use the same probe that `deploy.sh` runs:
+
+```bash
+ssh coolify
+docker run --rm --network markup-net --env-file /root/markup-clone/.env \
+  -e PGCONNECT_TIMEOUT=5 postgres:16-alpine \
+  sh -c 'psql "$DATABASE_URL" -tAc "SELECT 1"'
+```
+
+- Prints `1` → go to step 2.
+- Fails → the stored password differs from `.env`. Fix it while the trust line
+  still lets you in, then repeat step 1 until it prints `1`:
+
+  ```bash
+  docker exec -it markup-postgres psql -U <user from DATABASE_URL>
+  \password <user>      -- enter the password from .env; it is not echoed
+  \q
+  ```
+
+**2. Back up the file and review the trust lines:**
+
+```bash
+docker exec markup-postgres cp /var/lib/postgresql/data/pg_hba.conf /var/lib/postgresql/data/pg_hba.conf.bak
+docker exec markup-postgres grep -n trust /var/lib/postgresql/data/pg_hba.conf
+```
+
+Expect the `markup-net` subnet line, with a `# markup-clone deploy.sh: trust ...`
+or `# manual: trust the app subnet` comment above it. Leave the image's own
+`local ... trust` and `127.0.0.1` / `::1` lines alone.
+
+**3. Remove the subnet lines and reload (SIGHUP, no restart):**
+
+```bash
+SUBNET=$(docker network inspect markup-net -f '{{(index .IPAM.Config 0).Subnet}}')
+docker exec markup-postgres sh -c "grep -v -e '^# markup-clone deploy.sh: trust' -e '^# manual: trust the app subnet' -e '$SUBNET.*trust' /var/lib/postgresql/data/pg_hba.conf > /tmp/hba && cat /tmp/hba > /var/lib/postgresql/data/pg_hba.conf"
+docker exec markup-postgres sh -c 'kill -HUP $(head -1 /var/lib/postgresql/data/postmaster.pid)'
+```
+
+`cat >` keeps the file's owner and mode. If step 2 also showed the old
+`172.20.0.0/16 ... trust` fallback line, remove it the same way.
+
+**4. Verify:**
+
+- Step 1 still prints `1`. It opens a new connection, so it now uses
+  `scram-sha-256`.
+- `curl -s http://127.0.0.1:3030/api/health` reports healthy.
+- `curl -sI https://markup.ashbi.ca | head -1` returns `HTTP/2 200`.
+
+**Rollback:**
+
+```bash
+docker exec markup-postgres sh -c 'cp /var/lib/postgresql/data/pg_hba.conf.bak /var/lib/postgresql/data/pg_hba.conf && kill -HUP $(head -1 /var/lib/postgresql/data/postmaster.pid)'
+```
+
+---
+
 ## Failure 1 — Caddyfile-import rejected: `unrecognized directive: <site-name>`
 
 **Symptom:** `caddy` is up but HTTPS on `markup.ashbi.ca` returns `502` or `connection refused`. `journalctl -u caddy` shows `unrecognized directive: markup.ashbi.ca` at startup.

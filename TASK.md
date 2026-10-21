@@ -19,7 +19,8 @@ its stated evidence exists; local tests do not silently close it.
 - **Source:** `docs/plans/deploy-script-safety-2026-10-21.md`
 - **Note:** a `deploy.sh` change takes effect on the deploy after the one that
   pulls it in. Removing the existing trust line on production is a separate
-  manual step.
+  manual step: `docs/DEPLOY-RUNBOOK.md` §"Remove the legacy `pg_hba` trust
+  line (one-time)".
 
 ### Prisma 7 upgrade
 
