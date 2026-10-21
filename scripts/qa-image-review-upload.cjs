@@ -6,7 +6,6 @@
  * It refuses non-local targets and deletes all fixture records/files on exit.
  */
 const { execFileSync } = require('node:child_process');
-const { createRequire } = require('node:module');
 
 const PROJECT_ID = '98000000-0000-4000-8000-000000000001';
 const USER_ID = '98000000-0000-4000-8000-000000000002';
@@ -22,11 +21,10 @@ function runContainer(action) {
 }
 
 async function containerFixture(action) {
-  const requireFromApp = createRequire('/app/server.js');
-  const { PrismaClient } = requireFromApp('@prisma/client');
+  const { createAppPrisma } = require('./lib/app-prisma.cjs');
   const { unlink } = require('node:fs/promises');
   const path = require('node:path');
-  const prisma = new PrismaClient();
+  const prisma = createAppPrisma();
   try {
     if (action === 'seed') {
       await prisma.project.deleteMany({ where: { id: PROJECT_ID } });

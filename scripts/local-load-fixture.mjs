@@ -21,8 +21,8 @@ if (action !== 'seed' && action !== 'cleanup') {
 }
 
 const require = createRequire(import.meta.url);
-const { PrismaClient } = require('/app/node_modules/@prisma/client');
-const prisma = new PrismaClient();
+const { createAppPrisma } = require('./lib/app-prisma.cjs');
+const prisma = createAppPrisma();
 
 try {
   if (action === 'seed') {

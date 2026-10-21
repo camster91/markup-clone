@@ -4,7 +4,6 @@
  * source PDF, rendered PNGs, database rows, and private work directories.
  */
 const { execFileSync } = require('node:child_process');
-const { createRequire } = require('node:module');
 
 const PROJECT_ID = '99000000-0000-4000-8000-000000000001';
 const USER_ID = '99000000-0000-4000-8000-000000000002';
@@ -23,11 +22,10 @@ function runContainer(action, expectedKeys = []) {
 }
 
 async function containerFixture(action) {
-  const requireFromApp = createRequire('/app/server.js');
-  const { PrismaClient } = requireFromApp('@prisma/client');
+  const { createAppPrisma } = require('./lib/app-prisma.cjs');
   const { access, readdir, unlink } = require('node:fs/promises');
   const path = require('node:path');
-  const prisma = new PrismaClient();
+  const prisma = createAppPrisma();
   try {
     if (action === 'seed') {
       await prisma.project.deleteMany({ where: { id: PROJECT_ID } });

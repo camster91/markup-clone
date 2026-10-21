@@ -20,6 +20,10 @@ const contentSecurityPolicy = `
 const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
+  // Keep the Prisma pg adapter (and with it `pg`) as real packages in the
+  // standalone node_modules: the container scripts in scripts/ load it from
+  // there (scripts/lib/app-prisma.cjs).
+  serverExternalPackages: ["@prisma/adapter-pg"],
   async headers() {
     return [
       {

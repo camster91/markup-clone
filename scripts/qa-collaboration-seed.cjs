@@ -1,4 +1,4 @@
-const { PrismaClient } = require('/app/node_modules/@prisma/client');
+const { createAppPrisma } = require('./lib/app-prisma.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -8,7 +8,7 @@ if (!databaseUrl.includes('@postgres:5432/markup_db') || !dashboardHost.includes
   throw new Error('Refusing to seed outside the disposable local Compose stack');
 }
 
-const prisma = new PrismaClient();
+const prisma = createAppPrisma();
 const USER_ID = '94000000-0000-4000-8000-000000000001';
 const WORKSPACE_ID = '94000000-0000-4000-8000-000000000002';
 const TEAM_ID = '94000000-0000-4000-8000-000000000003';

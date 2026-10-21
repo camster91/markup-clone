@@ -42,7 +42,7 @@ It is built as a self-hosted alternative to hosted tools like Markup.io, with ro
 ## Tech stack
 
 - Next.js 16 (App Router, standalone output), React 19, TypeScript
-- PostgreSQL with Prisma 6
+- PostgreSQL with Prisma 7 (pg driver adapter)
 - Tailwind CSS 4, Heroicons
 - Vite for the standalone widget bundle (`public/widget.js`)
 - npm workspaces: `packages/markup-core` (shared server helpers) and `packages/markup-sdk` (browser SDK)

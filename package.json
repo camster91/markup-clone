@@ -32,10 +32,11 @@
   "dependencies": {
     "@heroicons/react": "^2.2.0",
     "@markup/core": "file:./packages/markup-core",
-    "@prisma/client": "^6.6.0",
+    "@prisma/adapter-pg": "^7.10.1",
+    "@prisma/client": "^7.10.1",
     "dotenv": "^16.4.5",
     "next": "^16.4.2",
-    "prisma": "^6.6.0",
+    "prisma": "^7.10.1",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "undici": "^7.30.1"

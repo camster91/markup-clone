@@ -1,6 +1,6 @@
 // This helper runs from the read-only /opt/app-scripts mount. Resolve Prisma
 // from the standalone application's runtime rather than this file's directory.
-const { PrismaClient } = require('/app/node_modules/@prisma/client');
+const { createAppPrisma } = require('./lib/app-prisma.cjs');
 
 const databaseUrl = process.env.DATABASE_URL || '';
 const dashboardHost = process.env.DASHBOARD_HOST || '';
@@ -8,7 +8,7 @@ if (!databaseUrl.includes('@postgres:5432/markup_db') || !dashboardHost.includes
   throw new Error('Refusing to seed outside the disposable local Compose stack');
 }
 
-const prisma = new PrismaClient();
+const prisma = createAppPrisma();
 const USER_ID = '91000000-0000-4000-8000-000000000001';
 const WORKSPACE_ID = '92000000-0000-4000-8000-000000000001';
 const TEAM_ID = '92000000-0000-4000-8000-000000000002';
