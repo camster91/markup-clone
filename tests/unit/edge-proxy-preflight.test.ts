@@ -144,7 +144,7 @@ describe('deploy edge integration contract', () => {
   it('preflights the edge before migrations and skips Caddy mutation in Traefik mode', () => {
     const source = readFileSync(DEPLOY_SCRIPT, 'utf8');
     const preflight = source.indexOf('edge-proxy-preflight.sh" verify');
-    const migrations = source.indexOf('# --- 2. Apply pending Prisma migrations');
+    const migrations = source.indexOf('Apply pending Prisma migrations ---');
 
     expect(preflight).toBeGreaterThan(-1);
     expect(migrations).toBeGreaterThan(preflight);

@@ -137,7 +137,7 @@ describe('deploy rollback integration contract', () => {
   it('runs the rollback preflight before migrations and image replacement', () => {
     const source = readFileSync(DEPLOY_SCRIPT, 'utf8');
     const preflight = source.indexOf('rollback-image-preflight.sh');
-    const migrations = source.indexOf('# --- 2. Apply pending Prisma migrations ---');
+    const migrations = source.indexOf('Apply pending Prisma migrations ---');
     const replacement = source.indexOf('docker rm -f "$APP_CONTAINER"');
 
     expect(preflight).toBeGreaterThan(-1);

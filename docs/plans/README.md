@@ -25,6 +25,9 @@ which are retained as implementation evidence.
 
 ## Active implementation
 
+- `deploy-script-safety-2026-10-21.md` — **Implemented; stand-in dry-run.**
+  `deploy.sh` builds before migrating and only adds the Postgres subnet trust
+  rule when password auth fails.
 - `prisma-7-upgrade-2026-10-21.md` — **Implemented; hold until after the
   2026-11-06 deploy.** Prisma 7.10.1 with the pg driver adapter; verified
   against Postgres 16 in the built image.
