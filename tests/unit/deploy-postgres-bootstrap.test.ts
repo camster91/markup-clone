@@ -62,7 +62,7 @@ const HARNESS = [
   '            if k.strip() == "DATABASE_URL":',
   '                v = v.strip().strip(\'"\').strip("\'")',
   '                pw = urlparse(v).password or ""',
-  '                sys.stdout.write(pw.replace("\'", "\'\\\\\'\'"))',
+  '                sys.stdout.write(pw)',
   '                sys.exit(0)',
   'except FileNotFoundError:',
   '    pass',
@@ -78,16 +78,17 @@ const HARNESS = [
   // not try to interpolate them.
   'if docker ps --filter "name=^${PG_CONTAINER}$" --format \'{{.Names}}\' | grep -q "${PG_CONTAINER}"; then',
   '  : # branch 1',
-  'elif docker inspect "${PG_CONTAINER}" >/dev/null 2>&1; then',
+  'elif docker inspect --type container "${PG_CONTAINER}" >/dev/null 2>&1; then',
   '  record "docker start ${PG_CONTAINER}"',
   '  docker start "${PG_CONTAINER}" 2>&1 || true',
   'else',
   '  log "${PG_CONTAINER} does not exist; creating it from ${PG_IMAGE}"',
-  '  if ! PG_ENV_FILE="${PG_ENV_FILE}" read_pg_password; then',
-  '    log "WARN: could not read DATABASE_URL from ${PG_ENV_FILE}"',
+  '  PG_PW=$(PG_ENV_FILE="${PG_ENV_FILE}" read_pg_password) || PG_PW=""',
+  '  if [ -z "$PG_PW" ]; then',
+  '    log "WARN: could not read a password from DATABASE_URL in ${PG_ENV_FILE}"',
   '  else',
-  '    PG_PW_Q=$(PG_ENV_FILE="${PG_ENV_FILE}" read_pg_password)',
   '    record "docker run --name ${PG_CONTAINER} -e POSTGRES_USER=${PG_USER_VALUE} -e POSTGRES_DB=${PG_DB_VALUE} -v ${PG_DATA_DIR}:/var/lib/postgresql/data ${PG_IMAGE}"',
+  '    POSTGRES_PASSWORD="$PG_PW" docker run -d --name "${PG_CONTAINER}" -e "POSTGRES_USER=${PG_USER_VALUE}" -e POSTGRES_PASSWORD -e "POSTGRES_DB=${PG_DB_VALUE}" -v "${PG_DATA_DIR}:/var/lib/postgresql/data" "${PG_IMAGE}"',
   '  fi',
   'fi',
   '',
@@ -130,6 +131,7 @@ function writeDockerShim(tmpDir: string, behavior: Record<string, string>): void
     '    exit 1',
     '    ;;',
     '  run)',
+    '    [ -n "${POSTGRES_PASSWORD:-}" ] && echo "run-env-has-password" >> "$RECORD_FILE"',
     '    echo "$(get run_id)"',
     '    exit 0',
     '    ;;',
@@ -228,8 +230,9 @@ function withTmp<T>(
 // The fake password is a deliberate test value (not a real credential)
 // so we can verify urlparse + printf-%q round-trip without touching
 // the real /root/markup-clone/.env. The test runner is hermetic.
+const FAKE_PASSWORD = 'harness-only-pw-7Q';
 const FAKE_ENV =
-  'DATABASE_URL="postgresql://markup:***@markup-postgres:5432/markup_db"\n';
+  `DATABASE_URL="postgresql://markup:${FAKE_PASSWORD}@markup-postgres:5432/markup_db"\n`;
 
 const hasShellPrerequisites =
   spawnSync('bash', ['--version'], { stdio: 'ignore' }).status === 0 &&
@@ -274,5 +277,30 @@ describe.skipIf(!hasShellPrerequisites)('deploy.sh — ensure postgres is runnin
       // And we did NOT call start (the broken old behaviour).
       expect(record).not.toContain('docker start');
     });
+  });
+
+  it('branch 3: never prints the password and keeps it out of docker argv', () => {
+    // Regression: calling read_pg_password bare as an `if` condition printed
+    // the password to the deploy output (seen in the 2026-10-21 stand-in
+    // dry-run), and the value was passed as `-e POSTGRES_PASSWORD=<pw>`.
+    withTmp({ ps_running: '0', inspect_ok: '0' }, FAKE_ENV, (t) => {
+      const stdout = t.run();
+      const record = readFileSync(t.recordFile, 'utf8');
+      expect(stdout).not.toContain(FAKE_PASSWORD);
+      expect(record).not.toContain(FAKE_PASSWORD);
+      // The value reaches docker through its environment instead.
+      expect(record).toContain('run-env-has-password');
+      expect(record).toMatch(/docker run -d .* -e POSTGRES_PASSWORD -e /);
+    });
+  });
+
+  it('mirrors the password handling in scripts/deploy.sh', () => {
+    const deploy = readFileSync(join(__dirname, '../../scripts/deploy.sh'), 'utf8');
+    expect(deploy).toContain('PG_PW=$(PG_ENV_FILE="${PG_ENV_FILE}" read_pg_password) || PG_PW=""');
+    expect(deploy).toContain('POSTGRES_PASSWORD="$PG_PW" docker run -d');
+    expect(deploy).toContain('      -e POSTGRES_PASSWORD \\');
+    expect(deploy).not.toContain('POSTGRES_PASSWORD=${');
+    expect(deploy).toContain('elif docker inspect --type container "${PG_CONTAINER}"');
+    expect(deploy).toContain('if docker inspect --type container "$APP_CONTAINER"');
   });
 });

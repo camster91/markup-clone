@@ -13,8 +13,8 @@
 #
 # What this script does, in order:
 #   1. Fast-forward the authenticated Git checkout and verify it is clean
-#   2. Apply any pending Prisma migrations to the live DB
-#   3. Build the new Docker image with the full 40-char SHA tag
+#   2. Build the new Docker image with the full 40-char SHA tag
+#   3. Apply any pending Prisma migrations to the live DB
 #   4. Recreate the markup-clone container (preserves env via --env-file, volume via -v)
 #   5. Verify health on 127.0.0.1:<host_port>
 #
@@ -180,11 +180,9 @@ fi
 #       through the terminal tool; python3 << 'PYEOF' with a
 #       single-quoted delimiter is the verified-safe path for
 #       reading credential-bearing files on a remote.
-# We use `printf %q` to escape the password back into a shell-safe
-# token, so the value is never exposed to argv expansion or word
-# splitting downstream. The script never logs it; the only places
-# the value lives are inside the running python process and the
-# one-shot docker run argv.
+# The password is read once into a shell variable and handed to
+# `docker run` through the environment (`-e POSTGRES_PASSWORD` with no
+# value), so it never appears in argv, on the terminal, or in the log.
 PG_DATA_DIR="${PG_DATA_DIR:-/data/markup-clone/postgres}"
 PG_IMAGE="${PG_IMAGE:-postgres:16-alpine}"
 PG_USER_VALUE="${PG_USER_VALUE:-markup}"
@@ -192,11 +190,10 @@ PG_DB_VALUE="${PG_DB_VALUE:-markup_db}"
 PG_ENV_FILE="${PG_ENV_FILE:-$APP_DIR/.env}"
 
 read_pg_password() {
-  # Extract the password component from DATABASE_URL in $PG_ENV_FILE.
-  # Returns a shell-safe quoted/escaped token (printf %q output) so
-  # callers can splat it back into a docker run argv without exposing
-  # it to word splitting or glob expansion. Empty output -> file is
-  # missing or DATABASE_URL is malformed; caller is expected to fail.
+  # Print the password component of DATABASE_URL in $PG_ENV_FILE, raw.
+  # Only ever call this inside a command substitution. Empty output or a
+  # non-zero exit -> file is missing or DATABASE_URL has no password;
+  # the caller is expected to fail.
   python3 <<'PYEOF'
 import os, sys
 from urllib.parse import urlparse
@@ -211,8 +208,7 @@ try:
             if k.strip() == "DATABASE_URL":
                 v = v.strip().strip('"').strip("'")
                 pw = urlparse(v).password or ""
-                # printf %q -> bash-safe single-quoted/escaped token
-                sys.stdout.write(pw.replace("'", "'\\''"))
+                sys.stdout.write(pw)
                 sys.exit(0)
 except FileNotFoundError:
     pass
@@ -222,24 +218,26 @@ PYEOF
 
 if docker ps --filter "name=^${PG_CONTAINER}$" --format '{{.Names}}' | grep -q "${PG_CONTAINER}"; then
   : # branch 1: already running, nothing to do
-elif docker inspect "${PG_CONTAINER}" >/dev/null 2>&1; then
+elif docker inspect --type container "${PG_CONTAINER}" >/dev/null 2>&1; then
   log "WARN: ${PG_CONTAINER} is stopped, starting it"
   docker start "${PG_CONTAINER}" 2>&1 || log "WARN: failed to start ${PG_CONTAINER}; migrations will skip"
   sleep 2
 else
   log "${PG_CONTAINER} does not exist; creating it from ${PG_IMAGE}"
   mkdir -p "${PG_DATA_DIR}"
-  if ! PG_ENV_FILE="${PG_ENV_FILE}" read_pg_password; then
-    log "WARN: could not read DATABASE_URL from ${PG_ENV_FILE}; cannot create ${PG_CONTAINER}"
+  # Capture once. (Calling the helper bare as an `if` condition used to
+  # print the password to the terminal.)
+  PG_PW=$(PG_ENV_FILE="${PG_ENV_FILE}" read_pg_password) || PG_PW=""
+  if [ -z "$PG_PW" ]; then
+    log "WARN: could not read a password from DATABASE_URL in ${PG_ENV_FILE}; cannot create ${PG_CONTAINER}"
     log "WARN: migrations will skip"
   else
-    PG_PW_Q=$(PG_ENV_FILE="${PG_ENV_FILE}" read_pg_password)
-    docker run -d \
+    POSTGRES_PASSWORD="$PG_PW" docker run -d \
       --name "${PG_CONTAINER}" \
       --network bridge \
       --restart unless-stopped \
       -e "POSTGRES_USER=${PG_USER_VALUE}" \
-      -e "POSTGRES_PASSWORD=${PG_PW_Q}" \
+      -e POSTGRES_PASSWORD \
       -e "POSTGRES_DB=${PG_DB_VALUE}" \
       -v "${PG_DATA_DIR}:/var/lib/postgresql/data" \
       "${PG_IMAGE}" 2>&1 | tee -a "$LOG"
@@ -308,7 +306,9 @@ log "Building image tag: $NEW_TAG"
 # A first install has no prior container and therefore no rollback image; every
 # upgrade fails closed when its existing image cannot be verified.
 ROLLBACK_IMAGE_FILE="${ROLLBACK_IMAGE_FILE:-/data/markup-clone/rollback-image.env}"
-if docker inspect "$APP_CONTAINER" >/dev/null 2>&1; then
+# --type container: without it an image named markup-clone also matches, and
+# a host with images but no container was treated as an upgrade.
+if docker inspect --type container "$APP_CONTAINER" >/dev/null 2>&1; then
   [ -f "$APP_DIR/scripts/rollback-image-preflight.sh" ] || \
     fail "missing rollback-image-preflight.sh"
   log "Verifying retained rollback image before migrations"
@@ -325,7 +325,17 @@ else
   log "First install: no existing $APP_CONTAINER container to retain for rollback"
 fi
 
-# --- 2. Apply pending Prisma migrations ---
+# --- 2. Build the image ---
+# Build before touching the database. A failed build (network, npm, a broken
+# commit) then leaves the live app and its schema exactly as they were; the
+# old order migrated first and could strand the running app on a schema it
+# was not built for.
+log "Building image: $APP_NAME:$NEW_TAG"
+if ! docker build -t "$APP_NAME:$NEW_TAG" -t "$APP_NAME:latest" "$APP_DIR" 2>&1 | tail -5 | tee -a "$LOG"; then
+  fail "image build failed; database and running container left unchanged"
+fi
+
+# --- 3. Apply pending Prisma migrations ---
 # Migrations dir on the host may not match the local one if multiple deploys happened.
 # Find the migration directory and apply any unrun ones.
 MIG_DIR="$APP_DIR/prisma/migrations"
@@ -386,10 +396,6 @@ for mig_dir in "$MIG_DIR"/*/; do
   fi
 done
 
-# --- 3. Build the image ---
-log "Building image: $APP_NAME:$NEW_TAG"
-docker build -t "$APP_NAME:$NEW_TAG" -t "$APP_NAME:latest" "$APP_DIR" 2>&1 | tail -5 | tee -a "$LOG"
-
 # --- 4. Recreate the container ---
 # Notes for the docker run block:
 # - Next.js 16 standalone server.js does `process.env.HOSTNAME ||
@@ -423,39 +429,43 @@ docker run -d \
 # Attach to the postgres network so it can reach markup-postgres by name
 docker network connect "$PG_NET" "$APP_CONTAINER" 2>/dev/null || true
 
-# Ensure postgres has a trust rule for connections from markup-net. Without
-# this, a fresh postgres container starts with a default pg_hba.conf that
-# requires scram-sha-256 passwords, but the .env's stored password may not
-# match. The trust rule bypasses that for the markup-net subnet only.
+# Make sure the app can authenticate to postgres over markup-net.
 #
-# Discover the subnet dynamically: docker userland bridge networks get
-# assigned 172.x.0.0/16 subnets on creation, and the exact x depends on
-# the host. The previous version of this script hard-coded 172.20.0.0/16
-# which broke when a fresh postgres container was created on a host whose
-# docker daemon had already used 172.20 for something else (then the
-# app container's IP was 172.19.x and the trust rule did not match).
-# Use docker network inspect to read the real subnet.
-PG_SUBNET=$(docker network inspect "$PG_NET" --format '{{(index .IPAM.Config 0).Subnet}}' 2>/dev/null | head -1)
-if [ -z "$PG_SUBNET" ]; then
-  log "WARN: could not determine subnet for $PG_NET; falling back to 172.20.0.0/16"
-  PG_SUBNET="172.20.0.0/16"
-fi
-log "Postgres trust subnet: $PG_SUBNET"
-docker exec "$PG_CONTAINER" sh -c "
-  if ! grep -q '$PG_SUBNET' /var/lib/postgresql/data/pg_hba.conf 2>/dev/null; then
-    # HBA is first-match wins, and the default 'host all all all scram-sha-256'
-    # line is added by the postgres image at the top of the file. We
-    # need our trust rule BEFORE that line, otherwise the scram-sha-256
-    # check fires first and the password mismatches. Use sed to insert
-    # after the first line (which is the comment header).
-    sed -i \"1 a\\\\\n# markup-clone deploy.sh: trust the app container on this subnet\nhost    all             all             $PG_SUBNET            trust\" /var/lib/postgresql/data/pg_hba.conf
-    kill -HUP \$(cat /var/lib/postgresql/data/postmaster.pid | head -1) 2>/dev/null || true
-    # pg_reload_conf reloads pg_hba but only some of it; the trust
-    # rules need a full restart. Restart gracefully.
-    pg_ctl -D /var/lib/postgresql/data restart -m fast 2>&1 | tail -3
-    echo 'pg_hba updated for trust on $PG_SUBNET'
+# The postgres container is created from the same DATABASE_URL (branch 3
+# above), so password auth normally just works. Probe it first from a
+# throwaway container on markup-net; DATABASE_URL reaches it through
+# --env-file, never argv. Only when the probe fails (a host whose stored
+# password drifted from .env) fall back to the old subnet trust rule.
+if docker run --rm --network "$PG_NET" --env-file "$APP_DIR/.env" \
+    -e PGCONNECT_TIMEOUT=5 "$PG_IMAGE" \
+    sh -c 'psql "$DATABASE_URL" -tAc "SELECT 1"' >/dev/null 2>&1; then
+  log "Postgres login over $PG_NET works; no trust rule added"
+else
+  # Discover the subnet dynamically: docker userland bridge networks get
+  # assigned 172.x.0.0/16 subnets on creation, and the exact x depends on
+  # the host. The previous version of this script hard-coded 172.20.0.0/16
+  # which broke when a fresh postgres container was created on a host whose
+  # docker daemon had already used 172.20 for something else (then the
+  # app container's IP was 172.19.x and the trust rule did not match).
+  # Use docker network inspect to read the real subnet.
+  PG_SUBNET=$(docker network inspect "$PG_NET" --format '{{(index .IPAM.Config 0).Subnet}}' 2>/dev/null | head -1)
+  if [ -z "$PG_SUBNET" ]; then
+    log "WARN: could not determine subnet for $PG_NET; falling back to 172.20.0.0/16"
+    PG_SUBNET="172.20.0.0/16"
   fi
-" || true
+  log "WARN: postgres password auth over $PG_NET failed; adding trust rule for $PG_SUBNET"
+  # HBA is first-match wins, and the default 'host all all all scram-sha-256'
+  # line is near the top of the file, so the trust rule goes right after the
+  # header comment. A SIGHUP reloads pg_hba.conf; no restart is needed (and
+  # `pg_ctl restart` refuses to run as root anyway).
+  docker exec "$PG_CONTAINER" sh -c "
+    if ! grep -q '$PG_SUBNET' /var/lib/postgresql/data/pg_hba.conf 2>/dev/null; then
+      sed -i \"1 a\\\\\n# markup-clone deploy.sh: trust the app container on this subnet\nhost    all             all             $PG_SUBNET            trust\" /var/lib/postgresql/data/pg_hba.conf
+      kill -HUP \$(head -1 /var/lib/postgresql/data/postmaster.pid)
+      echo 'pg_hba updated for trust on $PG_SUBNET'
+    fi
+  " || log "WARN: could not update pg_hba.conf in $PG_CONTAINER"
+fi
 
 # --- 4b. Caddy route sync + reload ---
 # Make sure Caddy has a route for the public hostname. PUBLIC_HOSTNAME
