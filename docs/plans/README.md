@@ -25,6 +25,9 @@ which are retained as implementation evidence.
 
 ## Active implementation
 
+- `unscoped-project-access-2026-10-21.md` — **Implemented; not deployed.**
+  Team members, clients and guests can no longer open unscoped projects by id;
+  access and notifications now match the project list.
 - `dns-rebinding-2026-10-20.md` — **Implemented; not deployed.** Webhook,
   Slack and Discord deliveries re-check the resolved address at connect time,
   so DNS rebinding cannot reach internal hosts.

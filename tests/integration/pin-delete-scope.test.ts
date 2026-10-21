@@ -13,6 +13,8 @@ const PROJECT_ID = '22222222-2222-4222-8222-222222222222';
 const CSRF_TOKEN = 'pin-delete-csrf';
 
 const mocks = vi.hoisted(() => ({
+  // The caller belongs to no team, so it may open the unscoped project.
+  teamMember: { findFirst: vi.fn(async () => null) },
   pin: {
     findUnique: vi.fn(),
     deleteMany: vi.fn(),

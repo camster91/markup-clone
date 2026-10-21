@@ -10,6 +10,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { _resetBucket } from '@/lib/rate-limit';
 
 const mocks = vi.hoisted(() => ({
+  // The caller belongs to no team, so it may open the unscoped project.
+  teamMember: { findFirst: vi.fn(async () => null) },
   comment: { create: vi.fn() },
   pin: {
     findUnique: vi.fn(),

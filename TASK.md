@@ -1,6 +1,6 @@
 # TASK.md — markup-clone execution board
 
-**Last updated:** 2026-10-20
+**Last updated:** 2026-10-21
 **Governing roadmap:**
 `docs/plans/launch-and-saas-replacement-roadmap-2026-08-28.md`
 
@@ -12,10 +12,18 @@ its stated evidence exists; local tests do not silently close it.
 
 ## In progress
 
-### DNS-rebinding protection for outbound webhooks
+### Unscoped project access matches the project list
 
 - **Status:** in-progress — code on branch `ccr-ff82cc8e-enzsdu`; ships with the
   next approved deploy.
+- **Source:** `docs/plans/unscoped-project-access-2026-10-21.md`
+- **Owner decision still open:** retire the transitional "users on no team see
+  every unscoped project" rule once every user is on a team.
+
+### DNS-rebinding protection for outbound webhooks
+
+- **Status:** in-progress — merged to `main` in #94 (`11d11af`), **not yet
+  deployed**; ships with the next approved deploy.
 - **Source:** `docs/plans/dns-rebinding-2026-10-20.md`
 
 ### Attachment claim race and stale row pruning

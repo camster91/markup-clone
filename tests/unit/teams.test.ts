@@ -76,6 +76,33 @@ describe('team project access boundaries', () => {
     });
   });
 
+  it('allows a caller on no team to access a legacy unscoped project', async () => {
+    authState.user = { id: 'user-1', email: 'new@example.com', role: 'reviewer' };
+
+    await expect(assertProjectAccessible('project-1')).resolves.toMatchObject({
+      ok: true,
+      teamId: null,
+      membershipRole: 'legacy-reviewer',
+    });
+    expect(mocks.teamMember.findFirst).toHaveBeenCalledWith({
+      where: { userId: 'user-1' },
+      select: { id: true },
+    });
+  });
+
+  it('rejects a team member, client or guest reaching a legacy unscoped project by id', async () => {
+    // Matches the project list: a caller with any membership is scoped to
+    // their teams and never sees unscoped projects.
+    authState.user = { id: 'client-1', email: 'client@example.com', role: 'reviewer' };
+    mocks.teamMember.findFirst.mockResolvedValue({ id: 'membership-1' });
+
+    await expect(assertProjectAccessible('project-1')).resolves.toEqual({
+      ok: false,
+      status: 403,
+      error: "Not a member of this project's team",
+    });
+  });
+
   it('allows a global operator to access a team-scoped project', async () => {
     authState.user = {
       id: 'operator-1',
