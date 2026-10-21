@@ -180,11 +180,9 @@ fi
 #       through the terminal tool; python3 << 'PYEOF' with a
 #       single-quoted delimiter is the verified-safe path for
 #       reading credential-bearing files on a remote.
-# We use `printf %q` to escape the password back into a shell-safe
-# token, so the value is never exposed to argv expansion or word
-# splitting downstream. The script never logs it; the only places
-# the value lives are inside the running python process and the
-# one-shot docker run argv.
+# The password is read once into a shell variable and handed to
+# `docker run` through the environment (`-e POSTGRES_PASSWORD` with no
+# value), so it never appears in argv, on the terminal, or in the log.
 PG_DATA_DIR="${PG_DATA_DIR:-/data/markup-clone/postgres}"
 PG_IMAGE="${PG_IMAGE:-postgres:16-alpine}"
 PG_USER_VALUE="${PG_USER_VALUE:-markup}"
@@ -192,11 +190,10 @@ PG_DB_VALUE="${PG_DB_VALUE:-markup_db}"
 PG_ENV_FILE="${PG_ENV_FILE:-$APP_DIR/.env}"
 
 read_pg_password() {
-  # Extract the password component from DATABASE_URL in $PG_ENV_FILE.
-  # Returns a shell-safe quoted/escaped token (printf %q output) so
-  # callers can splat it back into a docker run argv without exposing
-  # it to word splitting or glob expansion. Empty output -> file is
-  # missing or DATABASE_URL is malformed; caller is expected to fail.
+  # Print the password component of DATABASE_URL in $PG_ENV_FILE, raw.
+  # Only ever call this inside a command substitution. Empty output or a
+  # non-zero exit -> file is missing or DATABASE_URL has no password;
+  # the caller is expected to fail.
   python3 <<'PYEOF'
 import os, sys
 from urllib.parse import urlparse
@@ -211,8 +208,7 @@ try:
             if k.strip() == "DATABASE_URL":
                 v = v.strip().strip('"').strip("'")
                 pw = urlparse(v).password or ""
-                # printf %q -> bash-safe single-quoted/escaped token
-                sys.stdout.write(pw.replace("'", "'\\''"))
+                sys.stdout.write(pw)
                 sys.exit(0)
 except FileNotFoundError:
     pass
@@ -222,24 +218,26 @@ PYEOF
 
 if docker ps --filter "name=^${PG_CONTAINER}$" --format '{{.Names}}' | grep -q "${PG_CONTAINER}"; then
   : # branch 1: already running, nothing to do
-elif docker inspect "${PG_CONTAINER}" >/dev/null 2>&1; then
+elif docker inspect --type container "${PG_CONTAINER}" >/dev/null 2>&1; then
   log "WARN: ${PG_CONTAINER} is stopped, starting it"
   docker start "${PG_CONTAINER}" 2>&1 || log "WARN: failed to start ${PG_CONTAINER}; migrations will skip"
   sleep 2
 else
   log "${PG_CONTAINER} does not exist; creating it from ${PG_IMAGE}"
   mkdir -p "${PG_DATA_DIR}"
-  if ! PG_ENV_FILE="${PG_ENV_FILE}" read_pg_password; then
-    log "WARN: could not read DATABASE_URL from ${PG_ENV_FILE}; cannot create ${PG_CONTAINER}"
+  # Capture once. (Calling the helper bare as an `if` condition used to
+  # print the password to the terminal.)
+  PG_PW=$(PG_ENV_FILE="${PG_ENV_FILE}" read_pg_password) || PG_PW=""
+  if [ -z "$PG_PW" ]; then
+    log "WARN: could not read a password from DATABASE_URL in ${PG_ENV_FILE}; cannot create ${PG_CONTAINER}"
     log "WARN: migrations will skip"
   else
-    PG_PW_Q=$(PG_ENV_FILE="${PG_ENV_FILE}" read_pg_password)
-    docker run -d \
+    POSTGRES_PASSWORD="$PG_PW" docker run -d \
       --name "${PG_CONTAINER}" \
       --network bridge \
       --restart unless-stopped \
       -e "POSTGRES_USER=${PG_USER_VALUE}" \
-      -e "POSTGRES_PASSWORD=${PG_PW_Q}" \
+      -e POSTGRES_PASSWORD \
       -e "POSTGRES_DB=${PG_DB_VALUE}" \
       -v "${PG_DATA_DIR}:/var/lib/postgresql/data" \
       "${PG_IMAGE}" 2>&1 | tee -a "$LOG"
@@ -308,7 +306,9 @@ log "Building image tag: $NEW_TAG"
 # A first install has no prior container and therefore no rollback image; every
 # upgrade fails closed when its existing image cannot be verified.
 ROLLBACK_IMAGE_FILE="${ROLLBACK_IMAGE_FILE:-/data/markup-clone/rollback-image.env}"
-if docker inspect "$APP_CONTAINER" >/dev/null 2>&1; then
+# --type container: without it an image named markup-clone also matches, and
+# a host with images but no container was treated as an upgrade.
+if docker inspect --type container "$APP_CONTAINER" >/dev/null 2>&1; then
   [ -f "$APP_DIR/scripts/rollback-image-preflight.sh" ] || \
     fail "missing rollback-image-preflight.sh"
   log "Verifying retained rollback image before migrations"
