@@ -1,8 +1,10 @@
 # Prisma 6 → 7 upgrade (2026-10-21)
 
-**Status:** implemented on branch `ccr-ff82cc8e-enzsdu`. **Hold: merge after
-the 2026-11-06 production deploy**, so the release that carries the
-data-loss fixes does not also carry a database-client change.
+**Status:** merged to `main` in #96 (`9f965e6`), not yet deployed. The
+original plan held this until after the P0 deploy, to keep the database-client
+change out of that release. On 2026-10-21 Cameron decided to ship it *with*
+the P0 deploy instead. There is no schema change, and the retained rollback
+image undoes it. See `docs/qa/release-checklist-2026-10-21.md`.
 **Source:** 2026-10-15 review dependency item; Prisma 7.10.1 is the newest
 stable release (8.0 is still a release candidate).
 

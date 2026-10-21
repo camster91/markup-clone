@@ -22,7 +22,7 @@ All merged to `main`, none deployed yet:
 | #91 | Attachment claim race, stale row pruning | None |
 | #94 | DNS-rebinding guard for webhooks | None |
 | #95 | Unscoped project access matches the list | None |
-| #96 | Prisma 7 (pg driver adapter) | None; no schema change |
+| #96 | Prisma 7 (pg driver adapter); shipped with P0 by owner decision on 2026-10-21 | None; no schema change |
 | #97 | Safer `deploy.sh` | Takes effect from the *next* deploy (see below) |
 
 - **No new migrations** since `81836384`. The only migration step is the
