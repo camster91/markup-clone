@@ -23,7 +23,7 @@
 # proposes digest bumps; to bump by hand:
 #   docker pull node:24-alpine && docker image inspect node:24-alpine \
 #     --format '{{index .RepoDigests 0}}'
-FROM node:24-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f AS base
+FROM node:24-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS base
 WORKDIR /app
 
 # ── Deps layer (cached unless package.json changes) ──────────────────────────
