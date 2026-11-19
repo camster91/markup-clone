@@ -56,14 +56,14 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardAuth } from '@/lib/auth';
 import { requireCsrfToken } from '@/lib/csrf';
-import { writeFile, mkdir, unlink } from 'fs/promises';
+import { deleteStoredFile, writeStoredFile } from '@/lib/object-store';
+import { attachmentsDir } from '@/lib/storage-dirs';
 import path from 'path';
 import crypto from 'crypto';
 import { validateProjectId } from '@/lib/validation';
 import { assertProjectAccessible } from '@/lib/teams';
 import { audit } from '@/lib/audit';
 import { consume } from '@/lib/rate-limit';
-import { attachmentsDir } from '@/lib/storage-dirs';
 
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024; // 8MB
 
@@ -275,10 +275,8 @@ export async function POST(req: Request) {
     // we 500 — no DB row is written if the file write fails, so the
     // attachment id is "spent" but the storage is consistent (no
     // orphan Attachment row pointing at a missing file).
-    const dir = attachmentsDir();
-    const storagePath = path.join(dir, storageKey);
-    await mkdir(dir, { recursive: true });
-    await writeFile(storagePath, bytes);
+    const storagePath = path.join(attachmentsDir(), storageKey);
+    await writeStoredFile('attachments', storageKey, bytes);
 
     // Insert the row. The mimeType is stored verbatim (browsers
     // recognize `image/png` and `image/jpeg` for the two common
@@ -313,7 +311,7 @@ export async function POST(req: Request) {
       });
     } catch (dbError) {
       try {
-        await unlink(storagePath);
+        await deleteStoredFile('attachments', storageKey);
       } catch (cleanupError) {
         console.error('[attachments] failed to remove orphaned upload', storagePath, cleanupError);
       }

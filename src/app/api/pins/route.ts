@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireProjectKey } from '@/lib/auth';
-import { writeFile, mkdir, rename } from 'fs/promises';
-import path from 'path';
+import { deleteStoredFile, renameStoredFile, writeStoredFile } from '@/lib/object-store';
 import crypto from 'crypto';
 import { sendSubscriberEmails } from '@/lib/email';
 import { sendProjectMemberNotification } from '@/lib/project-notification-delivery';
@@ -26,7 +25,6 @@ import {
   sanitizeElementSnippetHtml,
 } from '@/lib/developer-context';
 
-const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || '/data/screenshots';
 const MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024; // 8MB
 
 export async function POST(req: Request) {
@@ -175,10 +173,7 @@ export async function POST(req: Request) {
     const screenshotId = crypto.randomUUID();
     const storageKey = `${screenshotId}.png`;
     const tempKey = `${screenshotId}.tmp.${crypto.randomBytes(4).toString('hex')}`;
-    await mkdir(SCREENSHOTS_DIR, { recursive: true });
-    const tempPath = path.join(SCREENSHOTS_DIR, tempKey);
-    const finalPath = path.join(SCREENSHOTS_DIR, storageKey);
-    await writeFile(tempPath, bytes);
+    await writeStoredFile('screenshots', tempKey, bytes, 'image/png');
 
     // Create screenshot, pin, and first comment in one transaction
     let result;
@@ -299,11 +294,10 @@ export async function POST(req: Request) {
       // Tx committed — atomically promote the temp file to the final name.
       // rename(2) is atomic on the same filesystem; readers (GET /api/screenshots/...)
       // either see the old file (and 304) or the new one, never a half-written one.
-      await rename(tempPath, finalPath);
+      await renameStoredFile('screenshots', tempKey, storageKey);
     } catch (txErr) {
       // Tx failed: remove the temp file so /data/screenshots doesn't fill up.
-      const { unlink } = await import('fs/promises');
-      try { await unlink(tempPath); } catch { /* may not exist */ }
+      await deleteStoredFile('screenshots', tempKey);
       throw txErr;
     }
 

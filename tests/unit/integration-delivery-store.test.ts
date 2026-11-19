@@ -21,8 +21,8 @@ const claimed: DeliveryClaim = {
   event: { id: 'event-1', type: 'pin.created', payloadJson: '{}' },
 };
 
-describe('Postgres integration delivery store', () => {
-  it('claims due and stale rows atomically with skip-locked concurrency protection', async () => {
+describe('Integration delivery store', () => {
+  it('claims due and stale rows atomically with compare-and-set concurrency protection', async () => {
     const queryRaw = vi.fn(async (query: unknown) => {
       expect(query).toBeDefined();
       return [{ id: 'delivery-1' }];
@@ -37,7 +37,8 @@ describe('Postgres integration delivery store', () => {
       .resolves.toEqual([claimed]);
 
     const sql = (queryRaw.mock.calls[0]?.[0] as { sql?: string } | undefined)?.sql ?? '';
-    expect(sql).toContain('FOR UPDATE SKIP LOCKED');
+    expect(sql).toContain('RETURNING "id"');
+    expect(sql).toContain('WHERE "id" IN (');
     expect(sql).toContain('"status" IN (\'PENDING\', \'RETRY_SCHEDULED\')');
     expect(sql).toContain('"status" = \'PROCESSING\'');
     expect(sql).toContain('"lockedAt" <=');

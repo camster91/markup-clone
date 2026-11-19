@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { mkdir, unlink, writeFile } from 'fs/promises';
-import path from 'path';
+import { deleteStoredFile, writeStoredFile } from '@/lib/object-store';
 import crypto from 'crypto';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardAuth } from '@/lib/auth';
@@ -11,7 +10,6 @@ import { readImageDimensions } from '@/lib/image-dimensions';
 import { audit } from '@/lib/audit';
 import { consume } from '@/lib/rate-limit';
 
-const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || '/data/screenshots';
 const MAX_IMAGE_UPLOAD_BYTES = 8 * 1024 * 1024;
 
 const EXTENSIONS: Record<string, string> = {
@@ -67,9 +65,7 @@ export async function POST(req: Request, { params }: RouteContext): Promise<Next
 
     const screenshotId = crypto.randomUUID();
     const storageKey = `${screenshotId}.${extension}`;
-    const uploadPath = path.join(/* turbopackIgnore: true */ SCREENSHOTS_DIR, storageKey);
-    await mkdir(SCREENSHOTS_DIR, { recursive: true });
-    await writeFile(uploadPath, bytes);
+    await writeStoredFile('screenshots', storageKey, bytes);
 
     try {
       const screenshot = await prisma.$transaction(async (tx) => {
@@ -108,7 +104,7 @@ export async function POST(req: Request, { params }: RouteContext): Promise<Next
         data: { pageId: screenshot.pageId, screenshot: { ...screenshot, capturedAt: screenshot.capturedAt.toISOString() } },
       }, { status: 201 });
     } catch (error) {
-      await unlink(uploadPath).catch((cleanupError: unknown) => console.error('Image upload cleanup error:', cleanupError));
+      await deleteStoredFile('screenshots', storageKey).catch((cleanupError: unknown) => console.error('Image upload cleanup error:', cleanupError));
       throw error;
     }
   } catch (error) {

@@ -15,7 +15,7 @@ if (existsSync(envTestPath)) {
 // Fallback DATABASE_URL for unit tests that don't actually need a DB.
 // (Tests that DO need a DB should require it explicitly and skip if absent.)
 if (!process.env.DATABASE_URL) {
-  process.env.DATABASE_URL = 'postgresql://test:***@localhost:5432/test_db';
+  process.env.DATABASE_URL = 'file:./.tmp/test.db';
 }
 
 // Make sure the dashboard host is predictable across tests

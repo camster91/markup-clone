@@ -1,0 +1,33 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "markup",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-11-19",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "observability": {
+    "enabled": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "markup",
+      "database_id": "61ce42bc-801b-460b-a496-e46c46a9e991",
+      "migrations_dir": "d1/migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "MEDIA",
+      "bucket_name": "markup-assets"
+    }
+  ],
+  "alias": {
+    "better-sqlite3": "./src/lib/better-sqlite3-stub.ts",
+    "@prisma/adapter-better-sqlite3": "./src/lib/better-sqlite3-stub.ts"
+  }
+}

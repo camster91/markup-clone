@@ -20,7 +20,7 @@
 // comes from the server's Set-Cookie header. JS never sees the token,
 // so an XSS bug on the dashboard cannot exfiltrate the session.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 export interface LoginFormProps {
   /** Optional callback fired on a successful login. The parent uses
@@ -35,13 +35,29 @@ export default function LoginForm({ onSuccess }: LoginFormProps = {}) {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [setupNeeded, setSetupNeeded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/auth/setup', { credentials: 'same-origin' })
+      .then((res) => (res.ok ? res.json() : { needed: false }))
+      .then((data: { needed?: boolean }) => {
+        if (!cancelled && data.needed) setSetupNeeded(true);
+      })
+      .catch(() => {
+        // Leave the regular sign-in form if setup cannot be probed.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await fetch(setupNeeded ? '/api/auth/setup' : '/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
@@ -71,7 +87,7 @@ export default function LoginForm({ onSuccess }: LoginFormProps = {}) {
       className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8"
       aria-label="Sign in to the dashboard"
     >
-      <h2 className="text-lg font-semibold text-gray-900 mb-4">Sign in</h2>
+      <h2 className="text-lg font-semibold text-gray-900 mb-4">{setupNeeded ? 'Create the first operator' : 'Sign in'}</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label
@@ -104,7 +120,8 @@ export default function LoginForm({ onSuccess }: LoginFormProps = {}) {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
-            autoComplete="current-password"
+            minLength={setupNeeded ? 12 : undefined}
+            autoComplete={setupNeeded ? 'new-password' : 'current-password'}
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
@@ -122,7 +139,7 @@ export default function LoginForm({ onSuccess }: LoginFormProps = {}) {
         disabled={loading}
         className="mt-4 min-h-11 bg-blue-600 text-white px-4 py-2 rounded-lg text-base sm:text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
       >
-        {loading ? 'Signing in...' : 'Sign in'}
+        {loading ? (setupNeeded ? 'Creating account...' : 'Signing in...') : (setupNeeded ? 'Create operator' : 'Sign in')}
       </button>
     </form>
   );

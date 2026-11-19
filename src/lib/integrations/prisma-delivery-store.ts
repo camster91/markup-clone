@@ -21,9 +21,17 @@ export class PrismaDeliveryStore implements DeliveryStore {
     batchSize: number;
   }): Promise<DeliveryClaim[]> {
     const staleBefore = new Date(input.now.getTime() - STALE_CLAIM_MS);
+    // SQLite/D1 has no SKIP LOCKED. Claim with a single UPDATE...RETURNING
+    // whose WHERE still requires a due or stale row, so a concurrent worker
+    // that already took the row cannot overwrite it.
     const ids = await this.prisma.$transaction(async (tx) => tx.$queryRaw<Array<{ id: string }>>(
       Prisma.sql`
-        WITH candidates AS (
+        UPDATE "IntegrationDelivery"
+        SET "status" = 'PROCESSING',
+            "lockedAt" = ${input.now},
+            "lockedBy" = ${input.workerId},
+            "updatedAt" = ${input.now}
+        WHERE "id" IN (
           SELECT "id"
           FROM "IntegrationDelivery"
           WHERE (
@@ -31,17 +39,13 @@ export class PrismaDeliveryStore implements DeliveryStore {
             OR ("status" = 'PROCESSING' AND "lockedAt" <= ${staleBefore})
           )
           ORDER BY "nextAttemptAt" ASC, "createdAt" ASC
-          FOR UPDATE SKIP LOCKED
           LIMIT ${input.batchSize}
         )
-        UPDATE "IntegrationDelivery" AS delivery
-        SET "status" = 'PROCESSING',
-            "lockedAt" = ${input.now},
-            "lockedBy" = ${input.workerId},
-            "updatedAt" = ${input.now}
-        FROM candidates
-        WHERE delivery."id" = candidates."id"
-        RETURNING delivery."id"
+        AND (
+          ("status" IN ('PENDING', 'RETRY_SCHEDULED') AND "nextAttemptAt" <= ${input.now})
+          OR ("status" = 'PROCESSING' AND "lockedAt" <= ${staleBefore})
+        )
+        RETURNING "id"
       `,
     ));
     if (ids.length === 0) return [];

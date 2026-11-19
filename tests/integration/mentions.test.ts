@@ -211,7 +211,7 @@ describe('POST /api/pins/[id]/comments — @-mention dispatch', () => {
     // case-insensitive `in` filter for the parsed mention.
     expect(mocks.user.findMany).toHaveBeenCalledTimes(1);
     expect(mocks.user.findMany).toHaveBeenCalledWith({
-      where: { email: { in: ['alice@example.com'], mode: 'insensitive' } },
+      where: { email: { in: ['alice@example.com'] } },
       select: { id: true, email: true },
     });
   });
@@ -269,7 +269,7 @@ describe('POST /api/pins/[id]/comments — @-mention dispatch', () => {
 
     // The User lookup is given the deduplicated list (just "alice@example.com").
     expect(mocks.user.findMany).toHaveBeenCalledWith({
-      where: { email: { in: ['alice@example.com'], mode: 'insensitive' } },
+      where: { email: { in: ['alice@example.com'] } },
       select: { id: true, email: true },
     });
     const mentionCalls = mocks.sendProjectMemberNotification.mock.calls.filter(([arg]) => arg.event === 'mention');
@@ -383,7 +383,7 @@ describe('POST /api/pins/[id]/comments — @-mention dispatch', () => {
 
   it('handles case where mention is case-mismatched against a stored User', async () => {
     // alice@EXAMPLE.com in the comment; User row is stored as
-    // Alice@example.com. The route's `mode: 'insensitive'` query
+    // Alice@example.com. The route's lowercased `in` query
     // matches the User; the email is sent to whatever case the DB
     // returned (case-insensitive ⇒ the original User.email is the
     // authoritative form, which is what the test mocks).

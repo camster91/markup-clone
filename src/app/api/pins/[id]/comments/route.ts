@@ -339,9 +339,9 @@ export async function POST(
     // as the subscriber + audit paths — so a slow Mailgun call never
     // delays the comment response.
     //
-    // Case-insensitive: `@Alice@Example.COM` and `@alice@example.com`
+    // Emails are stored lowercased; normalize mentions the same way.
     // resolve to the same mention. parseMentions returns a lowercased,
-    // deduplicated list; the `mode: 'insensitive'` User lookup matches
+    // deduplicated list; the User lookup matches
     // the same set of users.
     //
     // Unrecognized emails (no User row with that address) are silently
@@ -354,7 +354,7 @@ export async function POST(
     if (mentioned.length > 0) {
       try {
         const mentionedUsers = await prisma.user.findMany({
-          where: { email: { in: mentioned, mode: 'insensitive' } },
+          where: { email: { in: mentioned.map((email) => email.toLowerCase()) } },
           select: { id: true, email: true },
         });
         // Dedup case-insensitively, but PRESERVE the original User
