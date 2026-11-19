@@ -2,11 +2,9 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { validateScreenshotId } from '@/lib/validation';
 import { assertProjectAccessible } from '@/lib/teams';
-import { readFile, stat } from 'fs/promises';
-import path from 'path';
+import { readStoredFile, statStoredFile } from '@/lib/object-store';
 import { requestHasShareAccess } from '@/lib/share-access';
 
-const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || '/data/screenshots';
 
 // GET /api/screenshots/[id]/image
 //
@@ -110,9 +108,11 @@ export async function GET(
 
     // Runtime captures live on an external persistent mount and must not be
     // copied into the standalone build output by Turbopack's file tracer.
-    const filePath = path.join(/* turbopackIgnore: true */ SCREENSHOTS_DIR, storageKey);
-    const fileStat = await stat(/* turbopackIgnore: true */ filePath);
-    const buf = await readFile(/* turbopackIgnore: true */ filePath);
+    const fileStat = await statStoredFile(/* turbopackIgnore: true */ 'screenshots', storageKey);
+    if (!fileStat) return NextResponse.json({ error: 'Screenshot file not found' }, { status: 404 });
+    const stored = await readStoredFile(/* turbopackIgnore: true */ 'screenshots', storageKey);
+    if (!stored) return NextResponse.json({ error: 'Screenshot file not found' }, { status: 404 });
+    const buf = Buffer.from(/* turbopackIgnore: true */ stored.bytes);
 
     // ETag for caching. Includes the storageKey so two different
     // versions' PNGs don't share an ETag (the dashboard's

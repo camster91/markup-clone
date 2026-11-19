@@ -2,10 +2,10 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// The connection URL lives in prisma.config.ts (Prisma 7). The app connects
-// through the pg driver adapter in src/lib/prisma.ts.
+// The connection URL lives in prisma.config.ts (Prisma 7). Production uses
+// the D1 driver adapter in src/lib/prisma.ts; local and tests use sqlite.
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
 }
 
 model Project {

@@ -12,13 +12,13 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { requireDashboardAuth, generateApiKey } from '@/lib/auth';
 import { audit } from '@/lib/audit';
-import { unlink } from 'fs/promises';
-import path from 'path';
+import path from 'node:path';
+import { deleteStoredFile } from '@/lib/object-store';
+import { attachmentsDir, screenshotsDir } from '@/lib/storage-dirs';
 import { validateProjectName, validateProjectId } from '@/lib/validation';
 import { assertProjectAccessible, assertProjectAdmin } from '@/lib/teams';
 import { requireCsrfToken } from '@/lib/csrf';
 import { projectDetailInclude, serializeProjectDetail } from '@/lib/project-detail-dto';
-import { attachmentsDir, screenshotsDir } from '@/lib/storage-dirs';
 
 // Columns PATCH echoes back. Deliberately excludes the share credentials
 // (shareToken, shareExpiresAt, sharePasswordHash): the password hash must
@@ -121,10 +121,8 @@ export async function DELETE(
         select: { storageKey: true },
       }),
     ]);
-    const files = new Set<string>([
-      ...[...screenshots, ...versions, ...reviewAssets].map((f) => path.join(screenshotsDir(), f.storageKey)),
-      ...attachments.map((f) => path.join(attachmentsDir(), f.storageKey)),
-    ]);
+    const screenshotKeys = [...screenshots, ...versions, ...reviewAssets].map((f) => f.storageKey);
+    const attachmentKeys = attachments.map((f) => f.storageKey);
 
     // Delete the rows first. If this fails, every file is still in place
     // and the project keeps working; unlinking first would leave rows
@@ -133,15 +131,21 @@ export async function DELETE(
 
     let filesRemoved = 0;
     let filesFailed = 0;
-    for (const file of files) {
+    async function remove(kind: 'screenshots' | 'attachments', key: string, dir: string) {
       try {
-        await unlink(file);
+        await deleteStoredFile(kind, key);
         filesRemoved++;
       } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
         filesFailed++;
-        console.error('Project delete: could not remove file', file, err);
+        console.error('Project delete: could not remove file', path.join(dir, key), err);
       }
+    }
+    for (const key of screenshotKeys) {
+      await remove('screenshots', key, screenshotsDir());
+    }
+    for (const key of attachmentKeys) {
+      await remove('attachments', key, attachmentsDir());
     }
     audit({
       actor: access.caller.email,

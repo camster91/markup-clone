@@ -41,7 +41,7 @@ jobs:
         run: npx prisma generate
         env:
           # Placeholder for prisma schema validation (no DB connection made during generate)
-          DATABASE_URL: postgresql://placeholder:***@localhost:5432/placeholder
+          DATABASE_URL: file:./dev.db
 
       # Lint runs (and gates) in lint.yml.
       - name: Type check
@@ -50,7 +50,7 @@ jobs:
       - name: Unit + integration tests
         run: npm test
         env:
-          DATABASE_URL: postgresql://placeholder:***@localhost:5432/placeholder
+          DATABASE_URL: file:./dev.db
           DASHBOARD_HOST: markup.ashbi.ca
 
       - name: Build
